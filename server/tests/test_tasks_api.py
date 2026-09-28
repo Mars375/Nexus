@@ -259,6 +259,29 @@ def test_database_enforces_one_main_operation_under_concurrency(client):
             s2.commit()
 
 
+@pytest.mark.parametrize("field", ["title", "objective"])
+def test_whitespace_only_title_or_objective_is_refused(client, field):
+    body = {"title": "Pont lecture", "objective": "Lire les runs"} | {field: "   "}
+    assert client.post("/api/tasks", json=body).status_code == 422
+
+    ref = create(client)["id"]
+    assert client.patch(f"/api/tasks/{ref}", json={field: "   "}).status_code == 422
+
+
+def test_title_is_stored_trimmed(client):
+    assert create(client, title="  Pont lecture  ")["title"] == "Pont lecture"
+
+
+def test_redacted_evidence_is_not_proof(client):
+    ref = create(client, next_action="x", expected_evidence="commit")["id"]
+    move(client, ref, "in_progress")
+
+    closed = move(client, ref, "done", evidence=[SECRET]).json()
+
+    assert closed["status"] == "review"
+    assert closed["evidence"] == []
+
+
 def test_blank_evidence_is_refused(client):
     ref = create(client, next_action="x", expected_evidence="commit")["id"]
     move(client, ref, "in_progress")

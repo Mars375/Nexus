@@ -182,7 +182,11 @@ def change_status(
 
     final = target
     if target == "done":
-        refs = [e.strip() for e in evidence or [] if e and e.strip()]
+        # Une preuve vide ou masquée (secret collé) ne prouve rien.
+        refs = [
+            e.strip() for e in evidence or []
+            if e and e.strip() and secrets.REDACTED not in e
+        ]
         if refs:
             task.evidence = list(dict.fromkeys([*task.evidence, *refs]))
         final = rules.resolve_done(task.expected_evidence, task.evidence)

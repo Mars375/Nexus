@@ -50,6 +50,9 @@ def parse_ref(task_ref: str) -> int:
 SessionDep = Annotated[Session, Depends(get_session)]
 ActorDep = Annotated[str, Depends(get_actor)]
 EvidenceRef = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+# Un titre ou un objectif fait seulement d'espaces est vide.
+Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 def commit(session: Session) -> None:
@@ -72,8 +75,8 @@ def commit(session: Session) -> None:
 
 
 class TaskCreate(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
-    objective: str = Field(min_length=1)
+    title: Title
+    objective: Text
     status: Literal["backlog", "todo"] = "backlog"
     human_owner: Human = "loic"
     lead_agent: Actor | None = None
@@ -94,8 +97,8 @@ NOT_NULLABLE = frozenset(
 
 
 class TaskUpdate(BaseModel):
-    title: str | None = Field(default=None, min_length=1, max_length=200)
-    objective: str | None = Field(default=None, min_length=1)
+    title: Title | None = None
+    objective: Text | None = None
     human_owner: Human | None = None
     lead_agent: Actor | None = None
     collaborators: list[Actor] | None = None
