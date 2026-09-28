@@ -127,6 +127,24 @@ Terminé avec preuve :
 - **Read-back :** l'émetteur relit l'événement (`GET /api/events/<id>`) et confirme sa visibilité ; tant que ce n'est pas confirmé, il reste `unknown` côté émetteur.
 - **Diffusion :** l'UI reçoit les nouveaux événements par WebSocket ; les alertes urgentes (`needs_human`, `blocked` critique) partent aussi sur Telegram.
 
+## 6 bis. Effets sur la tâche (implémentés en Phase 1)
+
+Un événement valide est **toujours enregistré** (c'est un fait déclaré). Ses effets sur la tâche passent par les règles des tâches ; un effet refusé est consigné dans `effects` avec sa raison, sans faire échouer la publication.
+
+| Kind | Effet sur la tâche |
+|---|---|
+| `claimed` | l'émetteur devient agent principal |
+| `working` | passage en `in_progress` (ouvre le run) |
+| `blocked` | passage en `blocked` avec cause, plan, relance |
+| `review` | passage en `review` |
+| `done` | passage en `done` avec les preuves (sans preuve : l'événement est stocké en `review`) |
+| `handoff` | le destinataire devient agent principal ; la prochaine action est mise à jour |
+| `progress`, `question`, `needs_human`, `failed`, `unknown` | aucun changement d'état : visibles dans l'historique et les vues |
+
+Autres garanties : un renvoi du même `id` par le même acteur est une relecture (pas de doublon) ; un même `id` réutilisé pour un autre contenu est refusé ; le même fait republié dans les 10 minutes est refusé comme bruit ; les secrets sont masqués avant écriture.
+
+Exemple exécutable : `uv run python -m nexus.demo_agent --task nx-task-1 --actor helios --evidence commit:…` (`server/src/nexus/demo_agent.py`).
+
 ## 7. Anti-patterns (refusés)
 
 - « done » sans preuve.

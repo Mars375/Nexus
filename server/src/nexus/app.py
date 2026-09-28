@@ -19,6 +19,8 @@ from nexus import backup, migrate, nodes
 from nexus.clock import now
 from nexus.config import Settings
 from nexus.db import make_engine
+from nexus.events import api as events_api
+from nexus.events.service import EventNotFound
 from nexus.tasks import api as tasks_api
 from nexus.tasks.rules import RuleViolation
 from nexus.tasks.service import TaskNotFound
@@ -96,6 +98,7 @@ def create_app(
 
     app = FastAPI(title="Nexus", version=version("nexus"), lifespan=lifespan)
     app.include_router(tasks_api.router)
+    app.include_router(events_api.router)
 
     @app.exception_handler(RequestValidationError)
     def _invalid(_request: Request, exc: RequestValidationError) -> JSONResponse:
@@ -118,7 +121,8 @@ def create_app(
         )
 
     @app.exception_handler(TaskNotFound)
-    def _not_found(_request: Request, exc: TaskNotFound) -> JSONResponse:
+    @app.exception_handler(EventNotFound)
+    def _not_found(_request: Request, exc: Exception) -> JSONResponse:
         return JSONResponse(
             status_code=404, content={"detail": {"code": "not_found", "message": str(exc)}}
         )
