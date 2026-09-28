@@ -263,7 +263,7 @@ def test_secret_only_workflow_text_does_not_count(client):
     assert violation(move(client, ref, "blocked", block_cause=SECRET, block_plan="p")) == (
         "block_cause_required"
     )
-    assert violation(move(client, ref, "dropped", reason=f" {SECRET} ")) == (
+    assert violation(move(client, ref, "dropped", reason=f"token={SECRET}")) == (
         "drop_reason_required"
     )
 
@@ -431,3 +431,11 @@ def test_dropped_dependency_counts_as_resolved(client):
 @pytest.mark.parametrize("path", ["/api/tasks/nx-task-1/history", "/api/tasks/nx-task-1/comments"])
 def test_sub_resources_404_on_unknown_task(client, path):
     assert client.get(path).status_code == 404
+
+
+def test_unknown_actor_value_is_never_echoed(client):
+    res = client.post(
+        "/api/tasks", json={"title": "x", "objective": "y"}, headers={"X-Nexus-Actor": SECRET}
+    )
+    assert res.status_code == 422
+    assert SECRET not in res.text

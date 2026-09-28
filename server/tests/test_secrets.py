@@ -85,3 +85,22 @@ def test_nested_values_are_redacted():
 
     assert cleaned == {"refs": ["ok", f"password={REDACTED}"], "note": "rien"}
     assert found == ["credential"]
+
+
+@pytest.mark.parametrize(
+    ("text", "blank"),
+    [
+        (None, True),
+        ("", True),
+        ("[REDACTED]", True),
+        ("password=[REDACTED]", True),
+        ("([REDACTED])", True),
+        (' token: "[REDACTED]" ', True),
+        ("Relancer la PR", False),
+        ("voir [REDACTED] puis relancer", False),
+    ],
+)
+def test_is_blank_ignores_redactions_and_their_labels(text, blank):
+    from nexus.secrets import is_blank
+
+    assert is_blank(text) is blank

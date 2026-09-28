@@ -73,9 +73,15 @@ def redact(text: str) -> tuple[str, list[str]]:
     return text, sorted(set(found))
 
 
+# Un secret masqué et ce qui l'entoure : étiquette (password=), guillemets, parenthèses.
+_REDACTED_SPAN = re.compile(r"[\w.-]*\s*[:=]?\s*[\"'(\[]*\[REDACTED\][\"')\]]*")
+
+
 def is_blank(text: str | None) -> bool:
     """Vide, ou ne contenant que des secrets masqués : ne dit rien d'utilisable."""
-    return not (text and text.replace(REDACTED, "").strip(" \t\n:;,.-"))
+    if not text:
+        return True
+    return not re.search(r"\w", _REDACTED_SPAN.sub("", text))
 
 
 def redact_value(value: Any) -> tuple[Any, list[str]]:

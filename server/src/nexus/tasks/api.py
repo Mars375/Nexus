@@ -36,7 +36,10 @@ def get_session(request: Request):
 def get_actor(x_nexus_actor: Annotated[str | None, Header()] = None) -> str:
     actor = x_nexus_actor or DEFAULT_ACTOR
     if actor not in ACTORS:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"acteur inconnu : {actor}")
+        # La valeur reçue n'est jamais renvoyée : l'en-tête pourrait contenir un secret.
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "acteur inconnu dans l'en-tête X-Nexus-Actor"
+        )
     return actor
 
 
