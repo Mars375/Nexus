@@ -24,6 +24,10 @@ TRANSITIONS: dict[str, frozenset[str]] = {
 }
 
 INITIAL_STATUSES = frozenset({"backlog", "todo"})
+
+# Une tâche n'entre dans ces statuts que si toutes ses dépendances sont traitées.
+GATED_BY_DEPENDENCIES = frozenset({"in_progress", "review", "done"})
+DEPENDENCY_RESOLVED = frozenset({"done", "dropped"})
 PRIORITIES = ("low", "normal", "high", "critical")
 ROLES = ("main", "auxiliary")
 
@@ -73,15 +77,32 @@ def check_drop(reason: str | None) -> None:
         raise RuleViolation("drop_reason_required", "un abandon doit être motivé")
 
 
+def check_dependencies(target: str, pending: list[str]) -> None:
+    """`pending` : dépendances non traitées, déjà formatées pour l'affichage."""
+    if target in GATED_BY_DEPENDENCIES and pending:
+        raise RuleViolation(
+            "dependencies_pending", f"en attente de : {', '.join(pending)}"
+        )
+
+
 def resolve_done(expected_evidence: str | None, evidence: list[str]) -> str:
-    """Preuve ou review : une clôture qui attend une preuve et n'en a pas passe en review."""
+    """Preuve ou review : une clôture qui attend une preuve et n'en a pas passe en review.
+
+    Seules les tâches qui déclarent une preuve attendue l'exigent (PRD §10 : « une tâche
+    importante se clôt avec preuve »). Les agents, eux, doivent toujours joindre une preuve
+    à un événement `done` (EVENT-PROTOCOL §4).
+    """
     if expected_evidence and expected_evidence.strip() and not evidence:
         return "review"
     return "done"
 
 
 def resolve_role(requested: str | None, other_main_in_progress: bool) -> str:
-    """Une seule opération principale en cours par humain (ADR-004)."""
+    """Une seule opération principale en cours par humain (ADR-004).
+
+    `requested` : rôle demandé à la transition, sinon celui préparé sur la tâche ; s'il n'y en
+    a aucun, la première opération en cours devient principale, les suivantes auxiliaires.
+    """
     if requested == "main" and other_main_in_progress:
         raise RuleViolation(
             "main_operation_taken",

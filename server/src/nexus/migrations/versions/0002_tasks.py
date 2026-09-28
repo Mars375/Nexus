@@ -44,6 +44,11 @@ def upgrade() -> None:
     )
     op.create_index("ix_tasks_status", "tasks", ["status"])
     op.create_index("ix_tasks_human_owner", "tasks", ["human_owner"])
+    # ADR-004 : au plus une opération principale en cours par humain, garanti par la base.
+    op.create_index(
+        "uq_tasks_one_main_in_progress", "tasks", ["human_owner"], unique=True,
+        sqlite_where=sa.text("status = 'in_progress' AND operation_role = 'main'"),
+    )
 
     op.create_table(
         "task_dependencies",

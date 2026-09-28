@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.db import AwareDateTime, Base
@@ -23,6 +23,13 @@ class Task(Base):
     """Unité de travail durable ; source de vérité : nexus.db (ADR-012, DATA-MODEL §2.4)."""
 
     __tablename__ = "tasks"
+    __table_args__ = (
+        # ADR-004, garanti par la base même en cas de requêtes simultanées.
+        Index(
+            "uq_tasks_one_main_in_progress", "human_owner", unique=True,
+            sqlite_where=text("status = 'in_progress' AND operation_role = 'main'"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     title: Mapped[str] = mapped_column(String(200))
@@ -53,7 +60,10 @@ class Task(Base):
 
 
 class TaskDependency(Base):
-    """`task_id` ne peut avancer qu'une fois `depends_on_id` traitée."""
+    """`task_id` n'entre en in_progress, review ou done que si `depends_on_id` est traitée.
+
+    Traitée = done ou dropped (rules.DEPENDENCY_RESOLVED).
+    """
 
     __tablename__ = "task_dependencies"
 

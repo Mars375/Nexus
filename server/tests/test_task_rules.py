@@ -75,6 +75,19 @@ def test_done_missing_expected_evidence_goes_to_review():
     assert rules.resolve_done("commit + tests verts", ["commit:a1b2c3d"]) == "done"
 
 
+@pytest.mark.parametrize("target", sorted(rules.GATED_BY_DEPENDENCIES))
+def test_pending_dependencies_block_progress(target):
+    with pytest.raises(RuleViolation) as exc:
+        rules.check_dependencies(target, ["nx-task-3 (backlog)"])
+    assert exc.value.code == "dependencies_pending"
+    assert "nx-task-3" in exc.value.message
+
+
+@pytest.mark.parametrize("target", ["todo", "backlog", "blocked", "dropped"])
+def test_pending_dependencies_do_not_block_other_moves(target):
+    rules.check_dependencies(target, ["nx-task-3 (backlog)"])
+
+
 def test_first_operation_in_progress_becomes_main_then_auxiliary():
     assert rules.resolve_role(None, other_main_in_progress=False) == "main"
     assert rules.resolve_role(None, other_main_in_progress=True) == "auxiliary"

@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from nexus import secrets
 from nexus.clock import now
 from nexus.models import Task, TaskComment, TaskDependency, TaskHistory
 from nexus.tasks import rules
 from nexus.tasks.rules import RuleViolation
+
+log = logging.getLogger("nexus.tasks")
 
 
 class TaskNotFound(Exception):
@@ -62,6 +66,8 @@ def list_tasks(
 
 
 def create_task(session: Session, data: dict[str, Any], actor: str) -> Task:
+    redacted: dict[str, list[str]] = {}
+    data = secrets.redact_fields(data, redacted.__setitem__)
     status = data.pop("status", "backlog")
     if status not in rules.INITIAL_STATUSES:
         raise RuleViolation(
@@ -82,6 +88,7 @@ def create_task(session: Session, data: dict[str, Any], actor: str) -> Task:
     _record(session, task, actor, "created", {
         k: [None, v] for k, v in data.items() if v not in (None, [], "")
     } | {"status": [None, status]})
+    _record_redactions(session, task, actor, redacted)
     return task
 
 
@@ -89,6 +96,8 @@ def update_task(session: Session, task: Task, changes: dict[str, Any], actor: st
     unknown = set(changes) - UPDATABLE
     if unknown:
         raise RuleViolation("not_updatable", f"champs non modifiables ici : {sorted(unknown)}")
+    redacted: dict[str, list[str]] = {}
+    changes = secrets.redact_fields(changes, redacted.__setitem__)
     diff = {}
     for field, value in changes.items():
         old = getattr(task, field)
@@ -98,12 +107,15 @@ def update_task(session: Session, task: Task, changes: dict[str, Any], actor: st
     if not diff:
         return task
     rules.check_next_action(task.status, task.next_action)
+    if task.status == "blocked":
+        rules.check_block(task.block_cause, task.block_plan, task.follow_up_at)
     if task.status == "in_progress" and ({"operation_role", "human_owner"} & diff.keys()):
         task.operation_role = rules.resolve_role(
             task.operation_role, _other_main_in_progress(session, task)
         )
     task.updated_at = now()
     _record(session, task, actor, "updated", diff)
+    _record_redactions(session, task, actor, redacted)
     return task
 
 
@@ -121,8 +133,18 @@ def change_status(
     next_action: str | None = None,
     role: str | None = None,
 ) -> Task:
+    redacted: dict[str, list[str]] = {}
+    texts = secrets.redact_fields(
+        {"reason": reason, "block_cause": block_cause, "block_plan": block_plan,
+         "evidence": evidence, "next_action": next_action},
+        redacted.__setitem__,
+    )
+    reason, block_cause, block_plan = texts["reason"], texts["block_cause"], texts["block_plan"]
+    evidence, next_action = texts["evidence"], texts["next_action"]
+
     current = task.status
     rules.check_transition(current, target)
+    rules.check_dependencies(target, _pending_dependencies(session, task))
     watched = (
         "next_action", "block_cause", "block_plan", "follow_up_at", "drop_reason",
         "evidence", "operation_role",
@@ -147,8 +169,9 @@ def change_status(
 
     final = target
     if target == "done":
-        if evidence:
-            task.evidence = list(dict.fromkeys([*task.evidence, *evidence]))
+        refs = [e.strip() for e in evidence or [] if e and e.strip()]
+        if refs:
+            task.evidence = list(dict.fromkeys([*task.evidence, *refs]))
         final = rules.resolve_done(task.expected_evidence, task.evidence)
         if final == current:  # déjà en review, toujours sans preuve
             raise RuleViolation(
@@ -156,7 +179,12 @@ def change_status(
             )
 
     if final == "in_progress":
-        task.operation_role = rules.resolve_role(role, _other_main_in_progress(session, task))
+        task.operation_role = rules.resolve_role(
+            role or task.operation_role, _other_main_in_progress(session, task)
+        )
+    elif current == "in_progress":
+        # Le rôle n'a de sens qu'en cours : à la reprise, il sera redemandé ou redéduit.
+        task.operation_role = None
 
     rules.check_next_action(final, task.next_action)
     task.status = final
@@ -169,17 +197,20 @@ def change_status(
     if reason and target != "dropped":
         changes["reason"] = reason
     _record(session, task, actor, "status", changes)
+    _record_redactions(session, task, actor, redacted)
     return task
 
 
 def add_comment(session: Session, task: Task, actor: str, body: str) -> TaskComment:
     if not body.strip():
         raise RuleViolation("empty_comment", "un commentaire ne peut pas être vide")
+    body, kinds = secrets.redact(body)
     comment = TaskComment(task_id=task.id, author=actor, body=body, at=now())
     session.add(comment)
     session.flush()
     task.updated_at = comment.at
     _record(session, task, actor, "commented", {"comment_id": comment.id})
+    _record_redactions(session, task, actor, {"comment": kinds} if kinds else {})
     return comment
 
 
@@ -226,6 +257,20 @@ def remove_dependency(session: Session, task: Task, other: Task, actor: str) -> 
     _record(session, task, actor, "unlinked", {"depends_on": [other.ref, None]})
 
 
+def _pending_dependencies(session: Session, task: Task) -> list[str]:
+    rows = session.execute(
+        select(Task.id, Task.status)
+        .join(TaskDependency, TaskDependency.depends_on_id == Task.id)
+        .where(TaskDependency.task_id == task.id)
+        .order_by(Task.id)
+    )
+    return [
+        f"nx-task-{dep_id} ({status})"
+        for dep_id, status in rows
+        if status not in rules.DEPENDENCY_RESOLVED
+    ]
+
+
 def _depends_on(session: Session, start: int, target: int) -> bool:
     """`start` dépend-elle, directement ou non, de `target` ?"""
     seen, stack = set(), [start]
@@ -249,13 +294,26 @@ def _other_main_in_progress(session: Session, task: Task) -> bool:
         Task.operation_role == "main",
         Task.id != task.id,
     )
-    return session.scalar(query) is not None
+    # Pas d'écriture anticipée des changements en cours : la règle doit répondre avant l'index.
+    with session.no_autoflush:
+        return session.scalar(query) is not None
 
 
 def _record(session: Session, task: Task, actor: str, action: str, changes: dict) -> None:
     session.add(TaskHistory(
         task_id=task.id, actor=actor, at=now(), action=action, changes=_jsonable(changes)
     ))
+
+
+def _record_redactions(
+    session: Session, task: Task, actor: str, redacted: dict[str, list[str]]
+) -> None:
+    """Trace (sans la valeur) qu'un secret a été masqué, et alerte dans les logs."""
+    if not redacted:
+        return
+    kinds = sorted({k for ks in redacted.values() for k in ks})
+    log.warning("secret masqué sur %s (champs %s, types %s)", task.ref, sorted(redacted), kinds)
+    _record(session, task, actor, "secret_redacted", {"fields": sorted(redacted), "kinds": kinds})
 
 
 def _jsonable(value: Any) -> Any:

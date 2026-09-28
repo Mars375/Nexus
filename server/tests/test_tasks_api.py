@@ -220,6 +220,102 @@ def test_no_route_opens_a_network_connection(client, monkeypatch):
     client.get("/api/tasks")
 
 
+SECRET = "ghp_" + "A" * 36
+
+
+def test_secrets_are_redacted_everywhere_and_traced(client):
+    task = create(client, objective=f"utiliser {SECRET}", context=[f"token={SECRET}"])
+    ref = task["id"]
+    client.patch(f"/api/tasks/{ref}", json={"origin": f"collé : {SECRET}"})
+    client.post(f"/api/tasks/{ref}/comments", json={"body": f"mot de passe : {SECRET}"})
+    move(client, ref, "dropped", reason=f"clé {SECRET} révoquée")
+
+    everything = client.get(f"/api/tasks/{ref}").text
+    everything += client.get(f"/api/tasks/{ref}/comments").text
+    history = client.get(f"/api/tasks/{ref}/history")
+    everything += history.text
+
+    assert SECRET not in everything
+    assert "[REDACTED]" in everything
+    traced = [h for h in history.json() if h["action"] == "secret_redacted"]
+    assert len(traced) == 4
+    assert traced[0]["changes"] == {"fields": ["context", "objective"], "kinds": ["github_token"]}
+
+
+def test_database_enforces_one_main_operation_under_concurrency(client):
+    from sqlalchemy.exc import IntegrityError
+
+    from nexus.tasks import service
+
+    a = int(create(client, status="todo", next_action="x")["id"].removeprefix("nx-task-"))
+    b = int(create(client, status="todo", next_action="y")["id"].removeprefix("nx-task-"))
+    make = client.app.state.sessionmaker
+    with make() as s1, make() as s2:
+        # Les deux lisent « aucune autre principale en cours » avant que l'une n'écrive.
+        service.change_status(s1, service.get_task(s1, a), "in_progress", "loic")
+        service.change_status(s2, service.get_task(s2, b), "in_progress", "loic")
+        s1.commit()
+        with pytest.raises(IntegrityError):
+            s2.commit()
+
+
+def test_blank_evidence_is_refused(client):
+    ref = create(client, next_action="x", expected_evidence="commit")["id"]
+    move(client, ref, "in_progress")
+
+    assert move(client, ref, "done", evidence=["   "]).status_code == 422
+    assert move(client, ref, "done", evidence=[""]).status_code == 422
+
+
+def test_patch_cannot_break_a_block(client):
+    ref = create(client, next_action="x")["id"]
+    move(client, ref, "in_progress")
+    move(client, ref, "blocked", block_cause="SSH", follow_up_at="2026-09-29T09:00:00+02:00")
+
+    res = client.patch(f"/api/tasks/{ref}", json={"follow_up_at": None})
+    assert violation(res) == "block_follow_up_required"
+
+
+def test_prepared_role_is_honoured_at_start(client):
+    aux = create(client, next_action="x", operation_role="auxiliary")["id"]
+    assert move(client, aux, "in_progress").json()["operation_role"] == "auxiliary"
+
+    main = create(client, next_action="y", operation_role="main")["id"]
+    other = create(client, next_action="z", operation_role="main")["id"]
+    assert move(client, main, "in_progress").json()["operation_role"] == "main"
+    assert violation(move(client, other, "in_progress")) == "main_operation_taken"
+
+
+def test_role_is_cleared_when_leaving_progress(client):
+    ref = create(client, next_action="x")["id"]
+    move(client, ref, "in_progress")
+    assert move(client, ref, "todo").json()["operation_role"] is None
+
+
+def test_dependencies_gate_progress_until_resolved(client):
+    a = create(client, next_action="x")["id"]
+    b = create(client, next_action="y")["id"]
+    client.put(f"/api/tasks/{a}/dependencies/{b}")
+
+    res = move(client, a, "in_progress")
+    assert violation(res) == "dependencies_pending"
+    assert b in res.json()["detail"]["message"]
+    assert move(client, a, "todo").status_code == 200  # préparer reste permis
+
+    move(client, b, "in_progress")
+    move(client, b, "done")
+    assert move(client, a, "in_progress").status_code == 200
+
+
+def test_dropped_dependency_counts_as_resolved(client):
+    a = create(client, next_action="x")["id"]
+    b = create(client)["id"]
+    client.put(f"/api/tasks/{a}/dependencies/{b}")
+    move(client, b, "dropped", reason="abandonné")
+
+    assert move(client, a, "in_progress").status_code == 200
+
+
 @pytest.mark.parametrize("path", ["/api/tasks/nx-task-1/history", "/api/tasks/nx-task-1/comments"])
 def test_sub_resources_404_on_unknown_task(client, path):
     assert client.get(path).status_code == 404

@@ -6,15 +6,17 @@ from datetime import datetime
 from typing import Annotated, Literal, Self
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
-from pydantic import AwareDatetime, BaseModel, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, model_validator
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.actors import ACTORS, DEFAULT_ACTOR, Actor, Human
 from nexus.clock import now
 from nexus.models import Task, TaskComment, TaskHistory
 from nexus.tasks import service
+from nexus.tasks.rules import RuleViolation
 
-Status = Literal["backlog", "todo", "in_progress", "blocked", "review", "done", "dropped"]
+Status =Literal["backlog", "todo", "in_progress", "blocked", "review", "done", "dropped"]
 Priority = Literal["low", "normal", "high", "critical"]
 Role = Literal["main", "auxiliary"]
 
@@ -47,6 +49,23 @@ def parse_ref(task_ref: str) -> int:
 
 SessionDep = Annotated[Session, Depends(get_session)]
 ActorDep = Annotated[str, Depends(get_actor)]
+EvidenceRef = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+def commit(session: Session) -> None:
+    """Valide ; une opération principale concurrente (index unique) devient un refus métier."""
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        if "uq_tasks_one_main_in_progress" in str(exc.orig) or "tasks.human_owner" in str(
+            exc.orig
+        ):
+            raise RuleViolation(
+                "main_operation_taken",
+                "une autre opération principale vient d'être démarrée pour cet humain",
+            ) from exc
+        raise
 
 
 # --- Schémas ------------------------------------------------------------------------------
@@ -103,7 +122,7 @@ class StatusChange(BaseModel):
     block_cause: str | None = None
     block_plan: str | None = None
     follow_up_at: AwareDatetime | None = None
-    evidence: list[str] | None = None
+    evidence: list[EvidenceRef] | None = None
     next_action: str | None = None
     role: Role | None = None
 
@@ -185,7 +204,7 @@ def history_out(h: TaskHistory) -> HistoryOut:
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create(body: TaskCreate, session: SessionDep, actor: ActorDep) -> TaskOut:
     task = service.create_task(session, body.model_dump(), actor)
-    session.commit()
+    commit(session)
     return to_out(session, task)
 
 
@@ -215,7 +234,7 @@ def read(task_ref: str, session: SessionDep) -> TaskOut:
 def update(task_ref: str, body: TaskUpdate, session: SessionDep, actor: ActorDep) -> TaskOut:
     task = service.get_task(session, parse_ref(task_ref))
     service.update_task(session, task, body.model_dump(exclude_unset=True), actor)
-    session.commit()
+    commit(session)
     return to_out(session, task)
 
 
@@ -228,7 +247,7 @@ def change_status(
         session, task, body.status, actor,
         **body.model_dump(exclude={"status"}),
     )
-    session.commit()
+    commit(session)
     return to_out(session, task)
 
 
@@ -236,7 +255,7 @@ def change_status(
 def comment(task_ref: str, body: CommentIn, session: SessionDep, actor: ActorDep) -> CommentOut:
     task = service.get_task(session, parse_ref(task_ref))
     created = service.add_comment(session, task, actor, body.body)
-    session.commit()
+    commit(session)
     return comment_out(created)
 
 
@@ -257,7 +276,7 @@ def link(task_ref: str, other_ref: str, session: SessionDep, actor: ActorDep) ->
     task = service.get_task(session, parse_ref(task_ref))
     other = service.get_task(session, parse_ref(other_ref))
     service.add_dependency(session, task, other, actor)
-    session.commit()
+    commit(session)
 
 
 @router.delete("/{task_ref}/dependencies/{other_ref}", status_code=status.HTTP_204_NO_CONTENT)
@@ -265,4 +284,4 @@ def unlink(task_ref: str, other_ref: str, session: SessionDep, actor: ActorDep) 
     task = service.get_task(session, parse_ref(task_ref))
     other = service.get_task(session, parse_ref(other_ref))
     service.remove_dependency(session, task, other, actor)
-    session.commit()
+    commit(session)
