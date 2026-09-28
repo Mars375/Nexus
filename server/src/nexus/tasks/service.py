@@ -158,6 +158,15 @@ def change_status(
     current = task.status
     rules.check_transition(current, target)
     rules.check_dependencies(target, _pending_dependencies(session, task))
+    if current in rules.DEPENDENCY_RESOLVED and target not in rules.DEPENDENCY_RESOLVED:
+        # Rouvrir un prérequis laisserait ses dépendantes avancées sans prérequis traité.
+        advanced = _advanced_dependents(session, task)
+        if advanced:
+            raise RuleViolation(
+                "reopen_with_advanced_dependents",
+                f"{task.ref} ne peut pas être rouverte : {', '.join(advanced)} en dépend "
+                "et a déjà avancé",
+            )
     watched = (
         "next_action", "block_cause", "block_plan", "follow_up_at", "drop_reason",
         "evidence", "operation_role",
@@ -280,6 +289,20 @@ def remove_dependency(session: Session, task: Task, other: Task, actor: str) -> 
     session.delete(link)
     task.updated_at = now()
     _record(session, task, actor, "unlinked", {"depends_on": [other.ref, None]})
+
+
+def _advanced_dependents(session: Session, task: Task) -> list[str]:
+    rows = session.execute(
+        select(Task.id, Task.status)
+        .join(TaskDependency, TaskDependency.task_id == Task.id)
+        .where(TaskDependency.depends_on_id == task.id)
+        .order_by(Task.id)
+    )
+    return [
+        f"nx-task-{dep_id} ({status})"
+        for dep_id, status in rows
+        if status in rules.GATED_BY_DEPENDENCIES
+    ]
 
 
 def _pending_dependencies(session: Session, task: Task) -> list[str]:

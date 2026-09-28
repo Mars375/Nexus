@@ -26,9 +26,15 @@ _FULL: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 # « mot de passe : xyz », « token=abc »… : on masque la valeur, on garde l'étiquette.
-# Couvre aussi la forme JSON/YAML collée : {"password": "hunter2"}, 'token': 'abc'.
+# Couvre aussi la forme JSON/YAML collée ({"password": "hunter2"}, 'token': 'abc') et les
+# variables d'environnement préfixées (AWS_SECRET_ACCESS_KEY=…, CLIENT_SECRET=…). Préfixe
+# et suffixe doivent être séparés par _ . ou - : « tokens: 3000 » n'est pas un secret.
 _ASSIGNMENT = re.compile(
-    r"(?i)\b(password|passwd|pwd|mot de passe|mdp|secret|api[ _-]?key|access[ _-]?token|token)"
+    r"(?i)(?<![\w.-])("
+    r"(?:[\w.-]*[_.-])?"
+    r"(?:password|passwd|pwd|secret|api[ _-]?key|access[ _-]?token|private[ _-]?key|token)"
+    r"(?:[_.-][\w.-]*)?"
+    r"|mot de passe|mdp)"
     r"([\"']?\s*[:=]\s*)"
     r"(?:\"([^\"]*)\"|'([^']*)'|([^\s,;}\"']+))"
 )

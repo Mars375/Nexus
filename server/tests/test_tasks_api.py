@@ -367,6 +367,22 @@ def test_advanced_task_cannot_depend_on_unresolved_task(client):
     assert client.put(f"/api/tasks/{done}/dependencies/{finished}").status_code == 204
 
 
+def test_prerequisite_cannot_be_reopened_under_an_advanced_dependent(client):
+    prereq = create(client, next_action="x")["id"]
+    dependent = create(client, next_action="y")["id"]
+    client.put(f"/api/tasks/{dependent}/dependencies/{prereq}")
+    move(client, prereq, "in_progress")
+    move(client, prereq, "done")
+    move(client, dependent, "in_progress")
+
+    res = move(client, prereq, "in_progress")
+    assert violation(res) == "reopen_with_advanced_dependents"
+    assert dependent in res.json()["detail"]["message"]
+
+    move(client, dependent, "todo")  # la dépendante recule : réouverture permise
+    assert move(client, prereq, "in_progress").status_code == 200
+
+
 def test_dropped_dependency_counts_as_resolved(client):
     a = create(client, next_action="x")["id"]
     b = create(client)["id"]

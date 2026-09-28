@@ -42,6 +42,9 @@ def test_labelled_values_are_masked_but_label_kept(text):
         ("{'token': 'abc123'}", "{'token': '[REDACTED]'}"),
         ('{"api_key":"abc 123"}', '{"api_key":"[REDACTED]"}'),
         ("secret: hunter2}", "secret: [REDACTED]}"),
+        ("AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENG", "AWS_SECRET_ACCESS_KEY=[REDACTED]"),
+        ("CLIENT_SECRET=abc123", "CLIENT_SECRET=[REDACTED]"),
+        ('{"db.password": "x1"}', '{"db.password": "[REDACTED]"}'),
     ],
 )
 def test_quoted_credentials_are_masked(text, expected):
@@ -55,6 +58,8 @@ def test_quoted_credentials_are_masked(text, expected):
     [
         '{"password": ""}',
         'token: "[REDACTED]"',
+        "tokens: 187012 utilisés",
+        "passwords: 3 à changer",
         "Relire la PR #12 et lancer les tests",
         "Le token Google couvre calendar et drive.file",
         "commit:a1b2c3d",
