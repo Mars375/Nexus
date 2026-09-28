@@ -516,3 +516,15 @@ def test_identical_facts_racing_under_different_ids_are_noise(client, monkeypatc
     assert res.json()["detail"]["code"] == "noise"
     stored = client.get("/api/events", params={"task": ref}).json()
     assert [e["actor_event_id"] for e in stored] == ["evt_twin"]
+
+
+def test_partially_redacted_evidence_is_kept_as_proof_on_the_task(client):
+    ref = task(client, next_action="x", expected_evidence="commit")
+    publish(client, "working", task=ref, payload={"run_ref": "r1"})
+
+    done = publish(client, "done", "fini", task=ref, evidence=[f"commit:abc token={SECRET}"]).json()
+
+    assert done["effects"] == [{"action": "status:done", "applied": True}]
+    t = client.get(f"/api/tasks/{ref}").json()
+    assert t["status"] == "done"
+    assert t["evidence"] == ["commit:abc token=[REDACTED]"]

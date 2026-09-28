@@ -212,11 +212,10 @@ def change_status(
 
     final = target
     if target == "done":
-        # Une preuve vide ou masquée (secret collé) ne prouve rien.
-        refs = [
-            e.strip() for e in evidence or []
-            if e and e.strip() and secrets.REDACTED not in e
-        ]
+        # Une preuve vide ou réduite à un secret masqué ne prouve rien ; une preuve dont il
+        # reste une référence lisible (« commit:abc token=[REDACTED] ») compte. Même règle
+        # que les événements (secrets.is_blank).
+        refs = [e.strip() for e in evidence or [] if not secrets.is_blank(e)]
         if refs:
             task.evidence = list(dict.fromkeys([*task.evidence, *refs]))
         final = rules.resolve_done(task.expected_evidence, task.evidence)
