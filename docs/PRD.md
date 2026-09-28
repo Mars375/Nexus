@@ -169,7 +169,7 @@ Qu'est-ce qui risque d'être oublié ?
 
 1. Stack exacte du serveur/UI local (à trancher en Phase 0 — voir ARCHITECTURE §7).
 2. Emplacement des événements de coordination : Hermes natif vs base Nexus (voir DATA-MODEL §6).
-3. Périmètre mail : quelles boîtes, quelles règles de confidentialité (les scopes Gmail actuels ne couvrent pas Gmail — voir INTEGRATIONS).
+3. Périmètre mail : quelles boîtes, quelles règles de confidentialité (le token Google actuel couvre `calendar` et `drive.file`, pas Gmail — voir INTEGRATIONS §5).
 4. Cadence des rapports (quotidien ? hebdo ? les deux ?).
 5. Critères exacts pour qu'une tâche « attend Loïc » (relance auto vs attente passive).
 

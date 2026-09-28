@@ -33,7 +33,7 @@
 - Contexte connu : des échecs 429 transitoires existent côté Cortex (quota Go) ; le retry/fallback est géré par les nœuds, Nexus **observe**.
 - Rappel : le comportement mémoire des jobs cron est version-dépendant — à revérifier au moment de l'intégration.
 
-## 3. Sessions & délégaions (v1 → v2)
+## 3. Sessions & délégations (v1 → v2)
 
 - `state.db` (sessions/messages) pour les traces Hermes ; dossiers de délégation (`cache/delegation/live/…`).
 - Claude Code : sessions locales (`~/.claude`) ; Codex : `~/.codex` ; Orca : worktrees/devcontainers.

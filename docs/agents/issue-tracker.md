@@ -2,6 +2,8 @@
 
 Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all operations.
 
+Scope: GitHub issues track the **development of Nexus itself** (docs, code, design). Operational tasks that agents execute live in **Hermes Kanban** (ADR-002); never mirror one into the other.
+
 ## Conventions
 
 - **Create an issue**: `gh issue create --title "..." --body "..."`. Use a heredoc for multi-line bodies.

@@ -39,7 +39,7 @@ Règles générales :
   "actor": "helios",
   "kind": "progress",
   "subject": "Pont lecture Kanban : parse des tâches OK",
-  "body": "Les 0 tâche(s) du board default parsées ; structure validée sur la table tasks et task_runs.",
+  "body": "Tâches du board default parsées (board vide à ce jour) ; structure validée sur les tables tasks et task_runs.",
   "payload": { "percent": 40 },
   "evidence": ["commit:a1b2c3d", "file:F:/Projet/Nexus/docs/ARCHITECTURE.md"],
   "needs": []
@@ -65,10 +65,10 @@ Règles générales :
 | Kind | Sens | Requis en plus | Exemple |
 |---|---|---|---|
 | `claimed` | « je prends cette tâche » | — | `^ claimed #142 par helios` |
-| `working` | début d'exécution (run) | `run_ref` | `^ working #142, session tmux …` |
+| `working` | début d'exécution (run) | `payload.run_ref` | `^ working #142, session tmux …` |
 | `progress` | avancement notable | `payload.percent` ou description | `^ 40 % : parse OK` |
 | `question` | question à un acteur | `needs` + question explicite | `^ question → mnema : quel scope ?` |
-| `blocked` | bloqué | cause + `relance_at` ou plan | `^ bloqué : SSH artemis timeout` |
+| `blocked` | bloqué | cause + `payload.follow_up_at` ou plan | `^ bloqué : SSH artemis timeout` |
 | `needs_human` | décision de Loïc requise | décision attendue + options | `^ validation : publier l'épisode ?` |
 | `handoff` | transfert de responsabilité | receveur + prochaine action | `^ handoff → aether : reste à poser la clé` |
 | `review` | prêt pour revue | quoi vérifier + où | `^ review : PR #12, diff court` |
@@ -106,7 +106,7 @@ Blocage :
   "task": "kanban:default#7", "actor": "helios", "kind": "blocked",
   "subject": "SSH Artémis injoignable",
   "body": "Timeout Tailscale. Impact : pas de lecture de l'usine. Déblocage : nœud rallumé par Loïc.",
-  "payload": { "relance_at": "2026-09-29T09:00:00+02:00" }, "needs": ["loic"] }
+  "payload": { "follow_up_at": "2026-09-29T09:00:00+02:00" }, "needs": ["loic"] }
 ```
 
 Terminé avec preuve :

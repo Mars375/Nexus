@@ -56,7 +56,7 @@ références contextuelles → Mnēma (mémoire) · Synapse (architecture)
 - [docs/INSPIRATIONS.md](docs/INSPIRATIONS.md) — ce qu'on prend (et évite) ailleurs
 - [docs/GLOSSARY.md](docs/GLOSSARY.md) — vocabulaire
 - [DECISIONS.md](DECISIONS.md) — journal des décisions
-- `AGENTS.md` — règles pour les agents qui contribuent *(à ajouter après approbation de Loïc)*
+- [AGENTS.md](AGENTS.md) — configuration des agents qui contribuent (issue tracker, labels de triage, docs de domaine)
 
 ## Statut
 
