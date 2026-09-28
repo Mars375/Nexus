@@ -58,6 +58,19 @@ def test_other_node_off_is_offline():
     assert cortex.last_seen == "2026-09-28T10:00:00+02:00"
 
 
+@pytest.mark.parametrize("value", ["missing", "false", 1, None])
+def test_unreadable_online_field_is_unknown(value):
+    status = json.loads(tailscale_json())
+    if value == "missing":
+        del status["Peer"]["k3"]["Online"]
+    else:
+        status["Peer"]["k3"]["Online"] = value
+    artemis = by_id(nodes.probe(lambda: json.dumps(status)))["artemis"]
+
+    assert artemis.status == "unknown"
+    assert artemis.detail == "état en ligne non fourni par Tailscale"
+
+
 def test_missing_peer_is_unknown():
     status = json.loads(tailscale_json())
     del status["Peer"]["k1"]

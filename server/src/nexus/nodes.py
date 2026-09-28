@@ -123,7 +123,11 @@ def _state(spec: NodeSpec, peer: dict | None, measured_at: str) -> NodeState:
         return NodeState(**base, status="unknown", last_seen=None,
                          detail="absent du réseau Tailscale")
     last_seen = _last_seen(peer.get("LastSeen"))
-    if peer.get("Online"):
+    online = peer.get("Online")
+    if not isinstance(online, bool):  # absent ou illisible : rien ne se déduit (ADR-005)
+        return NodeState(**base, status="unknown", last_seen=last_seen,
+                         detail="état en ligne non fourni par Tailscale")
+    if online:
         return NodeState(**base, status="online", last_seen=None, detail=None)
     if spec.offline_by_design:
         return NodeState(**base, status="offline-by-design", last_seen=last_seen,
