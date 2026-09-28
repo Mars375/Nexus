@@ -83,6 +83,7 @@ pnpm lint        # ruff + oxlint
 
 - Données : `%LOCALAPPDATA%\Nexus\nexus.db` (modifiable avec `NEXUS_DATA_DIR`). La base est créée et migrée au démarrage.
 - Sauvegardes : `%LOCALAPPDATA%\Nexus\backups\`, une au démarrage puis toutes les 24 h, les 14 dernières conservées (`NEXUS_BACKUP_INTERVAL_HOURS`, `NEXUS_BACKUP_KEEP`).
+- Nœuds : lus en lecture seule via `tailscale status --json`, toutes les 60 s (`NEXUS_NODES_REFRESH_SECONDS`, binaire : `NEXUS_TAILSCALE_BIN`). Sans Tailscale, les nœuds s'affichent `unknown`.
 
 ## Structure du dépôt
 

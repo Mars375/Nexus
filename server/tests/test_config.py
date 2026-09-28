@@ -17,6 +17,12 @@ def test_rejects_invalid_backup_keep(tmp_path, keep):
         Settings(data_dir=tmp_path, backup_keep=keep)
 
 
+@pytest.mark.parametrize("seconds", [0, -5, math.inf])
+def test_rejects_invalid_nodes_refresh(tmp_path, seconds):
+    with pytest.raises(ValueError, match="NEXUS_NODES_REFRESH_SECONDS"):
+        Settings(data_dir=tmp_path, nodes_refresh_seconds=seconds)
+
+
 def test_from_env_rejects_invalid_values(tmp_path, monkeypatch):
     monkeypatch.setenv("NEXUS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("NEXUS_BACKUP_INTERVAL_HOURS", "0")

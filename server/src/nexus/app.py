@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
+from functools import partial
 from importlib.metadata import version
 
 from fastapi import FastAPI
 from sqlalchemy import text
 
-from nexus import backup, migrate
+from nexus import backup, migrate, nodes
 from nexus.clock import now
 from nexus.config import Settings
 from nexus.db import make_engine
@@ -18,8 +19,24 @@ from nexus.db import make_engine
 log = logging.getLogger("nexus")
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None, nodes_runner: nodes.Runner | None = None
+) -> FastAPI:
     settings = settings or Settings.from_env()
+    nodes_runner = nodes_runner or partial(nodes.run_tailscale, settings.tailscale_bin)
+
+    async def refresh_nodes(app: FastAPI) -> list[nodes.NodeState]:
+        # Hors de la boucle événementielle : un Tailscale lent ne bloque pas l'API.
+        app.state.nodes = await asyncio.to_thread(nodes.probe, nodes_runner)
+        return app.state.nodes
+
+    async def nodes_loop(app: FastAPI) -> None:
+        while True:
+            try:
+                await refresh_nodes(app)
+            except Exception:
+                log.exception("lecture de l'état des nœuds échouée")
+            await asyncio.sleep(settings.nodes_refresh_seconds)
 
     async def backup_loop() -> None:
         while True:
@@ -45,13 +62,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.engine = make_engine(settings.db_url)
         if not before_migration:
             backup.backup(settings.db_path, settings.backup_dir, settings.backup_keep)
-        task = asyncio.create_task(backup_loop())
+        app.state.nodes = None
+        tasks = [asyncio.create_task(backup_loop()), asyncio.create_task(nodes_loop(app))]
         try:
             yield
         finally:
-            task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
+            for task in tasks:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
             app.state.engine.dispose()
 
     app = FastAPI(title="Nexus", version=version("nexus"), lifespan=lifespan)
@@ -72,5 +91,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "db": {"status": db_status, "source": "nexus.db", "measured_at": now().isoformat()},
             "backup": {"last_at": last, "count": len(backups), "source": "nexus.db/backups"},
         }
+
+    @app.get("/api/nodes")
+    async def list_nodes() -> list[dict]:
+        """État des nœuds (lecture seule), chacun avec sa source et sa fraîcheur."""
+        states = app.state.nodes or await refresh_nodes(app)
+        return [s.to_dict() for s in states]
 
     return app
