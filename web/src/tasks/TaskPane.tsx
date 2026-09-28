@@ -215,7 +215,7 @@ function EditForm({ task }: { task: Task }) {
       <Section title="Détails">
         <div className="grid gap-3">
           <Field label="Titre">
-            <input className={inputClass} value={form.title} onChange={(e) => set('title', e.target.value)} />
+            <input className={inputClass} maxLength={200} value={form.title} onChange={(e) => set('title', e.target.value)} />
           </Field>
           <Field label="Objectif">
             <textarea className={inputClass} rows={2} value={form.objective} onChange={(e) => set('objective', e.target.value)} />

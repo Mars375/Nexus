@@ -67,6 +67,24 @@ test('créer, déplacer, commenter et filtrer une tâche', async ({ page }) => {
   await page.screenshot({ path: 'e2e/screenshots/travail.png' })
 })
 
+test('au clavier, Entrée ouvre une carte', async ({ page }) => {
+  await page.goto('/')
+  await createTask(page, 'Carte au clavier')
+  await card(page, 'Carte au clavier').focus()
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('complementary', { name: /Détail de Carte au clavier/ })).toBeVisible()
+})
+
+test('un rafraîchissement raté garde le tableau affiché', async ({ page }) => {
+  test.setTimeout(60_000)
+  await page.goto('/')
+  await createTask(page, 'Toujours visible')
+  await page.route('**/api/tasks', (route) => route.fulfill({ status: 503, body: '' }))
+
+  await expect(page.getByText('Tableau non à jour')).toBeVisible({ timeout: 20_000 })
+  await expect(card(page, 'Toujours visible')).toBeVisible()
+})
+
 test('un déplacement refusé revient en place avec la raison', async ({ page }) => {
   await page.goto('/')
   await createTask(page, 'Idée lointaine')

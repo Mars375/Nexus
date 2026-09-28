@@ -55,7 +55,7 @@ export function CreateTaskDialog({ open, onOpenChange }: { open: boolean; onOpen
     >
       <form onSubmit={submit} className="grid gap-3">
         <Field label="Titre">
-          <input className={inputClass} value={form.title} onChange={(e) => set('title', e.target.value)} autoFocus />
+          <input className={inputClass} maxLength={200} value={form.title} onChange={(e) => set('title', e.target.value)} autoFocus />
         </Field>
         <Field label="Objectif" hint="En une phrase : à quoi on reconnaît que c'est fait.">
           <textarea className={inputClass} rows={2} value={form.objective} onChange={(e) => set('objective', e.target.value)} />

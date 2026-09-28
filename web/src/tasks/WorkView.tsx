@@ -81,12 +81,19 @@ export function WorkView() {
         </header>
 
         {tasks.isPending && <p className="px-5 text-sm text-muted">Chargement des tâches…</p>}
-        {tasks.isError && (
+        {tasks.isError && !tasks.data && (
           <p className="px-5 text-sm text-danger">
             Impossible de lire les tâches : le serveur Nexus ne répond pas.
           </p>
         )}
-        {tasks.isSuccess && all.length === 0 && (
+        {/* Un rafraîchissement raté garde le tableau connu, signalé comme non à jour (ADR-005). */}
+        {tasks.isError && tasks.data && (
+          <p role="status" className="px-5 pb-2 text-xs text-attention">
+            Tableau non à jour : le dernier rafraîchissement a échoué, nouvel essai dans quelques
+            secondes.
+          </p>
+        )}
+        {tasks.data && all.length === 0 && (
           <div className="px-5 py-10 text-sm">
             <p className="font-medium">Aucune tâche pour l'instant.</p>
             <p className="mt-1 text-muted">Crée la première : elle restera ici, sans lancer d'agent.</p>
@@ -95,7 +102,7 @@ export function WorkView() {
             </Button>
           </div>
         )}
-        {tasks.isSuccess && all.length > 0 && (
+        {tasks.data && all.length > 0 && (
           <Board tasks={visible} allTasks={all} statuses={statuses} onOpen={setOpenId} />
         )}
       </div>

@@ -34,7 +34,10 @@ export function Board({ tasks, allTasks, statuses, onOpen }: Props) {
   const [pending, setPending] = useState<{ task: Task; to: Status } | null>(null)
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor),
+    // Espace pour saisir et poser une carte ; Entrée reste libre pour l'ouvrir.
+    useSensor(KeyboardSensor, {
+      keyboardCodes: { start: ['Space'], cancel: ['Escape'], end: ['Space'] },
+    }),
   )
 
   const statusById = useMemo(() => new Map(allTasks.map((t) => [t.id, t.status])), [allTasks])
@@ -79,7 +82,7 @@ export function Board({ tasks, allTasks, statuses, onOpen }: Props) {
       accessibility={{
         screenReaderInstructions: {
           draggable:
-            'Pour déplacer une tâche, appuie sur espace, déplace-la avec les flèches jusqu’à la colonne voulue, puis espace pour la poser ou Échap pour annuler. Le panneau de détail propose aussi des boutons de changement de statut.',
+            'Entrée ouvre la tâche. Pour la déplacer, appuie sur espace, déplace-la avec les flèches jusqu’à la colonne voulue, puis espace pour la poser ou Échap pour annuler. Le panneau de détail propose aussi des boutons de changement de statut.',
         },
       }}
     >
