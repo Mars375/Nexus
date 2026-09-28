@@ -135,7 +135,7 @@ def test_repeating_a_question_without_task_is_noise_too(client):
 def test_secrets_never_reach_the_database(client):
     ref = task(client)
     event = publish(client, "progress", f"clé {SECRET}", task=ref, body=f"token={SECRET}",
-                    payload={"note": SECRET}).json()
+                    payload={"note": SECRET, "percent": 40}).json()
 
     stored = client.get(f"/api/events/{event['id']}").text
     assert SECRET not in stored
@@ -170,3 +170,30 @@ def test_no_update_or_delete_route_exists(client):
 
     assert client.patch(f"/api/events/{event_id}", json={"subject": "x"}).status_code == 405
     assert client.delete(f"/api/events/{event_id}").status_code == 405
+
+
+def test_invalid_references_are_never_echoed(client):
+    res = publish(client, "claimed", task=SECRET)
+    assert res.status_code == 409 and SECRET not in res.text
+
+    for ref in (SECRET, "²", "9" * 5000):
+        res = client.get(f"/api/events/{ref}")
+        assert res.status_code == 404 and ref not in res.text
+
+
+def test_unknown_event_field_is_refused(client):
+    ref = task(client)
+    res = publish(client, "claimed", task=ref, statut="x")
+    assert res.status_code == 422
+    assert "champ inconnu" in res.text
+
+
+def test_secret_only_cause_or_evidence_does_not_count(client):
+    ref = task(client, next_action="x")
+    publish(client, "working", task=ref, payload={"run_ref": "r"})
+
+    blocked = publish(client, "blocked", task=ref, body=SECRET, payload={"plan": "p"})
+    assert blocked.json()["detail"]["code"] == "block_cause_required"
+
+    done = publish(client, "done", "Fini", task=ref, evidence=[SECRET]).json()
+    assert done["kind"] == "review"

@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from nexus.actors import ACTORS, HUMANS
+from nexus.secrets import is_blank
 from nexus.tasks.rules import RuleViolation
 
 KINDS = (
@@ -38,7 +39,8 @@ class Envelope:
 
 
 def _text(value: Any) -> str | None:
-    return value.strip() if isinstance(value, str) and value.strip() else None
+    """Texte utilisable, ou None (vide, ou réduit à des secrets masqués)."""
+    return value.strip() if isinstance(value, str) and not is_blank(value) else None
 
 
 def _instant(value: Any, name: str) -> datetime:
@@ -49,6 +51,11 @@ def _instant(value: Any, name: str) -> datetime:
     if instant is None or instant.tzinfo is None:
         raise RuleViolation("invalid_instant", f"{name} doit être un instant ISO-8601 avec fuseau")
     return instant
+
+
+def proofs(e: Envelope) -> list[str]:
+    """Preuves utilisables : une preuve vide ou masquée (secret collé) ne prouve rien."""
+    return [ref for ref in e.evidence if not is_blank(ref)]
 
 
 def cause_of(e: Envelope) -> str | None:
@@ -118,7 +125,7 @@ def validate(e: Envelope) -> str:
                     "ou dire ce qui débloquerait (payload.plan)",
                 )
         case "review":
-            if not e.evidence:
+            if not proofs(e):
                 raise RuleViolation("evidence_required", "review doit pointer la preuve à examiner")
         case "failed":
             if not cause_of(e):
@@ -132,6 +139,6 @@ def validate(e: Envelope) -> str:
                 )
             _instant(last, "payload.last_check_at")
         case "done":
-            if not e.evidence:
+            if not proofs(e):
                 return "review"  # preuve ou review (EVENT-PROTOCOL §4)
     return e.kind

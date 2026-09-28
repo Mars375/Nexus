@@ -8,12 +8,14 @@ dans l'événement (`effects`) au lieu de faire échouer la publication.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import StaleDataError
 
 from nexus import secrets
 from nexus.clock import now
@@ -31,13 +33,16 @@ NOISE_WINDOW = timedelta(minutes=10)
 
 class EventNotFound(Exception):
     def __init__(self, ref: str) -> None:
-        super().__init__(f"événement introuvable : {ref}")
+        # Jamais la valeur reçue : elle pourrait être un secret collé par erreur.
+        super().__init__(f"événement introuvable : {ref}" if ref.startswith("nx-evt-") else
+                         "événement introuvable : référence invalide")
 
 
 def parse_task_ref(ref: str) -> int:
     raw = ref.removeprefix("nx-task-")
-    if not raw.isdigit():
-        raise RuleViolation("unknown_task", f"référence de tâche invalide : {ref}")
+    if not re.fullmatch(r"[0-9]{1,12}", raw):
+        # La valeur reçue n'est jamais recopiée (elle pourrait être un secret).
+        raise RuleViolation("unknown_task", "référence de tâche invalide")
     return int(raw)
 
 
@@ -93,9 +98,11 @@ def publish(
 
 def get_event(session: Session, ref: str) -> Event:
     raw = ref.removeprefix("nx-evt-")
-    event = session.get(Event, int(raw)) if raw.isdigit() else None
+    if not re.fullmatch(r"[0-9]{1,12}", raw):
+        raise EventNotFound("")
+    event = session.get(Event, int(raw))
     if event is None:
-        raise EventNotFound(ref)
+        raise EventNotFound(f"nx-evt-{int(raw)}")
     return event
 
 
@@ -167,7 +174,7 @@ def _apply_effects(session: Session, event: Event, e: Envelope, task: Task) -> l
             fn()
             savepoint.commit()
             effects.append({"action": action, "applied": True})
-        except (RuleViolation, IntegrityError) as exc:
+        except (RuleViolation, IntegrityError, StaleDataError) as exc:
             savepoint.rollback()
             session.refresh(task)
             message = exc.message if isinstance(exc, RuleViolation) else "conflit en base"

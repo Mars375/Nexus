@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Header, HTTPException, Query, Response, status
-from pydantic import AwareDatetime, BaseModel, Field, StringConstraints
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
 
 from nexus.actors import Actor
 from nexus.clock import now
@@ -26,6 +26,8 @@ router = APIRouter(prefix="/api/events", tags=["événements"])
 
 class EventIn(BaseModel):
     """Enveloppe EVENT-PROTOCOL §2."""
+
+    model_config = ConfigDict(extra="forbid")  # un champ inconnu n'est jamais ignoré
 
     v: Literal[1] = 1
     id: str = Field(min_length=1, max_length=128, description="identifiant unique chez l'acteur")
