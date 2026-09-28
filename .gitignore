@@ -8,3 +8,8 @@ __pycache__/
 *.db
 *.db-wal
 *.db-shm
+
+# Artefacts de tests de bout en bout
+web/e2e/screenshots/
+web/test-results/
+web/playwright-report/
