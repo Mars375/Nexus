@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Header, HTTPException, Query, Response, status
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+)
 
 from nexus.actors import Actor
 from nexus.clock import now
@@ -39,6 +47,23 @@ class EventIn(BaseModel):
     subject: str = Field(min_length=1, max_length=500)
     body: str | None = None
     payload: dict[str, Any] = {}
+
+    @field_validator("payload")
+    @classmethod
+    def _finite_numbers_only(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        # NaN et Infinity passent le décodage mais cassent la sérialisation des réponses.
+        def check(value: Any) -> None:
+            if isinstance(value, float) and not math.isfinite(value):
+                raise ValueError("le payload ne peut pas contenir NaN ni Infinity")
+            if isinstance(value, dict):
+                for item in value.values():
+                    check(item)
+            elif isinstance(value, list):
+                for item in value:
+                    check(item)
+
+        check(payload)
+        return payload
     evidence: list[Ref] = []
     needs: list[Actor] = []
 

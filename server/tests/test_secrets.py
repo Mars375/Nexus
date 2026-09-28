@@ -105,3 +105,10 @@ def test_is_blank_ignores_redactions_and_their_labels(text, blank):
     from nexus.secrets import is_blank
 
     assert is_blank(text) is blank
+
+
+def test_values_under_credential_named_keys_are_masked():
+    cleaned, found = redact_value({"password": "hunter2", "tokens": 3000, "note": "rien"})
+
+    assert cleaned == {"password": REDACTED, "tokens": 3000, "note": "rien"}
+    assert found == ["credential"]

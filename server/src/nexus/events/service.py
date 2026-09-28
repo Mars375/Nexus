@@ -178,7 +178,11 @@ def _task(session: Session, ref: str | None) -> Task | None:
 
 
 def _run_ref(e: Envelope) -> str | None:
-    return e.run or e.payload.get("run_ref")
+    """Référence du run : `run` s'il dit quelque chose, sinon `payload.run_ref`."""
+    for candidate in (e.run, e.payload.get("run_ref")):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return None
 
 
 def _fingerprint(kind, task_id, run, subject, body, payload, evidence, needs) -> tuple:

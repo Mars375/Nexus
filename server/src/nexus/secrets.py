@@ -32,14 +32,19 @@ _URL_CREDENTIALS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^\s:/@]+:)([^\s@/]+)
 # Couvre aussi la forme JSON/YAML collée ({"password": "hunter2"}, 'token': 'abc') et les
 # variables d'environnement préfixées (AWS_SECRET_ACCESS_KEY=…, CLIENT_SECRET=…). Préfixe
 # et suffixe doivent être séparés par _ . ou - : « tokens: 3000 » n'est pas un secret.
-_ASSIGNMENT = re.compile(
-    r"(?i)(?<![\w.-])("
+_LABEL = (
     r"(?:[\w.-]*[_.-])?"
     r"(?:password|passwd|pwd|secret|api[ _-]?key|access[ _-]?token|private[ _-]?key|token"
     # Codes à usage unique (SECURITY §1 : les codes 2FA sont des secrets).
     r"|otp|totp|2fa|mfa|verification[ _-]?code|one[ _-]?time[ _-]?code)"
     r"(?:[_.-][\w.-]*)?"
-    r"|mot de passe|mdp|code de vérification)"
+    r"|mot de passe|mdp|code de vérification"
+)
+# Clé JSON qui nomme un identifiant : {"password": "…"} — sa valeur est un secret.
+_CREDENTIAL_KEY = re.compile(rf"(?i){_LABEL}")
+
+_ASSIGNMENT = re.compile(
+    rf"(?i)(?<![\w.-])({_LABEL})"
     r"([\"']?\s*[:=]\s*)"
     r"(?:\"([^\"]*)\"|'([^']*)'|([^\s,;}\"']+))"
 )
@@ -98,8 +103,24 @@ def redact_value(value: Any) -> tuple[Any, list[str]]:
         if isinstance(v, list):
             return [walk(x) for x in v]
         if isinstance(v, dict):
-            return {(walk(k) if isinstance(k, str) else k): walk(x) for k, x in v.items()}
+            return {
+                (walk(k) if isinstance(k, str) else k): mask_if_credential(k, x)
+                for k, x in v.items()
+            }
         return v
+
+    def mask_if_credential(key: Any, value: Any) -> Any:
+        if (
+            isinstance(key, str)
+            and _CREDENTIAL_KEY.fullmatch(key.strip())
+            and isinstance(value, str | int | float)
+            and not isinstance(value, bool)
+            and str(value).strip()
+            and value != REDACTED
+        ):
+            found.add("credential")
+            return REDACTED
+        return walk(value)
 
     return walk(value), sorted(found)
 

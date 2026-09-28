@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import pytest
+
 AT = "2026-09-28T09:05:00+02:00"
 SECRET = "ghp_" + "B" * 36
 
@@ -385,3 +387,36 @@ def test_handoff_needs_exactly_one_recipient(client):
     res = publish(client, "handoff", task=ref, needs=["aether", "mnema"],
                   payload={"next_action": "poser la clé"})
     assert res.json()["detail"]["code"] == "single_recipient_required"
+
+
+def test_values_under_credential_keys_are_redacted(client):
+    ref = task(client)
+    event = publish(client, "progress", task=ref,
+                    payload={"percent": 5, "password": "hunter2", "db": {"api_key": "abc"}}).json()
+
+    stored = client.get(f"/api/events/{event['id']}").text
+    assert "hunter2" not in stored and '"abc"' not in stored
+    assert event["redacted"] == ["credential"]
+
+
+@pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity"])
+def test_non_finite_numbers_are_refused_not_stored(client, literal):
+    ref = task(client)
+    # Corps écrit à la main : json.dumps refuserait de produire NaN/Infinity en JSON strict.
+    body = (
+        f'{{"id": "evt_nan", "at": "{AT}", "actor": "helios", "kind": "progress", '
+        f'"subject": "s", "task": "{ref}", "payload": {{"percent": 5, "x": {literal}}}}}'
+    )
+    res = client.post("/api/events", content=body, headers={"Content-Type": "application/json"})
+
+    assert res.status_code == 422
+    assert client.get("/api/events", params={"task": ref}).json() == []
+
+
+def test_blank_top_level_run_falls_back_to_payload_run_ref(client):
+    ref = task(client, next_action="x")
+    publish(client, "working", "r1", task=ref, run="   ", payload={"run_ref": "r1"})
+
+    done = publish(client, "done", "fini", task=ref, evidence=["commit:x"],
+                   payload={"run_ref": "r1"}).json()
+    assert done["effects"] == [{"action": "status:done", "applied": True}]
