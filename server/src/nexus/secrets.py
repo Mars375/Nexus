@@ -86,7 +86,8 @@ def is_blank(text: str | None) -> bool:
 
 
 def redact_value(value: Any) -> tuple[Any, list[str]]:
-    """Comme `redact`, sur une chaîne, une liste ou un dict (clés conservées)."""
+    """Comme `redact`, sur une chaîne, une liste ou un dict — clés comprises : un secret
+    collé comme nom de propriété JSON serait sinon stocké tel quel."""
     found: set[str] = set()
 
     def walk(v: Any) -> Any:
@@ -97,7 +98,7 @@ def redact_value(value: Any) -> tuple[Any, list[str]]:
         if isinstance(v, list):
             return [walk(x) for x in v]
         if isinstance(v, dict):
-            return {k: walk(x) for k, x in v.items()}
+            return {(walk(k) if isinstance(k, str) else k): walk(x) for k, x in v.items()}
         return v
 
     return walk(value), sorted(found)

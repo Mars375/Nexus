@@ -75,7 +75,7 @@ def publish(
             f"l'identifiant {actor_event_id} a déjà servi pour un autre événement de "
             f"{envelope.actor} : un événement ne se réécrit pas, publie une correction",
         )
-    _refuse_noise(session, envelope, task)
+    _refuse_noise(session, envelope, task, actor_event_id)
     if kind == "working":
         _refuse_second_active_run(session, envelope, task)
 
@@ -94,7 +94,17 @@ def publish(
     session.add(event)
     try:
         session.flush()
-    except IntegrityError as exc:  # course sur le même identifiant
+    except IntegrityError as exc:  # course avec un renvoi simultané du même identifiant
+        session.rollback()
+        winner = session.scalar(
+            select(Event).where(
+                Event.actor == envelope.actor, Event.actor_event_id == actor_event_id
+            )
+        )
+        if winner is not None and _same(winner, envelope, task) and (
+            winner.at.timestamp() == at.timestamp()
+        ):
+            return winner, False
         raise RuleViolation("event_id_reused", "identifiant d'événement déjà utilisé") from exc
     event.effects = _apply_effects(session, event, envelope, task) if task else []
     return event, True
@@ -170,10 +180,17 @@ def _refuse_second_active_run(session: Session, e: Envelope, task: Task | None) 
         .where(Event.actor == e.actor, Event.task_id == task.id)
         .order_by(Event.id.desc())
     )
+    # Du plus récent au plus ancien : les clôtures vues avant le dernier working ne comptent
+    # que si elles visent ce run (ou n'en nomment aucun) — une clôture tardive d'un ancien
+    # run ne libère pas le run actif.
+    closed_runs: list[str | None] = []
     for previous in history:
         if previous.kind in RUN_CLOSERS:
-            return
+            closed_runs.append(previous.run_ref)
+            continue
         if previous.kind == "working":
+            if None in closed_runs or previous.run_ref in closed_runs:
+                return
             if previous.run_ref != _run_ref(e):
                 raise RuleViolation(
                     "run_already_active",
@@ -183,12 +200,16 @@ def _refuse_second_active_run(session: Session, e: Envelope, task: Task | None) 
             return
 
 
-def _refuse_noise(session: Session, e: Envelope, task: Task | None) -> None:
+def _refuse_noise(
+    session: Session, e: Envelope, task: Task | None, actor_event_id: str
+) -> None:
     # `task_id = NULL` n'est jamais vrai en SQL : il faut IS NULL pour les événements sans tâche.
     same_task = Event.task_id == task.id if task else Event.task_id.is_(None)
     recent = session.scalars(
         select(Event).where(
-            Event.actor == e.actor, same_task, Event.received_at >= now() - NOISE_WINDOW
+            Event.actor == e.actor, same_task, Event.received_at >= now() - NOISE_WINDOW,
+            # Le même identifiant n'est pas du bruit : c'est un renvoi, traité en relecture.
+            Event.actor_event_id != actor_event_id,
         )
     )
     for previous in recent:

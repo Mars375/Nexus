@@ -243,3 +243,50 @@ def test_only_one_active_run_per_agent_and_task(client):
     publish(client, "blocked", task=ref, body="attente", payload={"plan": "p"})
     assert publish(client, "working", "Reprise", task=ref,
                    payload={"run_ref": "r2"}).status_code == 201
+
+
+def test_secret_used_as_payload_key_is_redacted(client):
+    ref = task(client)
+    event = publish(client, "progress", task=ref, payload={"percent": 10, SECRET: "x"}).json()
+
+    assert SECRET not in client.get(f"/api/events/{event['id']}").text
+    assert event["redacted"] == ["github_token"]
+
+
+def test_late_closer_of_an_old_run_does_not_free_the_active_run(client):
+    ref = task(client, next_action="x")
+    publish(client, "working", "r1", task=ref, payload={"run_ref": "r1"})
+    publish(client, "blocked", "pause r1", task=ref, body="attente",
+            payload={"plan": "p", "run_ref": "r1"})
+    publish(client, "working", "r2", task=ref, payload={"run_ref": "r2"})
+    publish(client, "failed", "fin tardive de r1", task=ref, body="timeout",
+            payload={"run_ref": "r1"})
+
+    res = publish(client, "working", "r3", task=ref, payload={"run_ref": "r3"})
+    assert res.json()["detail"]["code"] == "run_already_active"
+
+
+def test_identical_resend_racing_the_first_is_a_read_back(client, monkeypatch):
+    from datetime import datetime
+
+    from nexus.events import service
+    from nexus.events.rules import Envelope
+
+    ref = task(client)
+    make = client.app.state.sessionmaker
+    original = service._refuse_noise
+
+    def racing(session, envelope, task_row, actor_event_id):
+        # Juste avant l'insertion, un renvoi identique est enregistré par une autre requête.
+        monkeypatch.setattr(service, "_refuse_noise", original)
+        with make() as other:
+            service.publish(other, Envelope(actor="helios", kind="claimed", subject="s",
+                                            task=ref), "evt_race", datetime.fromisoformat(AT))
+            other.commit()
+        original(session, envelope, task_row, actor_event_id)
+
+    monkeypatch.setattr(service, "_refuse_noise", racing)
+    res = publish(client, "claimed", task=ref, id="evt_race")
+
+    assert res.status_code == 200
+    assert len(client.get("/api/events", params={"task": ref}).json()) == 1
