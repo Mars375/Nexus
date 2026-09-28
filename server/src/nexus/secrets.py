@@ -26,9 +26,11 @@ _FULL: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 # « mot de passe : xyz », « token=abc »… : on masque la valeur, on garde l'étiquette.
+# Couvre aussi la forme JSON/YAML collée : {"password": "hunter2"}, 'token': 'abc'.
 _ASSIGNMENT = re.compile(
     r"(?i)\b(password|passwd|pwd|mot de passe|mdp|secret|api[ _-]?key|access[ _-]?token|token)"
-    r"(\s*[:=]\s*)([^\s,;]+)"
+    r"([\"']?\s*[:=]\s*)"
+    r"(?:\"([^\"]*)\"|'([^']*)'|([^\s,;}\"']+))"
 )
 
 
@@ -41,10 +43,13 @@ def redact(text: str) -> tuple[str, list[str]]:
             found.append(kind)
 
     def mask_value(match: re.Match[str]) -> str:
-        if match.group(3) == REDACTED:
+        label, separator, double, single, bare = match.groups()
+        value = next(v for v in (double, single, bare) if v is not None)
+        if not value or value == REDACTED:
             return match.group(0)
         found.append("credential")
-        return f"{match.group(1)}{match.group(2)}{REDACTED}"
+        quote = '"' if double is not None else "'" if single is not None else ""
+        return f"{label}{separator}{quote}{REDACTED}{quote}"
 
     text = _ASSIGNMENT.sub(mask_value, text)
     return text, sorted(set(found))

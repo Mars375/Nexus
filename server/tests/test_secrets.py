@@ -36,8 +36,25 @@ def test_labelled_values_are_masked_but_label_kept(text):
 
 
 @pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ('{"password": "hunter2"}', '{"password": "[REDACTED]"}'),
+        ("{'token': 'abc123'}", "{'token': '[REDACTED]'}"),
+        ('{"api_key":"abc 123"}', '{"api_key":"[REDACTED]"}'),
+        ("secret: hunter2}", "secret: [REDACTED]}"),
+    ],
+)
+def test_quoted_credentials_are_masked(text, expected):
+    cleaned, found = redact(text)
+    assert cleaned == expected
+    assert found == ["credential"]
+
+
+@pytest.mark.parametrize(
     "text",
     [
+        '{"password": ""}',
+        'token: "[REDACTED]"',
         "Relire la PR #12 et lancer les tests",
         "Le token Google couvre calendar et drive.file",
         "commit:a1b2c3d",

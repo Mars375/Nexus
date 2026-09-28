@@ -188,10 +188,11 @@ def test_dependencies_and_cycles(client):
 def test_every_mutation_is_in_history(client):
     ref = create(client, next_action="x")["id"]
     other = create(client)["id"]
+    move(client, other, "dropped", reason="traitée")  # dépendance déjà traitée
     client.patch(f"/api/tasks/{ref}", json={"priority": "high"})
     move(client, ref, "in_progress")
     client.post(f"/api/tasks/{ref}/comments", json={"body": "note"})
-    client.put(f"/api/tasks/{ref}/dependencies/{other}")
+    assert client.put(f"/api/tasks/{ref}/dependencies/{other}").status_code == 204
 
     history = client.get(f"/api/tasks/{ref}/history").json()
 
@@ -350,6 +351,20 @@ def test_dependencies_gate_progress_until_resolved(client):
     move(client, b, "in_progress")
     move(client, b, "done")
     assert move(client, a, "in_progress").status_code == 200
+
+
+def test_advanced_task_cannot_depend_on_unresolved_task(client):
+    done = create(client, next_action="x")["id"]
+    move(client, done, "in_progress")
+    move(client, done, "done")
+    pending = create(client)["id"]
+    finished = create(client, next_action="y")["id"]
+    move(client, finished, "in_progress")
+    move(client, finished, "done")
+
+    res = client.put(f"/api/tasks/{done}/dependencies/{pending}")
+    assert violation(res) == "dependency_on_advanced_task"
+    assert client.put(f"/api/tasks/{done}/dependencies/{finished}").status_code == 204
 
 
 def test_dropped_dependency_counts_as_resolved(client):

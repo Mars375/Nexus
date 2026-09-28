@@ -260,6 +260,14 @@ def add_dependency(session: Session, task: Task, other: Task, actor: str) -> Non
         raise RuleViolation(
             "dependency_cycle", f"{other.ref} dépend déjà de {task.ref} : cycle refusé"
         )
+    # Le contrôle des dépendances ne joue qu'aux transitions : une tâche déjà avancée ne
+    # peut pas dépendre après coup d'une tâche non traitée.
+    if task.status in rules.GATED_BY_DEPENDENCIES and other.status not in rules.DEPENDENCY_RESOLVED:
+        raise RuleViolation(
+            "dependency_on_advanced_task",
+            f"{task.ref} est déjà {task.status} : elle ne peut pas dépendre de {other.ref}, "
+            "qui n'est pas traitée",
+        )
     session.add(TaskDependency(task_id=task.id, depends_on_id=other.id))
     task.updated_at = now()
     _record(session, task, actor, "linked", {"depends_on": [None, other.ref]})
