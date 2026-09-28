@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import type { Status, StatusChange, Task } from '@/api'
-import { localInputToIso } from '@/format'
+import { formatDateTime, localInputToIso } from '@/format'
 import { Button, Dialog, Field, inputClass } from '@/ui'
 import { moveNeeds } from './moves'
 import { useMoveTask } from './queries'
@@ -25,7 +25,8 @@ export function MoveDialog({
   const [reason, setReason] = useState('')
   const [evidence, setEvidence] = useState('')
 
-  const blockReady = cause.trim() && (plan.trim() || followUp)
+  // Le serveur reprend la relance déjà posée sur la tâche : pas besoin de la ressaisir.
+  const blockReady = cause.trim() && (plan.trim() || followUp || task.follow_up_at)
   const ready =
     (!needs.nextAction || nextAction.trim()) &&
     (!needs.block || blockReady) &&
@@ -79,7 +80,10 @@ export function MoveDialog({
             <Field label="Ce qui débloquerait" hint="Ou une date de relance, au choix.">
               <input className={inputClass} value={plan} onChange={(e) => setPlan(e.target.value)} />
             </Field>
-            <Field label="Relance prévue">
+            <Field
+              label="Relance prévue"
+              hint={task.follow_up_at ? `Déjà prévue le ${formatDateTime(task.follow_up_at)} : laisse vide pour la garder.` : undefined}
+            >
               <input
                 type="datetime-local"
                 className={inputClass}

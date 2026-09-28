@@ -32,8 +32,12 @@ export function TaskCardBody({ task, pendingDependencies, now, lifted }: CardPro
       {task.status === 'blocked' && task.block_cause && (
         <p className="mt-1 text-xs text-attention">Bloqué : {task.block_cause}</p>
       )}
+      <p className="mt-1 line-clamp-2 text-xs text-muted">{task.objective}</p>
       {task.next_action && (
-        <p className="mt-1 line-clamp-2 text-xs text-muted">{task.next_action}</p>
+        <p className="mt-1 line-clamp-2 text-xs">
+          <span className="text-muted">Ensuite : </span>
+          {task.next_action}
+        </p>
       )}
       <footer className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-2xs text-muted">
         {task.lead_agent && <AgentMark actor={task.lead_agent} />}

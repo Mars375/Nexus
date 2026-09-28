@@ -32,11 +32,11 @@ test('créer, déplacer, commenter et filtrer une tâche', async ({ page }) => {
   await expect(page.getByText('Aucune tâche pour l’instant.').or(page.getByText("Aucune tâche pour l'instant."))).toBeVisible()
 
   await createTask(page, 'Relever les statuts', { todo: 'Lire kanban_db.py' })
-  await expect(column(page, 'À faire').getByText('Relever les statuts')).toBeVisible()
+  await expect(column(page, 'À faire').getByText('Relever les statuts', { exact: true })).toBeVisible()
 
   await drag(page, 'Relever les statuts', 'En cours')
-  await expect(column(page, 'En cours').getByText('Relever les statuts')).toBeVisible()
-  await expect(column(page, 'En cours').getByText('Opération principale')).toBeVisible()
+  await expect(column(page, 'En cours').getByText('Relever les statuts', { exact: true })).toBeVisible()
+  await expect(column(page, 'En cours').getByText('Opération principale', { exact: true })).toBeVisible()
 
   await card(page, 'Relever les statuts').click()
   const pane = page.getByRole('complementary', { name: /Détail de Relever les statuts/ })
@@ -60,7 +60,7 @@ test('créer, déplacer, commenter et filtrer une tâche', async ({ page }) => {
   await createTask(page, 'Écrire la note')
   await page.getByLabel('Filtrer par agent').selectOption('helios')
   await expect(card(page, 'Écrire la note')).toBeHidden()
-  await expect(column(page, 'En cours').getByText('Relever les statuts')).toBeVisible()
+  await expect(column(page, 'En cours').getByText('Relever les statuts', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Effacer les filtres' }).click()
   await expect(card(page, 'Écrire la note')).toBeVisible()
 
@@ -88,20 +88,20 @@ test('un rafraîchissement raté garde le tableau affiché', async ({ page }) =>
 test('un déplacement refusé revient en place avec la raison', async ({ page }) => {
   await page.goto('/')
   await createTask(page, 'Idée lointaine')
-  await expect(column(page, 'Plus tard').getByText('Idée lointaine')).toBeVisible()
+  await expect(column(page, 'Plus tard').getByText('Idée lointaine', { exact: true })).toBeVisible()
 
   await drag(page, 'Idée lointaine', 'Terminé')
 
   await expect(page.getByText('Une tâche plus tard ne peut pas passer en terminé.')).toBeVisible()
-  await expect(column(page, 'Plus tard').getByText('Idée lointaine')).toBeVisible()
-  await expect(column(page, 'Terminé').getByText('Idée lointaine')).toBeHidden()
+  await expect(column(page, 'Plus tard').getByText('Idée lointaine', { exact: true })).toBeVisible()
+  await expect(column(page, 'Terminé').getByText('Idée lointaine', { exact: true })).toBeHidden()
 })
 
 test('bloquer demande la cause et ce qui débloquerait', async ({ page }) => {
   await page.goto('/')
   await createTask(page, 'Lire Artémis', { todo: 'SSH vers artemis' })
   await drag(page, 'Lire Artémis', 'En cours')
-  await expect(column(page, 'En cours').getByText('Lire Artémis')).toBeVisible()
+  await expect(column(page, 'En cours').getByText('Lire Artémis', { exact: true })).toBeVisible()
 
   await drag(page, 'Lire Artémis', 'Bloqué')
   const dialog = page.getByRole('dialog')
@@ -111,11 +111,11 @@ test('bloquer demande la cause et ce qui débloquerait', async ({ page }) => {
   await dialog.getByLabel('Ce qui débloquerait').fill('Loïc rallume le nœud')
   await confirm.click()
 
-  await expect(column(page, 'Bloqué').getByText('Bloqué : Artémis éteint')).toBeVisible()
+  await expect(column(page, 'Bloqué').getByText('Bloqué : Artémis éteint', { exact: true })).toBeVisible()
   await page.screenshot({ path: 'e2e/screenshots/bloque.png' })
   await page.emulateMedia({ colorScheme: 'dark' })
   await page.reload()
-  await expect(column(page, 'Bloqué').getByText('Bloqué : Artémis éteint')).toBeVisible()
+  await expect(column(page, 'Bloqué').getByText('Bloqué : Artémis éteint', { exact: true })).toBeVisible()
   await page.screenshot({ path: 'e2e/screenshots/bloque-sombre.png' })
 })
 

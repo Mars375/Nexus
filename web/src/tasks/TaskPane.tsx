@@ -173,6 +173,12 @@ function EditForm({ task }: { task: Task }) {
       setForm(next)
       setChangedElsewhere(false)
     }
+  } else if (!dirty && changedElsewhere) {
+    // Loïc a annulé ses modifications après un changement extérieur : on rejoint la tâche.
+    const next = draftFrom(task)
+    setBase(next)
+    setForm(next)
+    setChangedElsewhere(false)
   }
 
   const changes = Object.assign({}, ...edited.map((key) => toChange(key, form))) as TaskChanges
