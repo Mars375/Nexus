@@ -112,6 +112,16 @@ describe('dépendances', () => {
     expect(dependencyBlock(dependent, 'backlog', [prereq, dependent])).toBeNull()
   })
 
+  test("rouvrir un prérequis dont une dépendante a avancé est bloqué", () => {
+    const done = task({ id: 'p', title: 'Prérequis', status: 'done' })
+    const advanced = task({ id: 'd', title: 'Dépendante', status: 'in_progress', depends_on: ['p'] })
+    expect(dependencyBlock(done, 'in_progress', [done, advanced])).toBe(
+      'Impossible de rouvrir : Dépendante en dépend et a déjà avancé.',
+    )
+    const waiting = { ...advanced, status: 'todo' as const }
+    expect(dependencyBlock(done, 'in_progress', [done, waiting])).toBeNull()
+  })
+
   test('une dépendance terminée ou abandonnée ne bloque plus', () => {
     for (const status of ['done', 'dropped'] as const) {
       expect(dependencyBlock(dependent, 'in_progress', [{ ...prereq, status }, dependent])).toBeNull()

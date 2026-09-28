@@ -22,6 +22,18 @@ const DEPENDENCY_RESOLVED: Status[] = ['done', 'dropped']
 
 /** Si des dépendances non traitées interdisent ce passage, la raison ; sinon null. */
 export function dependencyBlock(task: Task, to: Status, all: Task[]): string | null {
+  // Rouvrir un prérequis traité laisserait ses dépendantes avancées sans prérequis (serveur :
+  // reopen_with_advanced_dependents).
+  if (DEPENDENCY_RESOLVED.includes(task.status) && !DEPENDENCY_RESOLVED.includes(to)) {
+    const advanced = all.filter(
+      (t) => t.depends_on.includes(task.id) && GATED_BY_DEPENDENCIES.includes(t.status),
+    )
+    if (advanced.length) {
+      const names = advanced.map((t) => t.title).join(', ')
+      const verbs = advanced.length > 1 ? 'en dépendent et ont' : 'en dépend et a'
+      return `Impossible de rouvrir : ${names} ${verbs} déjà avancé.`
+    }
+  }
   if (!GATED_BY_DEPENDENCIES.includes(to)) return null
   const pending = task.depends_on
     .map((id) => all.find((t) => t.id === id))
