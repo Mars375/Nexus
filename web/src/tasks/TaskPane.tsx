@@ -1,10 +1,11 @@
 import clsx from 'clsx'
+import { toast } from 'sonner'
 import { useState, type FormEvent, type ReactNode } from 'react'
 import type { Actor, HistoryEntry, Priority, Status, Task, TaskChanges } from '@/api'
 import { formatDateTime, isoToLocalInput, localInputToIso } from '@/format'
 import { AgentMark, Button, Field, inputClass } from '@/ui'
 import { MoveDialog } from './MoveDialog'
-import { ACTIVE_STATUSES, moveNeeds, needsPrompt, TRANSITIONS } from './moves'
+import { ACTIVE_STATUSES, dependencyBlock, moveNeeds, needsPrompt, TRANSITIONS } from './moves'
 import {
   useAddComment,
   useComments,
@@ -22,6 +23,11 @@ export function TaskPane({ task, tasks, onClose }: Props) {
   const move = useMoveTask()
 
   function requestMove(to: Status) {
+    const waiting = dependencyBlock(task, to, tasks)
+    if (waiting) {
+      toast.error(waiting)
+      return
+    }
     if (needsPrompt(moveNeeds(task, to))) setMoving(to)
     else move.mutate({ id: task.id, change: { status: to } })
   }
@@ -194,7 +200,9 @@ function EditForm({ task }: { task: Task }) {
       ? "L'objectif ne peut pas être vide."
       : ACTIVE_STATUSES.includes(task.status) && !after('next_action').trim()
         ? 'Une tâche active doit garder une prochaine action.'
-        : task.status === 'done' &&
+        : task.status === 'blocked' && !after('follow_up_at') && !task.block_plan?.trim()
+          ? 'Un blocage garde une relance ou ce qui le débloquerait.'
+          : task.status === 'done' &&
             task.evidence.length === 0 &&
             edited.includes('expected_evidence') &&
             form.expected_evidence.trim()

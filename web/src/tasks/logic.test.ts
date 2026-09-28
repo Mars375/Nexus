@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import type { Task } from '@/api'
 import { applyFilters, NO_FILTER } from './filters'
-import { canMove, moveNeeds, needsPrompt } from './moves'
+import { canMove, dependencyBlock, moveNeeds, needsPrompt } from './moves'
 import { compareTasks } from './vocabulary'
 
 const NOW = new Date('2026-09-28T12:00:00+02:00').getTime()
@@ -99,4 +99,22 @@ test("l'opération principale passe en tête, puis priorité puis échéance", (
     task({ id: 'main', operation_role: 'main', priority: 'low' }),
   ].sort(compareTasks)
   expect(sorted.map((t) => t.id)).toEqual(['main', 'critical', 'due-soon', 'due-late', 'low'])
+})
+
+describe('dépendances', () => {
+  const prereq = task({ id: 'p', title: 'Prérequis', status: 'todo' })
+  const dependent = task({ id: 'd', depends_on: ['p'] })
+
+  test('une dépendance non traitée bloque les passages concernés', () => {
+    expect(dependencyBlock(dependent, 'in_progress', [prereq, dependent])).toBe(
+      'En attente de : Prérequis.',
+    )
+    expect(dependencyBlock(dependent, 'backlog', [prereq, dependent])).toBeNull()
+  })
+
+  test('une dépendance terminée ou abandonnée ne bloque plus', () => {
+    for (const status of ['done', 'dropped'] as const) {
+      expect(dependencyBlock(dependent, 'in_progress', [{ ...prereq, status }, dependent])).toBeNull()
+    }
+  })
 })

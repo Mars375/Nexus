@@ -17,6 +17,18 @@ export const TRANSITIONS: Record<Status, Status[]> = {
 /** Tâche active : elle doit toujours porter une prochaine action. */
 export const ACTIVE_STATUSES: Status[] = ['todo', 'in_progress', 'blocked', 'review']
 
+const GATED_BY_DEPENDENCIES: Status[] = ['in_progress', 'review', 'done']
+const DEPENDENCY_RESOLVED: Status[] = ['done', 'dropped']
+
+/** Si des dépendances non traitées interdisent ce passage, la raison ; sinon null. */
+export function dependencyBlock(task: Task, to: Status, all: Task[]): string | null {
+  if (!GATED_BY_DEPENDENCIES.includes(to)) return null
+  const pending = task.depends_on
+    .map((id) => all.find((t) => t.id === id))
+    .filter((t): t is Task => !!t && !DEPENDENCY_RESOLVED.includes(t.status))
+  return pending.length ? `En attente de : ${pending.map((t) => t.title).join(', ')}.` : null
+}
+
 export function canMove(from: Status, to: Status): boolean {
   return TRANSITIONS[from].includes(to)
 }

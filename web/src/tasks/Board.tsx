@@ -15,7 +15,7 @@ import { toast } from 'sonner'
 import type { Status, Task } from '@/api'
 import { useNow } from '@/useNow'
 import { MoveDialog } from './MoveDialog'
-import { canMove, moveNeeds, needsPrompt } from './moves'
+import { canMove, dependencyBlock, moveNeeds, needsPrompt } from './moves'
 import { useMoveTask } from './queries'
 import { TaskCard, TaskCardBody } from './TaskCard'
 import { compareTasks, STATUS_LABEL } from './vocabulary'
@@ -64,6 +64,11 @@ export function Board({ tasks, allTasks, statuses, onOpen }: Props) {
     if (!task || !to || to === task.status) return
     if (!canMove(task.status, to)) {
       toast.error(`Une tâche ${STATUS_LABEL[task.status].toLowerCase()} ne peut pas passer en ${STATUS_LABEL[to].toLowerCase()}.`)
+      return
+    }
+    const waiting = dependencyBlock(task, to, allTasks)
+    if (waiting) {
+      toast.error(waiting)
       return
     }
     if (needsPrompt(moveNeeds(task, to))) {
