@@ -83,6 +83,8 @@ describe('filtres', () => {
   test('priorité, rôle et échéances', () => {
     expect(ids(applyFilters(tasks, { ...NO_FILTER, priority: 'high' }, NOW))).toEqual(['a'])
     expect(ids(applyFilters(tasks, { ...NO_FILTER, role: 'main' }, NOW))).toEqual(['c'])
+    const prepared = [...tasks, task({ id: 'e', status: 'todo', operation_role: 'auxiliary' })]
+    expect(ids(applyFilters(prepared, { ...NO_FILTER, role: 'auxiliary' }, NOW))).toEqual(['e'])
     expect(ids(applyFilters(tasks, { ...NO_FILTER, due: 'overdue' }, NOW))).toEqual(['b'])
     expect(ids(applyFilters(tasks, { ...NO_FILTER, due: 'week' }, NOW))).toEqual(['c'])
   })

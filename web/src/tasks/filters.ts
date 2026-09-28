@@ -29,7 +29,8 @@ export function applyFilters(tasks: Task[], f: Filters, now: number): Task[] {
     (t) =>
       (!f.agent || t.lead_agent === f.agent || t.collaborators.includes(f.agent)) &&
       (!f.priority || t.priority === f.priority) &&
-      (!f.role || (t.status === 'in_progress' && t.operation_role === f.role)) &&
+      // Même règle que le serveur : le rôle filtre aussi les tâches où il est seulement préparé.
+      (!f.role || t.operation_role === f.role) &&
       (f.due !== 'overdue' || (isOverdue(t.due_at, now) && t.status !== 'done')) &&
       (f.due !== 'week' ||
         (t.due_at !== null &&
