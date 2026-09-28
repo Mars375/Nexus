@@ -31,6 +31,17 @@ UPDATABLE = frozenset({
 })
 
 
+# Le rôle main/auxiliary se prépare avant le démarrage ou vaut pendant l'exécution.
+ROLE_STATUSES = frozenset({"backlog", "todo", "in_progress"})
+
+
+def _drop_blank_expectation(values: dict[str, Any]) -> dict[str, Any]:
+    """Une preuve attendue réduite à un secret masqué n'exprime aucune attente : on l'efface."""
+    if "expected_evidence" in values and secrets.is_blank(values["expected_evidence"]):
+        values = values | {"expected_evidence": None}
+    return values
+
+
 def get_task(session: Session, task_id: int) -> Task:
     task = session.get(Task, task_id)
     if task is None:
@@ -67,7 +78,7 @@ def list_tasks(
 
 def create_task(session: Session, data: dict[str, Any], actor: str) -> Task:
     redacted: dict[str, list[str]] = {}
-    data = secrets.redact_fields(data, redacted.__setitem__)
+    data = _drop_blank_expectation(secrets.redact_fields(data, redacted.__setitem__))
     status = data.pop("status", "backlog")
     if status not in rules.INITIAL_STATUSES:
         raise RuleViolation(
@@ -98,7 +109,7 @@ def update_task(session: Session, task: Task, changes: dict[str, Any], actor: st
     if unknown:
         raise RuleViolation("not_updatable", f"champs non modifiables ici : {sorted(unknown)}")
     redacted: dict[str, list[str]] = {}
-    changes = secrets.redact_fields(changes, redacted.__setitem__)
+    changes = _drop_blank_expectation(secrets.redact_fields(changes, redacted.__setitem__))
     role_before = task.operation_role
     diff = {}
     for field, value in changes.items():
@@ -120,6 +131,12 @@ def update_task(session: Session, task: Task, changes: dict[str, Any], actor: st
         raise RuleViolation(
             "evidence_missing_on_done",
             "cette tâche est terminée sans preuve : rouvre-la pour joindre la preuve attendue",
+        )
+    if "operation_role" in diff and task.operation_role and task.status not in ROLE_STATUSES:
+        raise RuleViolation(
+            "role_not_applicable",
+            "le rôle se prépare sur une tâche à venir ou en cours, pas sur une tâche "
+            f"{task.status}",
         )
     if task.status == "in_progress" and ({"operation_role", "human_owner"} & diff.keys()):
         task.operation_role = rules.resolve_role(

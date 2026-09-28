@@ -521,3 +521,33 @@ def test_unknown_fields_are_refused(client, method, path, body):
 def test_unknown_field_on_create_is_refused(client):
     res = client.post("/api/tasks", json={"title": "t", "objective": "o", "statut": "todo"})
     assert res.status_code == 422
+
+
+def test_secret_only_expected_evidence_is_cleared(client):
+    task = create(client, next_action="x", expected_evidence=SECRET)
+    assert task["expected_evidence"] is None
+
+    move(client, task["id"], "in_progress")
+    assert move(client, task["id"], "done").json()["status"] == "done"
+
+
+@pytest.mark.parametrize("status", ["done", "dropped", "blocked", "review"])
+def test_role_cannot_be_set_outside_preparation_or_progress(client, status):
+    ref = create(client, next_action="x")["id"]
+    move(client, ref, "in_progress")
+    if status == "blocked":
+        move(client, ref, "blocked", block_cause="c", block_plan="p")
+    elif status == "dropped":
+        move(client, ref, "dropped", reason="r")
+    else:
+        move(client, ref, status)
+
+    res = client.patch(f"/api/tasks/{ref}", json={"operation_role": "main"})
+    assert violation(res) == "role_not_applicable"
+    assert client.patch(f"/api/tasks/{ref}", json={"operation_role": None}).status_code == 200
+
+
+def test_role_can_be_prepared_on_upcoming_task(client):
+    ref = create(client, status="todo", next_action="x")["id"]
+    res = client.patch(f"/api/tasks/{ref}", json={"operation_role": "auxiliary"})
+    assert res.status_code == 200
