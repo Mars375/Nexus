@@ -17,7 +17,11 @@ function provenance({ db, backup }: Health, now: number): string {
 }
 
 export default function App() {
-  const health = useQuery({ queryKey: ['health'], queryFn: fetchHealth, refetchInterval: 10_000 })
+  const health = useQuery({
+    queryKey: ['health'],
+    queryFn: ({ signal }) => fetchHealth(signal),
+    refetchInterval: 10_000,
+  })
   const now = useNow()
 
   let status: string

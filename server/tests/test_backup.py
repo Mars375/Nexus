@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import UTC, datetime
 
 import pytest
 
@@ -32,6 +33,26 @@ def test_backup_keeps_only_the_most_recent(tmp_path):
     made = [backup.backup(db, backups_dir, keep=3) for _ in range(5)]
 
     assert backup.list_backups(backups_dir) == made[-3:]
+
+
+def test_rotation_survives_the_switch_to_winter_time(tmp_path, monkeypatch):
+    # 25/10/2026 : 02:50 CEST (avant le changement) puis 02:10 CET (après), 20 min plus tard.
+    before = datetime(2026, 10, 25, 0, 50, tzinfo=UTC)
+    after = datetime(2026, 10, 25, 1, 10, tzinfo=UTC)
+    db = tmp_path / "nexus.db"
+    _make_db(db)
+    backups_dir = tmp_path / "backups"
+
+    monkeypatch.setattr(backup, "_utcnow", lambda: before)
+    backup.backup(db, backups_dir, keep=1)
+    monkeypatch.setattr(backup, "_utcnow", lambda: after)
+    latest = backup.backup(db, backups_dir, keep=1)
+
+    assert backup.list_backups(backups_dir) == [latest]
+    # PEP 495 : dans l'heure répétée, == entre fuseaux différents est toujours faux ;
+    # on compare donc les instants.
+    assert backup.backup_time(latest).timestamp() == after.timestamp()
+    assert backup.backup_time(latest).isoformat() == "2026-10-25T02:10:00+01:00"
 
 
 def test_missing_source_fails_without_creating_it_or_touching_backups(tmp_path):

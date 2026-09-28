@@ -6,8 +6,17 @@ export type Health = {
   backup: { last_at: string | null; count: number; source: string }
 }
 
-export async function fetchHealth(): Promise<Health> {
-  const res = await fetch('/api/health')
+/** Au-delà, un contrôle sans réponse compte comme un échec (état unknown, ADR-005). */
+export const HEALTH_TIMEOUT_MS = 5_000
+
+export async function fetchHealth(
+  signal?: AbortSignal,
+  timeoutMs: number = HEALTH_TIMEOUT_MS,
+): Promise<Health> {
+  const timeout = AbortSignal.timeout(timeoutMs)
+  const res = await fetch('/api/health', {
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+  })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }
