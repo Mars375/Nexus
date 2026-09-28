@@ -36,11 +36,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         # Réversibilité (ROADMAP, règle 5) : copie de la base existante avant toute migration.
-        if settings.db_path.is_file() and migrate.pending(settings.db_url):
+        # Elle tient lieu de sauvegarde de démarrage : une seconde copie ferait tourner la
+        # rotation et pourrait effacer ce point de retour (ex. NEXUS_BACKUP_KEEP=1).
+        before_migration = settings.db_path.is_file() and migrate.pending(settings.db_url)
+        if before_migration:
             backup.backup(settings.db_path, settings.backup_dir, settings.backup_keep)
         migrate.upgrade(settings.db_url)
         app.state.engine = make_engine(settings.db_url)
-        backup.backup(settings.db_path, settings.backup_dir, settings.backup_keep)
+        if not before_migration:
+            backup.backup(settings.db_path, settings.backup_dir, settings.backup_keep)
         task = asyncio.create_task(backup_loop())
         try:
             yield
