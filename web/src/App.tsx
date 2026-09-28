@@ -21,6 +21,10 @@ export default function App() {
     queryKey: ['health'],
     queryFn: ({ signal }) => fetchHealth(signal),
     refetchInterval: 10_000,
+    // Serveur local : toujours tenter le contrôle (pas de pause « hors ligne »),
+    // et un échec compte tout de suite — l'état passe à unknown sans attendre des reprises.
+    networkMode: 'always',
+    retry: false,
   })
   const now = useNow()
 
