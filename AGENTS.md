@@ -1,5 +1,13 @@
 # AGENTS.md
 
+## Development
+
+- `server/`: Python (FastAPI, SQLAlchemy, Alembic), managed with `uv`. `web/`: React + TypeScript + Vite, managed with `pnpm`.
+- From the repo root: `pnpm install` then `pnpm bootstrap` once; `pnpm dev` to run; run `pnpm test` and `pnpm lint` before committing.
+- Schema changes go through a new Alembic migration in `server/src/nexus/migrations/versions/`; the server applies migrations on startup.
+- The UI only talks to the FastAPI API — no browser-only APIs, so the same UI can ship inside Tauri later (ADR-017).
+- Product docs and user-facing text are in French (ADR-009); identifiers stay in English.
+
 ## Agent skills
 
 ### Issue tracker

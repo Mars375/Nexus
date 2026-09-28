@@ -1,0 +1,39 @@
+[project]
+name = "nexus"
+version = "0.1.0"
+description = "Nexus — centre de contrôle de Loïc et de ses agents (serveur)"
+authors = [
+    { name = "Helios", email = "helios@nexus.local" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "alembic>=1.20.0",
+    "fastapi>=0.141.1",
+    "sqlalchemy>=2.1.1",
+    "tzdata>=2026.4",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[project.scripts]
+nexus = "nexus:main"
+nexus-dev = "nexus:dev"
+
+[build-system]
+requires = ["uv_build>=0.12.14,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[dependency-groups]
+dev = [
+    "httpx2>=2.13.1",
+    "pytest>=9.1.1",
+    "ruff>=0.16.9",
+]

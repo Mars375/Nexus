@@ -69,6 +69,23 @@ Nexus est une application locale et autonome qui réunit Loïc et tous ses agent
 - **2026-09-28** — Phase 0 : fondations documentaires. Refonte du même jour : Nexus devient une application autonome (ADR-011), et non plus une surcouche de Hermes Kanban.
 - **2026-09-28** — Phase 0 close (refonte relue et validée par Loïc). Phase 1 en cours : noyau (tableau Nexus, vue Maintenant, API d'événements).
 
-## Périmètre du dépôt
+## Lancer Nexus
 
-Ce dépôt contient la **documentation de conception** de Nexus. Le code viendra en Phase 1 (voir [docs/ROADMAP.md](docs/ROADMAP.md)). Les critères de chaque phase sont vérifiables et passent par un go explicite de Loïc.
+Prérequis : [uv](https://docs.astral.sh/uv/), Node.js et pnpm.
+
+```sh
+pnpm install     # outil de lancement (racine)
+pnpm bootstrap   # dépendances serveur (uv) + UI (pnpm)
+pnpm dev         # serveur http://127.0.0.1:8765 + UI http://localhost:5173
+pnpm test        # tests serveur (pytest) + UI (Vitest)
+pnpm lint        # ruff + oxlint
+```
+
+- Données : `%LOCALAPPDATA%\Nexus\nexus.db` (modifiable avec `NEXUS_DATA_DIR`). La base est créée et migrée au démarrage.
+- Sauvegardes : `%LOCALAPPDATA%\Nexus\backups\`, une au démarrage puis toutes les 24 h, les 14 dernières conservées (`NEXUS_BACKUP_INTERVAL_HOURS`, `NEXUS_BACKUP_KEEP`).
+
+## Structure du dépôt
+
+- `server/` — serveur Python (FastAPI, SQLAlchemy, Alembic), géré avec `uv`.
+- `web/` — UI React + TypeScript + Vite.
+- `docs/` — documentation de conception ; les critères de chaque phase sont vérifiables et passent par un go explicite de Loïc.

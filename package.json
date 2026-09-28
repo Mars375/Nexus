@@ -1,0 +1,13 @@
+{
+  "name": "nexus",
+  "private": true,
+  "scripts": {
+    "bootstrap":"uv sync --directory server && pnpm --dir web install",
+    "dev": "concurrently -k -n server,web -c blue,green \"uv run --directory server nexus-dev\" \"pnpm --dir web dev\"",
+    "test": "uv run --directory server pytest -q && pnpm --dir web test",
+    "lint": "uv run --directory server ruff check . && pnpm --dir web lint"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5"
+  }
+}
