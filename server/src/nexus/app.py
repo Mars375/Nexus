@@ -5,21 +5,43 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
+from functools import partial
 from importlib.metadata import version
 
 from fastapi import FastAPI
 from sqlalchemy import text
 
-from nexus import backup, migrate
+from nexus import backup, migrate, nodes
 from nexus.clock import now
 from nexus.config import Settings
 from nexus.db import make_engine
 
 log = logging.getLogger("nexus")
 
+FIRST_NODES_READ_SECONDS = 1.0
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+
+def create_app(
+    settings: Settings | None = None, nodes_runner: nodes.Runner | None = None
+) -> FastAPI:
     settings = settings or Settings.from_env()
+    nodes_runner = nodes_runner or partial(nodes.run_tailscale, settings.tailscale_bin)
+
+    async def refresh_nodes(app: FastAPI) -> list[nodes.NodeState]:
+        # Hors de la boucle événementielle : un Tailscale lent ne bloque pas l'API.
+        app.state.nodes = await asyncio.to_thread(nodes.probe, nodes_runner)
+        return app.state.nodes
+
+    async def nodes_loop(app: FastAPI, first_read: asyncio.Task) -> None:
+        # Une seule lecture à la fois : on attend la première avant de rafraîchir.
+        with suppress(Exception):
+            await first_read
+        while True:
+            await asyncio.sleep(settings.nodes_refresh_seconds)
+            try:
+                await refresh_nodes(app)
+            except Exception:
+                log.exception("lecture de l'état des nœuds échouée")
 
     async def backup_loop() -> None:
         while True:
@@ -45,13 +67,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.engine = make_engine(settings.db_url)
         if not before_migration:
             backup.backup(settings.db_path, settings.backup_dir, settings.backup_keep)
-        task = asyncio.create_task(backup_loop())
+        # Réponse immédiate (unknown) tant que la première lecture n'a pas abouti ; on lui
+        # laisse une seconde pour que le cas normal serve d'emblée l'état réel.
+        app.state.nodes = nodes.pending_snapshot()
+        first_read = asyncio.create_task(refresh_nodes(app))
+        await asyncio.wait({first_read}, timeout=FIRST_NODES_READ_SECONDS)
+        tasks = [
+            asyncio.create_task(backup_loop()),
+            asyncio.create_task(nodes_loop(app, first_read)),
+        ]
         try:
             yield
         finally:
-            task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
+            for task in tasks:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
             app.state.engine.dispose()
 
     app = FastAPI(title="Nexus", version=version("nexus"), lifespan=lifespan)
@@ -72,5 +103,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "db": {"status": db_status, "source": "nexus.db", "measured_at": now().isoformat()},
             "backup": {"last_at": last, "count": len(backups), "source": "nexus.db/backups"},
         }
+
+    @app.get("/api/nodes")
+    async def list_nodes() -> list[dict]:
+        """État des nœuds (lecture seule), chacun avec sa source et sa fraîcheur."""
+        return [s.to_dict() for s in app.state.nodes]
 
     return app
