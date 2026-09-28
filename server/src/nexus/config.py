@@ -22,6 +22,8 @@ class Settings:
     backup_interval_hours: float = 24.0
     host: str = "127.0.0.1"
     port: int = 8765
+    tailscale_bin: str = "tailscale"
+    nodes_refresh_seconds: float = 60.0
 
     def __post_init__(self) -> None:
         if self.backup_keep < 1:
@@ -33,6 +35,11 @@ class Settings:
             )
         if not 1 <= self.port <= 65535:
             raise ValueError(f"NEXUS_PORT doit être entre 1 et 65535 (reçu : {self.port})")
+        if not (math.isfinite(self.nodes_refresh_seconds) and self.nodes_refresh_seconds > 0):
+            raise ValueError(
+                "NEXUS_NODES_REFRESH_SECONDS doit être un nombre fini > 0 "
+                f"(reçu : {self.nodes_refresh_seconds})"
+            )
 
     @property
     def db_path(self) -> Path:
@@ -54,4 +61,6 @@ class Settings:
             backup_interval_hours=float(os.environ.get("NEXUS_BACKUP_INTERVAL_HOURS", "24")),
             host=os.environ.get("NEXUS_HOST", "127.0.0.1"),
             port=int(os.environ.get("NEXUS_PORT", "8765")),
+            tailscale_bin=os.environ.get("NEXUS_TAILSCALE_BIN", "tailscale"),
+            nodes_refresh_seconds=float(os.environ.get("NEXUS_NODES_REFRESH_SECONDS", "60")),
         )
