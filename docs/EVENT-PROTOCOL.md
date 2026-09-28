@@ -141,6 +141,8 @@ Un événement valide est **toujours enregistré** (c'est un fait déclaré). Se
 | `handoff` | le destinataire devient agent principal ; la prochaine action est mise à jour |
 | `progress`, `question`, `needs_human`, `failed`, `unknown` | aucun changement d'état : visibles dans l'historique et les vues |
 
+Un `done`, `review` ou `blocked` qui vise un autre run que le run actif de l'agent (ex. `done(r1)` arrivé après `working(r2)`) est enregistré mais ne modifie pas la tâche. Un seul run actif par agent et par tâche ; un `handoff` nomme **un seul** destinataire.
+
 Autres garanties : un renvoi du même `id` par le même acteur est une relecture (pas de doublon) ; un même `id` réutilisé pour un autre contenu est refusé ; le même fait republié dans les 10 minutes est refusé comme bruit ; les secrets sont masqués avant écriture.
 
 Exemple exécutable : `uv run python -m nexus.demo_agent --task nx-task-1 --actor helios --evidence commit:…` (`server/src/nexus/demo_agent.py`).

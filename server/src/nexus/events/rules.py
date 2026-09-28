@@ -110,6 +110,11 @@ def validate(e: Envelope) -> str:
                     "options_required", "needs_human doit proposer les options (payload.options)"
                 )
         case "handoff":
+            if len(set(e.needs)) != 1:
+                raise RuleViolation(
+                    "single_recipient_required",
+                    "un handoff transmet la responsabilité à un seul acteur (needs)",
+                )
             if e.actor in e.needs:
                 raise RuleViolation("handoff_to_self", "un handoff se fait vers un autre acteur")
             if not _text(e.payload.get("next_action")):

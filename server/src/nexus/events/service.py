@@ -93,7 +93,14 @@ def publish(
             # Sérialise les ouvertures de run : toucher la tâche fait jouer son verrou de version,
             # si bien que de deux « working » simultanés, le second échoue (409) au lieu de passer.
             task.updated_at = now()
-            session.flush()
+            try:
+                session.flush()
+            except StaleDataError:
+                # Perdu la course : si c'est un renvoi identique, c'est une relecture.
+                winner = _winner_of_race(session, envelope, actor_event_id, at, task)
+                if winner is not None:
+                    return winner, False
+                raise
 
     received = now()
     event = Event(
@@ -112,19 +119,25 @@ def publish(
     try:
         session.flush()
     except IntegrityError as exc:  # course avec un renvoi simultané du même identifiant
-        session.rollback()
-        winner = session.scalar(
-            select(Event).where(
-                Event.actor == envelope.actor, Event.actor_event_id == actor_event_id
-            )
-        )
-        if winner is not None and _same(winner, envelope, task) and (
-            winner.at.timestamp() == at.timestamp()
-        ):
+        winner = _winner_of_race(session, envelope, actor_event_id, at, task)
+        if winner is not None:
             return winner, False
         raise RuleViolation("event_id_reused", "identifiant d'événement déjà utilisé") from exc
     event.effects = _apply_effects(session, event, envelope, task) if task else []
     return event, True
+
+
+def _winner_of_race(
+    session: Session, e: Envelope, actor_event_id: str, at: datetime, task: Task | None
+) -> Event | None:
+    """Après un conflit d'écriture : l'événement gagnant, s'il est identique à celui-ci."""
+    session.rollback()
+    winner = session.scalar(
+        select(Event).where(Event.actor == e.actor, Event.actor_event_id == actor_event_id)
+    )
+    if winner is not None and _same(winner, e, task) and winner.at.timestamp() == at.timestamp():
+        return winner
+    return None
 
 
 def get_event(session: Session, ref: str) -> Event:
@@ -240,6 +253,29 @@ def _refuse_noise(
             )
 
 
+def _stale_run(session: Session, event: Event, task: Task) -> str | None:
+    """Si l'événement vise un autre run que le run actif de l'agent, la raison de l'ignorer.
+
+    Ex. : `done(r1)` arrivé après `working(r2)` ne clôt pas la tâche pendant que r2 tourne.
+    """
+    if event.kind == "working" or event.run_ref is None:
+        return None
+    last_working = session.scalar(
+        select(Event)
+        .where(
+            Event.actor == event.actor, Event.task_id == task.id, Event.kind == "working",
+            Event.id < event.id,
+        )
+        .order_by(Event.id.desc())
+    )
+    if last_working is None or last_working.run_ref in (None, event.run_ref):
+        return None
+    return (
+        f"concerne le run {event.run_ref}, alors que le run actif de {event.actor} "
+        f"est {last_working.run_ref}"
+    )
+
+
 def _apply_effects(session: Session, event: Event, e: Envelope, task: Task) -> list[dict]:
     """Traduit l'événement en mutations de la tâche, chacune tentée dans un point de sauvegarde."""
     effects: list[dict] = []
@@ -257,6 +293,10 @@ def _apply_effects(session: Session, event: Event, e: Envelope, task: Task) -> l
             effects.append({"action": action, "applied": False, "reason": message})
 
     def move(target: str, **kwargs: Any) -> None:
+        stale = _stale_run(session, event, task)
+        if stale:
+            effects.append({"action": f"status:{target}", "applied": False, "reason": stale})
+            return
         if task.status == target:
             effects.append(
                 {"action": f"status:{target}", "applied": False, "reason": f"déjà en {target}"}

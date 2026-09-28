@@ -336,3 +336,52 @@ def test_event_carries_its_origin(client):
 
     assert event["origin"] == "api"
     assert event["source"] == "nexus.db"
+
+
+def test_stale_run_completion_does_not_close_the_task(client):
+    ref = task(client, next_action="x")
+    publish(client, "working", "r1", task=ref, payload={"run_ref": "r1"})
+    publish(client, "blocked", "pause r1", task=ref, body="attente",
+            payload={"plan": "p", "run_ref": "r1"})
+    publish(client, "working", "r2", task=ref, payload={"run_ref": "r2"})
+
+    late = publish(client, "done", "fin de r1", task=ref, evidence=["commit:r1"],
+                   payload={"run_ref": "r1"}).json()
+
+    assert late["effects"][0]["applied"] is False
+    assert "run actif" in late["effects"][0]["reason"]
+    t = client.get(f"/api/tasks/{ref}").json()
+    assert (t["status"], t["evidence"]) == ("in_progress", [])
+
+
+def test_identical_working_retry_racing_is_a_read_back(client, monkeypatch):
+    from datetime import datetime
+
+    from nexus.events import service
+    from nexus.events.rules import Envelope
+
+    ref = task(client, next_action="x")
+    make = client.app.state.sessionmaker
+    original = service._refuse_second_active_run
+
+    def racing(session, envelope, task_row):
+        original(session, envelope, task_row)
+        monkeypatch.setattr(service, "_refuse_second_active_run", original)
+        with make() as other:  # le même working, renvoyé en parallèle, gagne la course
+            service.publish(other, Envelope(actor="helios", kind="working", subject="s",
+                                            task=ref, payload={"run_ref": "r1"}),
+                            "evt_same", datetime.fromisoformat(AT))
+            other.commit()
+
+    monkeypatch.setattr(service, "_refuse_second_active_run", racing)
+    res = publish(client, "working", task=ref, id="evt_same", payload={"run_ref": "r1"})
+
+    assert res.status_code == 200
+    assert len(client.get("/api/events", params={"task": ref}).json()) == 1
+
+
+def test_handoff_needs_exactly_one_recipient(client):
+    ref = task(client)
+    res = publish(client, "handoff", task=ref, needs=["aether", "mnema"],
+                  payload={"next_action": "poser la clé"})
+    assert res.json()["detail"]["code"] == "single_recipient_required"
