@@ -474,3 +474,50 @@ def test_comment_and_history_carry_measured_at(client):
         item = client.get(f"/api/tasks/{ref}/{path}").json()[0]
         assert item["source"] == "nexus.db"
         assert datetime.fromisoformat(item["measured_at"]).tzinfo is not None
+
+
+def test_concurrent_transitions_on_the_same_task_cannot_both_win(client):
+    from sqlalchemy.orm.exc import StaleDataError
+
+    from nexus.tasks import service
+
+    ref = create(client, next_action="x")["id"]
+    move(client, ref, "in_progress")
+    task_id = int(ref.removeprefix("nx-task-"))
+    make = client.app.state.sessionmaker
+    with make() as s1, make() as s2:
+        # Les deux lisent in_progress, puis l'une clôt et l'autre bloque.
+        service.change_status(s1, service.get_task(s1, task_id), "done", "loic")
+        service.change_status(
+            s2, service.get_task(s2, task_id), "blocked", "helios", block_cause="c", block_plan="p"
+        )
+        s1.commit()
+        with pytest.raises(StaleDataError):
+            s2.commit()
+
+    assert client.get(f"/api/tasks/{ref}").json()["status"] == "done"
+    statuses = [h["changes"]["status"] for h in client.get(f"/api/tasks/{ref}/history").json()
+                if h["action"] == "status"]
+    assert statuses == [["backlog", "in_progress"], ["in_progress", "done"]]
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("patch", "", {"status": "done"}),
+        ("post", "/status", {"status": "todo", "statut": "x"}),
+        ("post", "/comments", {"body": "b", "auteur": "helios"}),
+    ],
+)
+def test_unknown_fields_are_refused(client, method, path, body):
+    ref = create(client, next_action="x")["id"]
+    res = getattr(client, method)(f"/api/tasks/{ref}{path}", json=body)
+
+    assert res.status_code == 422
+    assert "champ inconnu" in res.text
+    assert client.get(f"/api/tasks/{ref}").json()["status"] == "backlog"
+
+
+def test_unknown_field_on_create_is_refused(client):
+    res = client.post("/api/tasks", json={"title": "t", "objective": "o", "statut": "todo"})
+    assert res.status_code == 422

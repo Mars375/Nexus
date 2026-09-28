@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Annotated, Literal, Self
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
-from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -81,6 +81,8 @@ def commit(session: Session) -> None:
 
 
 class TaskCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")  # un champ inconnu n'est jamais ignoré en silence
+
     title: Title
     objective: Text
     status: Literal["backlog", "todo"] = "backlog"
@@ -103,6 +105,8 @@ NOT_NULLABLE = frozenset(
 
 
 class TaskUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")  # un champ inconnu n'est jamais ignoré en silence
+
     title: Title | None = None
     objective: Text | None = None
     human_owner: Human | None = None
@@ -126,6 +130,8 @@ class TaskUpdate(BaseModel):
 
 
 class StatusChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")  # un champ inconnu n'est jamais ignoré en silence
+
     status: Status
     reason: str | None = None
     block_cause: str | None = None
@@ -137,6 +143,8 @@ class StatusChange(BaseModel):
 
 
 class CommentIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")  # un champ inconnu n'est jamais ignoré en silence
+
     body: str = Field(min_length=1)
 
 

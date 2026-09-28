@@ -41,6 +41,7 @@ def upgrade() -> None:
         sa.Column("created_by", sa.String(length=32), nullable=False),
         sa.Column("created_at", TS, nullable=False),
         sa.Column("updated_at", TS, nullable=False),
+        sa.Column("version", sa.Integer(), nullable=False, server_default="1"),
     )
     op.create_index("ix_tasks_status", "tasks", ["status"])
     op.create_index("ix_tasks_human_owner", "tasks", ["human_owner"])

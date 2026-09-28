@@ -53,6 +53,10 @@ class Task(Base):
     created_by: Mapped[str] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(AwareDateTime)
     updated_at: Mapped[datetime] = mapped_column(AwareDateTime)
+    # Verrou optimiste : une écriture fondée sur un état périmé échoue au lieu d'écraser.
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __mapper_args__ = {"version_id_col": version}
 
     @property
     def ref(self) -> str:

@@ -28,6 +28,7 @@ _MESSAGES = {
     "greater_than_equal": "doit être au moins {ge}",
     "less_than_equal": "doit être au plus {le}",
     "json_invalid": "JSON invalide",
+    "extra_forbidden": "champ inconnu ou non modifiable ici",
     "model_attributes_type": "objet attendu",
 }
 

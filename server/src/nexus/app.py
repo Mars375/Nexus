@@ -13,6 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm.exc import StaleDataError
 
 from nexus import backup, migrate, nodes
 from nexus.clock import now
@@ -101,6 +102,14 @@ def create_app(
         # Jamais la valeur reçue dans la réponse : elle peut contenir un secret (ADR-006),
         # et la validation a lieu avant le masquage.
         return JSONResponse(status_code=422, content={"detail": french_errors(exc.errors())})
+
+    @app.exception_handler(StaleDataError)
+    def _stale(_request: Request, _exc: StaleDataError) -> JSONResponse:
+        # Verrou optimiste : la tâche a changé depuis sa lecture (autre requête, agent…).
+        return JSONResponse(status_code=409, content={"detail": {
+            "code": "concurrent_update",
+            "message": "la tâche vient d'être modifiée par ailleurs : recharge-la et réessaie",
+        }})
 
     @app.exception_handler(RuleViolation)
     def _rule_violation(_request: Request, exc: RuleViolation) -> JSONResponse:
