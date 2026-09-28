@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Annotated, Literal, Self
 
@@ -45,8 +46,10 @@ def get_actor(x_nexus_actor: Annotated[str | None, Header()] = None) -> str:
 
 def parse_ref(task_ref: str) -> int:
     raw = task_ref.removeprefix("nx-task-")
-    if not raw.isdigit():
-        raise service.TaskNotFound(task_ref)
+    # Chiffres ASCII seulement, longueur raisonnable ; la valeur reçue n'est jamais recopiée
+    # dans l'erreur (elle pourrait être un secret collé par erreur).
+    if not re.fullmatch(r"[0-9]{1,12}", raw):
+        raise service.TaskNotFound("référence invalide")
     return int(raw)
 
 

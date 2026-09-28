@@ -21,6 +21,7 @@ from nexus.db import make_engine
 from nexus.tasks import api as tasks_api
 from nexus.tasks.rules import RuleViolation
 from nexus.tasks.service import TaskNotFound
+from nexus.validation import french_errors
 
 log = logging.getLogger("nexus")
 
@@ -99,11 +100,7 @@ def create_app(
     def _invalid(_request: Request, exc: RequestValidationError) -> JSONResponse:
         # Jamais la valeur reçue dans la réponse : elle peut contenir un secret (ADR-006),
         # et la validation a lieu avant le masquage.
-        errors = [
-            {"loc": list(e.get("loc", ())), "msg": e.get("msg"), "type": e.get("type")}
-            for e in exc.errors()
-        ]
-        return JSONResponse(status_code=422, content={"detail": errors})
+        return JSONResponse(status_code=422, content={"detail": french_errors(exc.errors())})
 
     @app.exception_handler(RuleViolation)
     def _rule_violation(_request: Request, exc: RuleViolation) -> JSONResponse:

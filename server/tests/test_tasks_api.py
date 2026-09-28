@@ -439,3 +439,19 @@ def test_unknown_actor_value_is_never_echoed(client):
     )
     assert res.status_code == 422
     assert SECRET not in res.text
+
+
+@pytest.mark.parametrize("ref", [SECRET, "²", "9" * 5000, "nx-task-" + "1" * 40])
+def test_invalid_task_reference_is_404_and_never_echoed(client, ref):
+    res = client.get(f"/api/tasks/{ref}")
+    assert res.status_code == 404
+    assert ref not in res.text
+
+
+def test_validation_errors_are_in_french(client):
+    res = client.post("/api/tasks", json={"title": "x" * 300, "priority": "urgent"})
+
+    messages = {e["loc"][-1]: e["msg"] for e in res.json()["detail"]}
+    assert messages["title"] == "title : trop long (au plus 200 caractères)"
+    assert messages["objective"] == "objective : champ obligatoire"
+    assert messages["priority"].startswith("priority : valeur non autorisée")
