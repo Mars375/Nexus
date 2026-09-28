@@ -98,6 +98,7 @@ def test_nested_values_are_redacted():
         (' token: "[REDACTED]" ', True),
         ("Relancer la PR", False),
         ("voir [REDACTED] puis relancer", False),
+        ("utiliser [REDACTED]", False),
     ],
 )
 def test_is_blank_ignores_redactions_and_their_labels(text, blank):

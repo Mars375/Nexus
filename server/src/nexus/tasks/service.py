@@ -73,6 +73,7 @@ def create_task(session: Session, data: dict[str, Any], actor: str) -> Task:
         raise RuleViolation(
             "initial_status", "une tâche se crée en backlog ou en todo, puis avance"
         )
+    rules.check_identity(data.get("title"), data.get("objective"))
     rules.check_next_action(status, data.get("next_action"))
     ts = now()
     task = Task(
@@ -110,6 +111,7 @@ def update_task(session: Session, task: Task, changes: dict[str, Any], actor: st
     _record_redactions(session, task, actor, redacted)
     if not diff:
         return task
+    rules.check_identity(task.title, task.objective)
     rules.check_next_action(task.status, task.next_action)
     if task.status == "blocked":
         rules.check_block(task.block_cause, task.block_plan, task.follow_up_at)

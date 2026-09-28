@@ -73,8 +73,9 @@ def redact(text: str) -> tuple[str, list[str]]:
     return text, sorted(set(found))
 
 
-# Un secret masqué et ce qui l'entoure : étiquette (password=), guillemets, parenthèses.
-_REDACTED_SPAN = re.compile(r"[\w.-]*\s*[:=]?\s*[\"'(\[]*\[REDACTED\][\"')\]]*")
+# Un secret masqué et ce qui l'entoure : étiquette suivie de : ou = (password=),
+# guillemets, parenthèses. Un simple mot devant (« utiliser [REDACTED] ») reste du sens.
+_REDACTED_SPAN = re.compile(r"(?:[\w.-]+\s*[:=]\s*)?[\"'(\[]*\[REDACTED\][\"')\]]*")
 
 
 def is_blank(text: str | None) -> bool:

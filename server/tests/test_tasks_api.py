@@ -455,3 +455,22 @@ def test_validation_errors_are_in_french(client):
     assert messages["title"] == "title : trop long (au plus 200 caractères)"
     assert messages["objective"] == "objective : champ obligatoire"
     assert messages["priority"].startswith("priority : valeur non autorisée")
+
+
+@pytest.mark.parametrize("field", ["title", "objective"])
+def test_secret_only_title_or_objective_is_refused(client, field):
+    body = {"title": "Pont lecture", "objective": "Lire les runs"} | {field: SECRET}
+    assert violation(client.post("/api/tasks", json=body)) == f"{field}_required"
+
+    ref = create(client)["id"]
+    assert violation(client.patch(f"/api/tasks/{ref}", json={field: SECRET})) == f"{field}_required"
+
+
+def test_comment_and_history_carry_measured_at(client):
+    ref = create(client)["id"]
+    client.post(f"/api/tasks/{ref}/comments", json={"body": "note"})
+
+    for path in ("comments", "history"):
+        item = client.get(f"/api/tasks/{ref}/{path}").json()[0]
+        assert item["source"] == "nexus.db"
+        assert datetime.fromisoformat(item["measured_at"]).tzinfo is not None

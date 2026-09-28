@@ -56,6 +56,14 @@ def check_transition(current: str, target: str) -> None:
         )
 
 
+def check_identity(title: str | None, objective: str | None) -> None:
+    """Titre et objectif disent de quoi il s'agit : un secret masqué n'en tient pas lieu."""
+    if is_blank(title):
+        raise RuleViolation("title_required", "une tâche doit avoir un titre lisible")
+    if is_blank(objective):
+        raise RuleViolation("objective_required", "une tâche doit avoir un objectif lisible")
+
+
 def check_next_action(status: str, next_action: str | None) -> None:
     if status in ACTIVE and is_blank(next_action):
         raise RuleViolation(

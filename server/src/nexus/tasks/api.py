@@ -175,6 +175,7 @@ class CommentOut(BaseModel):
     body: str
     at: datetime
     source: str = SOURCE
+    measured_at: datetime
 
 
 class HistoryOut(BaseModel):
@@ -185,6 +186,7 @@ class HistoryOut(BaseModel):
     action: str
     changes: dict
     source: str = SOURCE
+    measured_at: datetime
 
 
 def to_out(session: Session, task: Task) -> TaskOut:
@@ -197,13 +199,16 @@ def to_out(session: Session, task: Task) -> TaskOut:
 
 
 def comment_out(c: TaskComment) -> CommentOut:
-    return CommentOut(id=c.id, task=f"nx-task-{c.task_id}", author=c.author, body=c.body, at=c.at)
+    return CommentOut(
+        id=c.id, task=f"nx-task-{c.task_id}", author=c.author, body=c.body, at=c.at,
+        measured_at=now(),
+    )
 
 
 def history_out(h: TaskHistory) -> HistoryOut:
     return HistoryOut(
         id=h.id, task=f"nx-task-{h.task_id}", actor=h.actor, at=h.at, action=h.action,
-        changes=h.changes,
+        changes=h.changes, measured_at=now(),
     )
 
 
