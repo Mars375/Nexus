@@ -52,10 +52,22 @@ export type MoveNeeds = {
   reason: boolean
   /** Une preuve est attendue et aucune n'est jointe : sans preuve, la tâche ira « À vérifier ». */
   evidence: boolean
+  /** Préparée « principale » alors qu'une autre l'est déjà en cours : démarrer en auxiliaire ? */
+  mainTaken: boolean
 }
 
-export function moveNeeds(task: Task, to: Status): MoveNeeds {
+export function moveNeeds(task: Task, to: Status, all: Task[] = []): MoveNeeds {
   return {
+    mainTaken:
+      to === 'in_progress' &&
+      task.operation_role === 'main' &&
+      all.some(
+        (t) =>
+          t.id !== task.id &&
+          t.status === 'in_progress' &&
+          t.operation_role === 'main' &&
+          t.human_owner === task.human_owner,
+      ),
     nextAction: ACTIVE_STATUSES.includes(to) && !task.next_action?.trim(),
     block: to === 'blocked',
     reason: to === 'dropped',
@@ -64,5 +76,5 @@ export function moveNeeds(task: Task, to: Status): MoveNeeds {
 }
 
 export function needsPrompt(needs: MoveNeeds): boolean {
-  return needs.nextAction || needs.block || needs.reason || needs.evidence
+  return needs.nextAction || needs.block || needs.reason || needs.evidence || needs.mainTaken
 }

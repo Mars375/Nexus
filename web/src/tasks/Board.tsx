@@ -71,7 +71,7 @@ export function Board({ tasks, allTasks, statuses, onOpen }: Props) {
       toast.error(waiting)
       return
     }
-    if (needsPrompt(moveNeeds(task, to))) {
+    if (needsPrompt(moveNeeds(task, to, allTasks))) {
       setPending({ task, to })
       return
     }
@@ -117,7 +117,12 @@ export function Board({ tasks, allTasks, statuses, onOpen }: Props) {
         )}
       </DragOverlay>
       {pending && (
-        <MoveDialog task={pending.task} to={pending.to} onClose={() => setPending(null)} />
+        <MoveDialog
+          task={pending.task}
+          to={pending.to}
+          all={allTasks}
+          onClose={() => setPending(null)}
+        />
       )}
     </DndContext>
   )

@@ -10,13 +10,15 @@ import { STATUS_LABEL } from './vocabulary'
 export function MoveDialog({
   task,
   to,
+  all,
   onClose,
 }: {
   task: Task
   to: Status
+  all: Task[]
   onClose: () => void
 }) {
-  const needs = moveNeeds(task, to)
+  const needs = moveNeeds(task, to, all)
   const move = useMoveTask()
   const [nextAction, setNextAction] = useState('')
   const [cause, setCause] = useState('')
@@ -35,6 +37,7 @@ export function MoveDialog({
   function submit(event: FormEvent) {
     event.preventDefault()
     const change: StatusChange = { status: to }
+    if (needs.mainTaken) change.role = 'auxiliary'
     if (needs.nextAction) change.next_action = nextAction.trim()
     if (needs.block) {
       change.block_cause = cause.trim()
@@ -55,7 +58,9 @@ export function MoveDialog({
       onOpenChange={(open) => !open && onClose()}
       title={`Passer « ${task.title} » en ${STATUS_LABEL[to].toLowerCase()}`}
       description={
-        needs.evidence
+        needs.mainTaken
+          ? 'Une autre opération principale est déjà en cours : celle-ci démarrera comme auxiliaire.'
+          : needs.evidence
           ? 'Cette tâche attend une preuve. Sans preuve, elle ira « À vérifier ».'
           : undefined
       }

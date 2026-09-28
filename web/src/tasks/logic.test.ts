@@ -128,3 +128,19 @@ describe('dépendances', () => {
     }
   })
 })
+
+describe('opération principale', () => {
+  const running = task({ id: 'm', status: 'in_progress', operation_role: 'main' })
+  const prepared = task({ id: 'p', status: 'todo', operation_role: 'main' })
+
+  test('démarrer une tâche préparée « principale » quand une autre tourne demande confirmation', () => {
+    const needs = moveNeeds(prepared, 'in_progress', [running, prepared])
+    expect(needs.mainTaken).toBe(true)
+    expect(needsPrompt(needs)).toBe(true)
+  })
+
+  test('sans autre principale en cours, rien à demander', () => {
+    expect(moveNeeds(prepared, 'in_progress', [prepared]).mainTaken).toBe(false)
+    expect(moveNeeds({ ...prepared, operation_role: null }, 'in_progress', [running]).mainTaken).toBe(false)
+  })
+})

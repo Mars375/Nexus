@@ -107,7 +107,8 @@ export function WorkView() {
         )}
       </div>
 
-      {open && <TaskPane task={open} tasks={all} onClose={() => setOpenId(null)} />}
+      {/* Clé par tâche : brouillons et commentaires en cours ne passent jamais d'une tâche à l'autre. */}
+      {open && <TaskPane key={open.id} task={open} tasks={all} onClose={() => setOpenId(null)} />}
       <CreateTaskDialog open={creating} onOpenChange={setCreating} />
     </div>
   )

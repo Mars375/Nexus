@@ -169,3 +169,39 @@ test("un champ rempli par un agent pendant la saisie ne bloque pas l'enregistrem
   await save.click()
   await expect(page.getByText('Modifications enregistrées')).toBeVisible()
 })
+
+test("un commentaire commencé sur une tâche ne suit pas vers une autre", async ({ page }) => {
+  await page.goto('/')
+  await createTask(page, 'Tâche A')
+  await createTask(page, 'Tâche B')
+
+  await card(page, 'Tâche A').click()
+  await page.getByLabel('Nouveau commentaire').fill('Note destinée à A')
+  await card(page, 'Tâche B').click()
+
+  const pane = page.getByRole('complementary', { name: /Détail de Tâche B/ })
+  await expect(pane).toBeVisible()
+  await expect(pane.getByLabel('Nouveau commentaire')).toHaveValue('')
+})
+
+test("une tâche préparée « principale » démarre en auxiliaire si une autre est en cours", async ({ page }) => {
+  await page.goto('/')
+  await createTask(page, 'Principale actuelle', { todo: 'Continuer' })
+  await drag(page, 'Principale actuelle', 'En cours')
+  await expect(column(page, 'En cours').getByText('Opération principale', { exact: true })).toBeVisible()
+
+  await createTask(page, 'Préparée principale', { todo: 'Commencer' })
+  const tasks = await (await page.request.get('/api/tasks')).json()
+  const id = tasks.find((t: { title: string }) => t.title === 'Préparée principale').id
+  await page.request.patch(`/api/tasks/${id}`, { data: { operation_role: 'main' } })
+  await page.reload()
+
+  await drag(page, 'Préparée principale', 'En cours')
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.getByText('celle-ci démarrera comme auxiliaire')).toBeVisible()
+  await dialog.getByRole('button', { name: 'Déplacer en en cours' }).click()
+
+  await expect(column(page, 'En cours').getByText('Préparée principale', { exact: true })).toBeVisible()
+  const started = await (await page.request.get(`/api/tasks/${id}`)).json()
+  expect(started.operation_role).toBe('auxiliary')
+})

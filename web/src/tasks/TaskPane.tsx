@@ -28,7 +28,7 @@ export function TaskPane({ task, tasks, onClose }: Props) {
       toast.error(waiting)
       return
     }
-    if (needsPrompt(moveNeeds(task, to))) setMoving(to)
+    if (needsPrompt(moveNeeds(task, to, tasks))) setMoving(to)
     else move.mutate({ id: task.id, change: { status: to } })
   }
 
@@ -93,7 +93,7 @@ export function TaskPane({ task, tasks, onClose }: Props) {
         <History id={task.id} />
       </div>
 
-      {moving && <MoveDialog task={task} to={moving} onClose={() => setMoving(null)} />}
+      {moving && <MoveDialog task={task} to={moving} all={tasks} onClose={() => setMoving(null)} />}
     </aside>
   )
 }
