@@ -94,7 +94,7 @@ Qu'est-ce qui a été dit, où, et par qui ?
 ### 7.2 Phases 2–3 — Exécution et conversations
 
 - « Confier à » Hermes (Helios/Mnēma/Aether), Claude Code, Codex, Orca ; suivi des runs et des preuves ;
-- Vue **Conversations** : lecture des chats existants, puis discussion avec les agents depuis Nexus.
+- Vue **Conversations** : lecture des chats existants, puis discussion depuis Nexus sur tous les canaux — chat natif, gateway Hermes, Telegram, WhatsApp (ADR-018) ; contact de tiers (ex. prise de rendez-vous), toujours gated.
 
 ### 7.3 Phases 4–5 — Inbox, code, système
 
@@ -114,7 +114,7 @@ Qu'est-ce qui a été dit, où, et par qui ?
 - Stocker des secrets, tokens ou credentials ;
 - Devenir la source de vérité des données externes (mails, commits, chats d'autres outils) ;
 - Interface mobile native (Telegram reste la surface d'alerte mobile) ;
-- Exposer publiquement sur Internet.
+- Exposer publiquement sur Internet (seule exception à l'étude : le webhook entrant WhatsApp, limité à cet endpoint).
 
 ## 8. Exigences fonctionnelles
 
@@ -129,7 +129,8 @@ Qu'est-ce qui a été dit, où, et par qui ?
 | FR-7 | « Confier à » un exécutant (Hermes, Claude, Codex, Orca) depuis une carte ; suivi du run | 2 |
 | FR-8 | Preuves : lier commit/fichier/log/capture à une tâche ; « done sans preuve » → `review` | 2 |
 | FR-9 | Vue **Conversations** : lecture des chats existants (Telegram, sessions Hermes/Claude/Codex) | 3 |
-| FR-10 | Discuter avec un agent depuis Nexus ; créer une tâche depuis un message | 3 |
+| FR-10 | Discuter depuis Nexus sur tous les canaux (natif, gateway Hermes, Telegram, WhatsApp) ; créer une tâche depuis un message | 3 |
+| FR-10b | Contacter un tiers (ex. prendre un rendez-vous par WhatsApp) — message préparé, envoi gated | 3 |
 | FR-11 | **Inbox** : mails à traiter, questions d'agents, validations en attente ; brouillons de réponse (envoi gated) | 4 |
 | FR-12 | Agenda : événements, échéances, conflits | 4 |
 | FR-13 | Vue **Code** : repos, branches, worktrees, PR, diffs | 5 |
@@ -147,6 +148,7 @@ Qu'est-ce qui a été dit, où, et par qui ?
 - **NFR-5 — Réversibilité** : toute mutation externe est précédée d'une sauvegarde ou d'un plan de retour.
 - **NFR-6 — Indépendance** : chaque source ou exécutant est derrière un adaptateur remplaçable ; Nexus fonctionne si l'un d'eux disparaît.
 - **NFR-7 — Légèreté** : la vue Maintenant se charge en < 2 s sur le poste de Loïc.
+- **NFR-9 — Portabilité desktop** : l'UI doit pouvoir devenir une application Windows (Tauri) sans réécriture (ADR-017).
 - **NFR-8 — Résilience** : un nœud éteint (Artémis) ou une source morte produit des états `unknown` clairs, pas des erreurs bloquantes.
 
 ## 10. Politiques transverses
@@ -180,8 +182,8 @@ Qu'est-ce qui a été dit, où, et par qui ?
 
 ## 13. Questions ouvertes
 
-1. Framework front de l'UI web (ADR-014).
-2. Canal d'envoi des messages aux agents depuis Nexus (gateway Hermes, bot Telegram, API propre).
+1. ~~Framework front~~ — tranché : React + TypeScript + Vite, application Windows via Tauri (ADR-017).
+2. ~~Canaux d'envoi~~ — tranché : tous, WhatsApp compris (ADR-018). Reste à trancher en Phase 3 : mode d'accès WhatsApp et exposition du webhook entrant.
 3. Périmètre mail : quelles boîtes, quelles règles de confidentialité (le token Google actuel couvre `calendar` et `drive.file`, pas Gmail — voir INTEGRATIONS §5).
 4. Cadence des rapports (quotidien ? hebdo ? les deux ?).
 5. Critères exacts pour qu'une tâche « attend Loïc » (relance auto vs attente passive).

@@ -48,9 +48,10 @@ Le tableau de tâches de Nexus, lisible par Loïc **et** par les agents.
 
 ## 3. Conversations — « Qu'est-ce qui a été dit, et à qui je réponds ? »
 
-- **Lecture des chats existants** : Telegram (dont le groupe « Hermes collective »), sessions Hermes, sessions Claude Code et Codex — dans une liste unique, filtrable par agent, source, date ;
+- **Lecture des chats existants** : Telegram (dont le groupe « Hermes collective »), WhatsApp, gateway Hermes, sessions Hermes, Claude Code et Codex — dans une liste unique, filtrable par agent, contact, canal, date ;
 - Fil d'une conversation avec provenance de chaque message ;
-- **Discussion** avec un agent depuis Nexus (canal d'envoi à trancher) ;
+- **Discussion** depuis Nexus sur le canal de la conversation (natif, gateway Hermes, Telegram, WhatsApp) ;
+- **Contact d'un tiers** (ex. prise de rendez-vous) : message préparé, envoyé sur go de Loïc ;
 - Liens conversation ↔ tâche.
 
 **Actions :** répondre (gated selon le canal), créer une tâche depuis un message, lier un message à une tâche, marquer « promesse » ou « décision ».

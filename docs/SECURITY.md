@@ -71,6 +71,8 @@ Format d'une demande de validation : **quoi · pourquoi · conséquence · plan 
 
 - Agents finance : lecture seule, secrets sous ACL fichiers (jamais en base).
 - Scopes OAuth minimaux ; toute extension de scope = validation explicite.
+- Comptes de messagerie (WhatsApp, Telegram) : aucun mode d'accès qui mette en danger le compte personnel de Loïc sans décision explicite (voir INTEGRATIONS §3, risque de bannissement WhatsApp).
+- Toute ouverture réseau entrante (ex. webhook WhatsApp) : limitée à un seul endpoint, signature vérifiée, décision explicite.
 - Backups avant mutation (règle Nexus « réversible ») — ex. : sauvegarde config avant toute modification de routing.
 - Les dashboards existants gardent leurs propres accès — Nexus ne les contourne pas.
 

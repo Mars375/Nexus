@@ -76,7 +76,7 @@ watch(run_ref)          → événements du run (claimed, progress, blocked, don
 | `claude-code` | sessions `~/.claude` | 2 | lancer une session sur une tâche ; lire transcript + artefacts |
 | `codex` | `codex exec -p <profil>`, `~/.codex` | 2 | idem |
 | `orca` | CLI `orca`, worktrees | 2 | idem, avec worktrees |
-| `chats` | Telegram, `state.db` Hermes, sessions Claude/Codex | 3 | lecture des conversations ; envoi (canal à trancher) |
+| `chats` | gateway Hermes, Telegram, WhatsApp, `state.db` Hermes, sessions Claude/Codex | 3 | lecture des conversations ; envoi sur tous les canaux (ADR-018), gated vers un tiers |
 | `mail` | Gmail | 4 | lecture, tri, brouillons ; envoi gated |
 | `calendar` | Google Calendar | 4 | lecture ; création d'événement gated |
 | `git` | repos locaux (`F:/Projet/…`), `gh` | 5 | commits, branches, worktrees, PR, diffs |
@@ -94,9 +94,9 @@ watch(run_ref)          → événements du run (claimed, progress, blocked, don
 
 ### 3.4 Interface
 
-- **UI web locale** (servie sur le poste de Loïc) : les vues, recherche, provenance cliquable, actions.
+- **UI web locale** (servie sur le poste de Loïc) : les vues, recherche, provenance cliquable, actions. Encapsulée plus tard dans une **application Windows** (Tauri, §7).
 - **Telegram** : alertes, rapports, questions urgentes (surface mobile).
-- Pas d'exposition publique ; pas d'app mobile dédiée.
+- Pas d'exposition publique ; pas d'app mobile dédiée. Seule exception envisagée : un webhook entrant WhatsApp, limité à cet endpoint (à trancher en Phase 3, ADR-018).
 
 ### 3.5 Événements
 
@@ -160,12 +160,18 @@ action (répondre à un chat, envoyer un mail, créer un événement…)
 - Chaque adaptateur est indépendant : une panne n'en affecte pas d'autre.
 - Le noyau (tableau, Maintenant, événements) reste utile si 100 % des LLM et des sources externes sont indisponibles.
 
-## 7. Stack (ADR-014)
+## 7. Stack (ADR-014, ADR-017)
 
 - **Serveur :** Python, FastAPI.
 - **Base :** SQLite (`nexus.db`).
-- **UI :** web locale ; framework front à choisir (décision ouverte).
+- **UI :** React + TypeScript + Vite. Aucune dépendance à une API propre au navigateur : tout passe par l'API FastAPI.
 - **Temps réel :** WebSocket serveur → UI ; patterns repris du dashboard Hermes quand utiles.
+- **Application Windows (cible long terme) :** Tauri 2 — la même UI dans WebView2, le serveur FastAPI lancé en sidecar ; icône de barre des tâches, notifications Windows, démarrage automatique. Repli possible : Electron.
+
+```text
+Aujourd'hui :  navigateur ──HTTP/WS──> FastAPI (localhost) ──> nexus.db
+Demain      :  Tauri (WebView2 + même UI) ──HTTP/WS──> FastAPI (sidecar) ──> nexus.db
+```
 
 ## 8. Contraintes techniques connues (vérifiées 2026-09-27/28)
 

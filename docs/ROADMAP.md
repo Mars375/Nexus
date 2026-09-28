@@ -26,10 +26,11 @@
 - [x] Relevé lecture seule des enums/statuts réels de Hermes Kanban ([note](notes/2026-09-28-releve-enums-hermes-kanban.md)) ;
 - [x] Stack tranchée : FastAPI + SQLite + UI web (ADR-014) ;
 - [x] Refonte : Nexus application autonome, tâches dans `nexus.db` (ADR-011 à ADR-016) ;
-- [ ] Relecture et validation de la refonte par Loïc ;
-- [ ] Choix du framework front.
+- [x] Framework front : React + TypeScript + Vite ; application Windows via Tauri à terme (ADR-017) ;
+- [x] Canaux de messagerie : tous, WhatsApp compris (ADR-018) ;
+- [ ] Relecture et validation de la refonte par Loïc.
 
-**Critère de sortie :** docs refondues validées ; framework front choisi.
+**Critère de sortie :** docs refondues validées par Loïc.
 
 ## Phase 1 — Noyau
 
@@ -65,12 +66,21 @@
 
 **Livrables :**
 
-- Vue **Conversations** : lecture des chats Telegram, sessions Hermes, Claude Code, Codex ;
+- Vue **Conversations** : lecture des chats (Telegram, WhatsApp, gateway Hermes, sessions Hermes, Claude Code, Codex) ;
 - Recherche dans les chats ;
-- Canal d'envoi tranché, puis discussion avec les agents depuis Nexus ;
+- Envoi sur tous les canaux (natif, gateway Hermes, Telegram, puis WhatsApp une fois son mode d'accès tranché) ;
+- Contact de tiers (ex. prise de rendez-vous), gated ;
 - Créer une tâche depuis un message.
 
-**Critère de sortie :** Loïc n'ouvre plus Telegram pour suivre ou relancer ses agents.
+**Critère de sortie :** Loïc n'ouvre plus Telegram ni WhatsApp pour suivre ou relancer ses agents ; un rendez-vous réel pris depuis Nexus.
+
+## Jalon transversal — Application Windows
+
+**Quand :** dès que le noyau (Phase 1) est stable, au moment choisi par Loïc ; ne bloque aucune phase.
+
+**Livrables :** Tauri 2 encapsulant l'UI existante ; serveur FastAPI en sidecar ; icône de barre des tâches, notifications Windows, démarrage automatique ; installeur.
+
+**Critère de sortie :** Nexus s'ouvre comme une application Windows, sans navigateur, avec les mêmes vues.
 
 ## Phase 4 — Inbox et planning
 
@@ -112,7 +122,7 @@
 
 ## Prochaine action immédiate
 
-**Phase 0 :** relecture de la refonte par Loïc, choix du framework front, puis go Phase 1.
+**Phase 0 :** relecture de la refonte par Loïc, puis go Phase 1.
 
 ---
 

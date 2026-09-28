@@ -111,7 +111,7 @@ Toute décision structurante s'ajoute ici.
 
 - **Date :** 2026-09-28 (décidé par Loïc)
 - **Décision :** serveur Python (FastAPI), base SQLite (`nexus.db`), UI web servie en local. Patterns API + WebSocket repris du dashboard Hermes quand ils servent.
-- **Conséquences :** le framework front reste à choisir (décision ouverte).
+- **Conséquences :** framework front et application desktop : ADR-017.
 - **Statut :** accepté.
 
 ## ADR-015 — Deux façons pour un agent de travailler avec Nexus
@@ -128,12 +128,26 @@ Toute décision structurante s'ajoute ici.
 - **Conséquences :** toute action sortante (envoi de mail, message, publication) reste gated (SECURITY §4).
 - **Statut :** accepté.
 
+## ADR-017 — Front : React + TypeScript + Vite ; application Windows via Tauri
+
+- **Date :** 2026-09-28 (Loïc : « on va prendre le meilleur, sachant qu'on va sûrement basculer sur une app Windows complète »)
+- **Contexte :** Nexus commence en UI web locale mais doit pouvoir devenir une vraie application Windows sans réécriture.
+- **Décision :** UI en **React + TypeScript + Vite** (écosystème le plus large : composants, drag-and-drop pour le tableau, gestion d'état serveur, tests). Cible desktop : **Tauri 2**, qui embarque la même UI dans WebView2 (natif sur Windows 11) et lance le serveur FastAPI comme processus « sidecar ».
+- **Conséquences :** l'UI ne dépend d'aucune API propre au navigateur qui empêcherait l'encapsulation ; tout passe par l'API FastAPI. La bascule desktop apporte icône de barre des tâches, notifications Windows et démarrage automatique, sans réécrire l'UI. Alternative de repli si Tauri bloque : Electron (même UI, binaire plus lourd).
+- **Statut :** accepté.
+
+## ADR-018 — Canaux de messagerie : tous, WhatsApp compris
+
+- **Date :** 2026-09-28 (Loïc : « on va tout faire, y compris WhatsApp, ça peut aider pour booker des rendez-vous »)
+- **Décision :** Nexus lit et envoie sur plusieurs canaux, chacun derrière son adaptateur : chat natif Nexus, gateway Hermes (agents de nœud), Telegram, WhatsApp, mail. Usages : parler aux agents, et contacter des tiers (ex. prise de rendez-vous).
+- **Conséquences :** tout message vers un tiers humain est gated (SECURITY §4). WhatsApp impose des contraintes à trancher en Phase 3 (INTEGRATIONS §3) : l'API officielle (WhatsApp Business Cloud API) exige un numéro dédié, des modèles de message approuvés pour initier une conversation hors fenêtre de 24 h, et un webhook entrant joignable depuis Internet ; les bibliothèques non officielles utilisent le numéro personnel mais violent les conditions de WhatsApp (risque de bannissement).
+- **Statut :** accepté.
+
 ---
 
 ## Décisions ouvertes
 
-- **Framework front** de l'UI web (ADR-014).
-- **Canal d'envoi des messages aux agents** depuis Nexus : gateway Hermes, bot Telegram, ou API propre (INTEGRATIONS §3).
+- **Accès WhatsApp** : API officielle (numéro dédié) vs non officielle (numéro perso, risque de ban) ; exposition du webhook entrant (ex. tunnel limité à cet endpoint) — Phase 3 (ADR-018).
 - **Périmètre mail** : boîtes couvertes, règles de confidentialité (INTEGRATIONS §5).
 - **Cadence des rapports** : quotidien, hebdo, ou les deux (PRD §13).
 - **Critère « attend Loïc »** : relance automatique vs attente passive (PRD §13).

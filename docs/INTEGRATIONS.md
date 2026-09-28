@@ -45,11 +45,26 @@ Deux familles :
 
 ## B. Sources
 
-### 3. Chats (Phase 3)
+### 3. Chats et messagerie (Phase 3)
 
-- **Lecture :** Telegram (dont le groupe « Hermes collective »), sessions Hermes (`state.db` : sessions/messages), sessions Claude Code (`~/.claude`) et Codex (`~/.codex`).
-- **Envoi :** canal à trancher — gateway Hermes (les agents de nœud y écoutent déjà), bot Telegram, ou API propre. Tout envoi passe par l'adaptateur, avec read-back.
+**Tous les canaux (ADR-018)**, chacun derrière son adaptateur, avec read-back après envoi :
+
+| Canal | Lecture | Envoi | Usage |
+|---|---|---|---|
+| Chat natif Nexus | ✓ | ✓ | discussion dans l'app |
+| Gateway Hermes | ✓ | ✓ | parler à Helios, Mnēma, Aether (ils y écoutent déjà) |
+| Telegram | ✓ (dont le groupe « Hermes collective ») | ✓ | agents, alertes mobiles |
+| WhatsApp | ✓ | ✓ (gated vers un tiers) | contacts, prise de rendez-vous |
+| Sessions Hermes (`state.db`), Claude Code (`~/.claude`), Codex (`~/.codex`) | ✓ | — | historique des sessions d'agents |
+
 - Les chats restent dans leur système ; Nexus en garde un index daté pour l'affichage et la recherche.
+- Tout message vers un **tiers humain** est préparé puis envoyé sur go de Loïc (SECURITY §4).
+
+**WhatsApp — contraintes à trancher avant d'implémenter :**
+
+- **API officielle (WhatsApp Business Cloud API)** : conforme et stable, mais exige un numéro dédié (un numéro passé sur l'API ne s'utilise plus dans l'app WhatsApp), des modèles de message approuvés par Meta pour initier une conversation hors fenêtre de 24 h (cas typique d'une prise de rendez-vous), et un **webhook entrant joignable depuis Internet** pour recevoir les réponses.
+- **Bibliothèques non officielles** (pilotage de WhatsApp Web) : utilisent le numéro personnel sans modèles, mais violent les conditions d'utilisation de WhatsApp — risque de bannissement du numéro.
+- **Webhook entrant** : contredit le « rien d'exposé » ; option à étudier : tunnel limité à ce seul endpoint (ex. Cloudflare Tunnel), avec vérification de signature.
 
 ### 4. Hermes Cron (Phase 4)
 
@@ -104,7 +119,7 @@ Deux familles :
 | Nœuds | source | R | 1 | à brancher |
 | Hermes | exécutant | dispatch + R | 2 | audit fait ; enums relevés |
 | Claude / Codex / Orca | exécutant | dispatch + R | 2 | contrats à écrire |
-| Chats | source | R (+ envoi gated) | 3 | sources connues ; canal d'envoi à trancher |
+| Chats et messagerie | source | R + envoi (gated vers un tiers) | 3 | tous les canaux (ADR-018) ; accès WhatsApp à trancher |
 | Cron | source | R | 4 | sources connues |
 | Mail | source | R (+ envoi gated) | 4 | scope Gmail à cadrer |
 | Calendrier | source | R (+ écriture gated) | 4 | scope lecture OK |
