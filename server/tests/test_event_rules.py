@@ -67,3 +67,14 @@ def test_done_without_evidence_becomes_review():
 )
 def test_refused_events_say_why(envelope, code):
     assert refused(envelope) == code
+
+
+@pytest.mark.parametrize("subject", ["   ", "[REDACTED]", "token=[REDACTED]"])
+def test_unreadable_subject_is_refused(subject):
+    e = Envelope(actor="helios", kind="claimed", subject=subject, task="nx-task-1")
+    assert refused(e) == "subject_required"
+
+
+@pytest.mark.parametrize("percent", [True, False])
+def test_boolean_percent_is_refused(percent):
+    assert refused(env("progress", payload={"percent": percent})) == "invalid_percent"

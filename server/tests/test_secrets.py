@@ -112,3 +112,16 @@ def test_values_under_credential_named_keys_are_masked():
 
     assert cleaned == {"password": REDACTED, "tokens": 3000, "note": "rien"}
     assert found == ["credential"]
+
+
+@pytest.mark.parametrize("value", [["hunter2"], {"value": "abc"}, True, 1234])
+def test_any_value_under_a_credential_key_is_masked(value):
+    cleaned, found = redact_value({"password": value, "note": "rien"})
+
+    assert cleaned == {"password": REDACTED, "note": "rien"}
+    assert found == ["credential"]
+
+
+@pytest.mark.parametrize("value", [None, "", [], {}])
+def test_empty_value_under_a_credential_key_is_left_alone(value):
+    assert redact_value({"password": value}) == ({"password": value}, [])

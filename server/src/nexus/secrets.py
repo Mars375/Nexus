@@ -110,14 +110,13 @@ def redact_value(value: Any) -> tuple[Any, list[str]]:
         return v
 
     def mask_if_credential(key: Any, value: Any) -> Any:
-        if (
-            isinstance(key, str)
-            and _CREDENTIAL_KEY.fullmatch(key.strip())
-            and isinstance(value, str | int | float)
-            and not isinstance(value, bool)
-            and str(value).strip()
-            and value != REDACTED
-        ):
+        # Sous une clé d'identifiant, toute valeur non vide est un secret — liste ou objet
+        # compris ({"password": ["…"]}, {"api_key": {"value": "…"}}).
+        if isinstance(value, str):
+            empty = not value.strip() or value == REDACTED
+        else:
+            empty = value is None or value == [] or value == {}
+        if isinstance(key, str) and _CREDENTIAL_KEY.fullmatch(key.strip()) and not empty:
             found.add("credential")
             return REDACTED
         return walk(value)

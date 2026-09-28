@@ -66,6 +66,8 @@ def validate(e: Envelope) -> str:
     """Vérifie l'événement et renvoie son type effectif (un `done` sans preuve devient `review`)."""
     if e.kind not in KINDS:
         raise RuleViolation("unknown_kind", f"type d'événement inconnu : {e.kind}")
+    if is_blank(e.subject):
+        raise RuleViolation("subject_required", "l'événement doit avoir un sujet lisible")
     if e.kind in TASK_REQUIRED and not e.task:
         raise RuleViolation("task_required", f"un événement {e.kind} doit viser une tâche")
     run_ref = e.payload.get("run_ref")
@@ -86,7 +88,8 @@ def validate(e: Envelope) -> str:
         case "progress":
             percent = e.payload.get("percent")
             if percent is not None and not (
-                isinstance(percent, int | float) and 0 <= percent <= 100
+                isinstance(percent, int | float) and not isinstance(percent, bool)
+                and 0 <= percent <= 100
             ):
                 raise RuleViolation("invalid_percent", "payload.percent doit être entre 0 et 100")
             if percent is None and not _text(e.body):
