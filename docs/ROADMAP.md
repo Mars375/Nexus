@@ -16,7 +16,7 @@
 
 ---
 
-## Phase 0 — Fondations (en cours)
+## Phase 0 — Fondations (terminée le 2026-09-28)
 
 **Objectif :** le socle documentaire et les décisions structurantes.
 
@@ -28,11 +28,11 @@
 - [x] Refonte : Nexus application autonome, tâches dans `nexus.db` (ADR-011 à ADR-016) ;
 - [x] Framework front : React + TypeScript + Vite ; application Windows via Tauri à terme (ADR-017) ;
 - [x] Canaux de messagerie : tous, WhatsApp compris (ADR-018) ;
-- [ ] Relecture et validation de la refonte par Loïc.
+- [x] Relecture et validation de la refonte par Loïc (2026-09-28 : « tout est relu, on est bon »).
 
 **Critère de sortie :** docs refondues validées par Loïc.
 
-## Phase 1 — Noyau
+## Phase 1 — Noyau (en cours)
 
 **Objectif :** Nexus existe et sert tous les jours, sans aucun LLM.
 
@@ -122,7 +122,7 @@
 
 ## Prochaine action immédiate
 
-**Phase 0 :** relecture de la refonte par Loïc, puis go Phase 1.
+**Phase 1 :** découper le noyau en issues GitHub, puis squelette du projet (FastAPI + `nexus.db` + React/Vite).
 
 ---
 

@@ -67,7 +67,7 @@ Nexus est une application locale et autonome qui réunit Loïc et tous ses agent
 ## Statut
 
 - **2026-09-28** — Phase 0 : fondations documentaires. Refonte du même jour : Nexus devient une application autonome (ADR-011), et non plus une surcouche de Hermes Kanban.
-- Prochaine étape : relecture de la refonte par Loïc, puis Phase 1 (noyau : tableau Nexus, vue Maintenant, API d'événements).
+- **2026-09-28** — Phase 0 close (refonte relue et validée par Loïc). Phase 1 en cours : noyau (tableau Nexus, vue Maintenant, API d'événements).
 
 ## Périmètre du dépôt
 
