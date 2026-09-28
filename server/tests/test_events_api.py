@@ -316,8 +316,9 @@ def test_concurrent_working_runs_cannot_both_open(client, monkeypatch):
     monkeypatch.setattr(service, "_refuse_second_active_run", racing)
     res = publish(client, "working", "r2", task=ref, id="evt_w2", payload={"run_ref": "r2"})
 
+    # Après le conflit d'écriture, la règle est revérifiée : r1 est actif, r2 est refusé.
     assert res.status_code == 409
-    assert res.json()["detail"]["code"] == "concurrent_update"
+    assert res.json()["detail"]["code"] == "run_already_active"
     runs = [e["payload"]["run_ref"] for e in client.get("/api/events", params={"task": ref}).json()]
     assert runs == ["r1"]
 
@@ -420,3 +421,50 @@ def test_blank_top_level_run_falls_back_to_payload_run_ref(client):
     done = publish(client, "done", "fini", task=ref, evidence=["commit:x"],
                    payload={"run_ref": "r1"}).json()
     assert done["effects"] == [{"action": "status:done", "applied": True}]
+
+
+def test_other_agent_can_open_its_run_despite_a_concurrent_write(client, monkeypatch):
+    from datetime import datetime
+
+    from nexus.events import service
+    from nexus.events.rules import Envelope
+
+    ref = task(client, next_action="x")
+    make = client.app.state.sessionmaker
+    original = service._refuse_second_active_run
+
+    def racing(session, envelope, task_row):
+        original(session, envelope, task_row)
+        monkeypatch.setattr(service, "_refuse_second_active_run", original)
+        with make() as other:  # Codex ouvre son run pendant que Helios ouvre le sien
+            service.publish(other, Envelope(actor="codex", kind="working", subject="c",
+                                            task=ref, payload={"run_ref": "c1"}),
+                            "evt_codex", datetime.fromisoformat(AT))
+            other.commit()
+
+    monkeypatch.setattr(service, "_refuse_second_active_run", racing)
+    res = publish(client, "working", "h", task=ref, id="evt_helios", payload={"run_ref": "h1"})
+
+    assert res.status_code == 201
+    actors = {e["actor"] for e in client.get("/api/events", params={"task": ref}).json()}
+    assert actors == {"helios", "codex"}
+
+
+def test_stale_handoff_does_not_transfer_the_task(client):
+    ref = task(client, next_action="x")
+    publish(client, "working", "r1", task=ref, payload={"run_ref": "r1"})
+    publish(client, "blocked", "pause", task=ref, body="attente",
+            payload={"plan": "p", "run_ref": "r1"})
+    publish(client, "working", "r2", task=ref, payload={"run_ref": "r2"})
+
+    late = publish(client, "handoff", "relais r1", task=ref, needs=["aether"],
+                   payload={"next_action": "reprendre", "run_ref": "r1"}).json()
+
+    assert late["effects"][0]["applied"] is False
+    assert client.get(f"/api/tasks/{ref}").json()["lead_agent"] != "aether"
+
+
+def test_conflicting_run_references_are_refused(client):
+    ref = task(client, next_action="x")
+    res = publish(client, "working", task=ref, run="r1", payload={"run_ref": "r2"})
+    assert res.json()["detail"]["code"] == "run_ref_conflict"

@@ -28,6 +28,8 @@ from nexus.tasks.rules import RuleViolation
 
 log = logging.getLogger("nexus.events")
 
+RUN_OPEN_ATTEMPTS = 3
+
 # Anti-bruit (EVENT-PROTOCOL §7) : le même fait republié dans cette fenêtre est refusé.
 NOISE_WINDOW = timedelta(minutes=10)
 
@@ -88,19 +90,24 @@ def publish(
         )
     _refuse_noise(session, envelope, task, actor_event_id)
     if kind == "working":
-        _refuse_second_active_run(session, envelope, task)
-        if task is not None:
-            # Sérialise les ouvertures de run : toucher la tâche fait jouer son verrou de version,
-            # si bien que de deux « working » simultanés, le second échoue (409) au lieu de passer.
+        # Ouverture de run sérialisée : toucher la tâche fait jouer son verrou de version. Si une
+        # autre écriture passe entre-temps, on relit et on revérifie la règle au lieu de refuser :
+        # un autre agent peut ouvrir son propre run, seul un second run du même agent est refusé.
+        for _ in range(RUN_OPEN_ATTEMPTS):
+            _refuse_second_active_run(session, envelope, task)
+            if task is None:
+                break
             task.updated_at = now()
             try:
                 session.flush()
+                break
             except StaleDataError:
-                # Perdu la course : si c'est un renvoi identique, c'est une relecture.
                 winner = _winner_of_race(session, envelope, actor_event_id, at, task)
                 if winner is not None:
-                    return winner, False
-                raise
+                    return winner, False  # renvoi identique : relecture
+                task = _task(session, envelope.task)
+        else:
+            raise StaleDataError("ouverture de run : trop d'écritures concurrentes")
 
     received = now()
     event = Event(
@@ -180,7 +187,7 @@ def _task(session: Session, ref: str | None) -> Task | None:
 def _run_ref(e: Envelope) -> str | None:
     """Référence du run : `run` s'il dit quelque chose, sinon `payload.run_ref`."""
     for candidate in (e.run, e.payload.get("run_ref")):
-        if isinstance(candidate, str) and candidate.strip():
+        if isinstance(candidate, str) and not secrets.is_blank(candidate):
             return candidate.strip()
     return None
 
@@ -332,6 +339,10 @@ def _apply_effects(session: Session, event: Event, e: Envelope, task: Task) -> l
         case "done":
             move("done", evidence=event.evidence)
         case "handoff":
+            stale = _stale_run(session, event, task)
+            if stale:
+                effects.append({"action": "handoff", "applied": False, "reason": stale})
+                return effects
             attempt("handoff", lambda: tasks.update_task(
                 session, task,
                 {"lead_agent": e.needs[0], "next_action": e.payload["next_action"]},

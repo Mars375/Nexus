@@ -75,6 +75,10 @@ def validate(e: Envelope) -> str:
         raise RuleViolation(
             "invalid_run_ref", "payload.run_ref doit être un texte de 128 caractères au plus"
         )
+    if _text(run_ref) and _text(e.run) and _text(run_ref) != _text(e.run):
+        raise RuleViolation(
+            "run_ref_conflict", "run et payload.run_ref désignent des runs différents"
+        )
     unknown_needs = sorted(set(e.needs) - ACTORS)
     if unknown_needs:
         raise RuleViolation("unknown_recipient", f"destinataires inconnus : {unknown_needs}")
