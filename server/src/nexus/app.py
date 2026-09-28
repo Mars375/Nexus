@@ -25,7 +25,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         while True:
             await asyncio.sleep(settings.backup_interval_hours * 3600)
             try:
-                backup.backup(settings.db_path, settings.backup_dir, settings.backup_keep)
+                # Hors de la boucle événementielle : une copie lente ne bloque pas l'API.
+                await asyncio.to_thread(
+                    backup.backup, settings.db_path, settings.backup_dir, settings.backup_keep
+                )
             except Exception:
                 log.exception("sauvegarde de nexus.db échouée")
 

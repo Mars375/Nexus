@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { fetchHealth } from './api'
+import { fetchHealth, type Health } from './api'
 import { useNow } from './useNow'
 
 function age(iso: string, now: number): string {
@@ -8,6 +8,12 @@ function age(iso: string, now: number): string {
   const minutes = Math.round(seconds / 60)
   if (minutes < 60) return `il y a ${minutes} min`
   return `il y a ${Math.round(minutes / 60)} h`
+}
+
+function provenance({ db, backup }: Health, now: number): string {
+  let text = `source : ${db.source} · mesuré ${age(db.measured_at, now)}`
+  if (backup.last_at) text += ` · dernière sauvegarde ${age(backup.last_at, now)}`
+  return text
 }
 
 export default function App() {
@@ -19,12 +25,14 @@ export default function App() {
   if (health.isPending) {
     status = 'Vérification…'
   } else if (health.isError) {
+    // ADR-005 : unknown, avec la date du dernier contrôle réussi s'il y en a eu un.
     status = 'Serveur injoignable — état unknown'
+    detail = health.data
+      ? `dernier contrôle réussi — ${provenance(health.data, now)}`
+      : 'aucun contrôle réussi pour le moment'
   } else {
-    const { db, backup } = health.data
-    status = db.status === 'ok' ? 'Base OK' : 'Base : état unknown'
-    detail = `source : ${db.source} · mesuré ${age(db.measured_at, now)}`
-    if (backup.last_at) detail += ` · dernière sauvegarde ${age(backup.last_at, now)}`
+    status = health.data.db.status === 'ok' ? 'Base OK' : 'Base : état unknown'
+    detail = provenance(health.data, now)
   }
 
   return (

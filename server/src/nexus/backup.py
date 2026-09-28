@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -10,22 +11,35 @@ from nexus.clock import TZ, now
 
 PREFIX = "nexus-"
 SUFFIX = ".db"
+PARTIAL = ".partial"
 STAMP = "%Y%m%d-%H%M%S-%f"
 
 
 def backup(db_path: Path, backup_dir: Path, keep: int) -> Path:
-    """Copie cohérente (API de sauvegarde SQLite) puis rotation des plus anciennes."""
+    """Copie cohérente (API de sauvegarde SQLite), publiée seulement si complète, puis rotation.
+
+    La source est ouverte en lecture seule : une base absente fait échouer la sauvegarde
+    au lieu d'en créer une vide.
+    """
+    if not db_path.is_file():
+        raise FileNotFoundError(f"base introuvable : {db_path}")
     backup_dir.mkdir(parents=True, exist_ok=True)
     target = backup_dir / f"{PREFIX}{now().strftime(STAMP)}{SUFFIX}"
-    source = sqlite3.connect(db_path)
+    partial = target.with_name(target.name + PARTIAL)
     try:
-        dest = sqlite3.connect(target)
+        source = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
         try:
-            source.backup(dest)
+            dest = sqlite3.connect(partial)
+            try:
+                source.backup(dest)
+            finally:
+                dest.close()
         finally:
-            dest.close()
-    finally:
-        source.close()
+            source.close()
+        os.replace(partial, target)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
     _prune(backup_dir, keep)
     return target
 
