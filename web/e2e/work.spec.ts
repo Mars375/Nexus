@@ -1,0 +1,94 @@
+import { expect, test, type Page } from '@playwright/test'
+
+async function createTask(page: Page, title: string, opts: { todo?: string } = {}) {
+  await page.getByRole('button', { name: 'Nouvelle tâche' }).first().click()
+  const dialog = page.getByRole('dialog', { name: 'Nouvelle tâche' })
+  await dialog.getByLabel('Titre').fill(title)
+  await dialog.getByLabel('Objectif').fill(`Objectif de ${title}`)
+  if (opts.todo) {
+    await dialog.getByLabel('Colonne').selectOption('todo')
+    await dialog.getByLabel('Prochaine action').fill(opts.todo)
+  }
+  await dialog.getByRole('button', { name: 'Créer la tâche' }).click()
+  await expect(dialog).toBeHidden()
+}
+
+const column = (page: Page, name: string) => page.getByRole('region', { name, exact: true })
+const card = (page: Page, title: string) => page.getByRole('button', { name: new RegExp(`^${title} —`) })
+
+async function drag(page: Page, title: string, to: string) {
+  const source = await card(page, title).boundingBox()
+  const target = await column(page, to).boundingBox()
+  if (!source || !target) throw new Error('élément introuvable')
+  await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(source.x + source.width / 2 + 10, source.y + 10, { steps: 4 })
+  await page.mouse.move(target.x + target.width / 2, target.y + 80, { steps: 12 })
+  await page.mouse.up()
+}
+
+test('créer, déplacer, commenter et filtrer une tâche', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByText('Aucune tâche pour l’instant.').or(page.getByText("Aucune tâche pour l'instant."))).toBeVisible()
+
+  await createTask(page, 'Relever les statuts', { todo: 'Lire kanban_db.py' })
+  await expect(column(page, 'À faire').getByText('Relever les statuts')).toBeVisible()
+
+  await drag(page, 'Relever les statuts', 'En cours')
+  await expect(column(page, 'En cours').getByText('Relever les statuts')).toBeVisible()
+  await expect(column(page, 'En cours').getByText('Opération principale')).toBeVisible()
+
+  await card(page, 'Relever les statuts').click()
+  const pane = page.getByRole('complementary', { name: /Détail de Relever les statuts/ })
+  await pane.getByLabel('Nouveau commentaire').fill('Tables relevées, reste les enums.')
+  await pane.getByRole('button', { name: 'Commenter' }).click()
+  await expect(pane.getByText('Tables relevées, reste les enums.')).toBeVisible()
+  await expect(pane.getByText(/Loïc l'a passée de à faire à en cours/)).toBeVisible()
+
+  await pane.getByLabel('Agent principal').selectOption('helios')
+  await pane.getByRole('button', { name: 'Enregistrer' }).click()
+  await expect(page.getByText('Modifications enregistrées')).toBeVisible()
+
+  await createTask(page, 'Écrire la note')
+  await page.getByLabel('Filtrer par agent').selectOption('helios')
+  await expect(card(page, 'Écrire la note')).toBeHidden()
+  await expect(column(page, 'En cours').getByText('Relever les statuts')).toBeVisible()
+  await page.getByRole('button', { name: 'Effacer les filtres' }).click()
+  await expect(card(page, 'Écrire la note')).toBeVisible()
+
+  await page.screenshot({ path: 'e2e/screenshots/travail.png' })
+})
+
+test('un déplacement refusé revient en place avec la raison', async ({ page }) => {
+  await page.goto('/')
+  await createTask(page, 'Idée lointaine')
+  await expect(column(page, 'Plus tard').getByText('Idée lointaine')).toBeVisible()
+
+  await drag(page, 'Idée lointaine', 'Terminé')
+
+  await expect(page.getByText('Une tâche plus tard ne peut pas passer en terminé.')).toBeVisible()
+  await expect(column(page, 'Plus tard').getByText('Idée lointaine')).toBeVisible()
+  await expect(column(page, 'Terminé').getByText('Idée lointaine')).toBeHidden()
+})
+
+test('bloquer demande la cause et ce qui débloquerait', async ({ page }) => {
+  await page.goto('/')
+  await createTask(page, 'Lire Artémis', { todo: 'SSH vers artemis' })
+  await drag(page, 'Lire Artémis', 'En cours')
+  await expect(column(page, 'En cours').getByText('Lire Artémis')).toBeVisible()
+
+  await drag(page, 'Lire Artémis', 'Bloqué')
+  const dialog = page.getByRole('dialog')
+  const confirm = dialog.getByRole('button', { name: 'Déplacer en bloqué' })
+  await expect(confirm).toBeDisabled()
+  await dialog.getByLabel('Ce qui bloque').fill('Artémis éteint')
+  await dialog.getByLabel('Ce qui débloquerait').fill('Loïc rallume le nœud')
+  await confirm.click()
+
+  await expect(column(page, 'Bloqué').getByText('Bloqué : Artémis éteint')).toBeVisible()
+  await page.screenshot({ path: 'e2e/screenshots/bloque.png' })
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await page.reload()
+  await expect(column(page, 'Bloqué').getByText('Bloqué : Artémis éteint')).toBeVisible()
+  await page.screenshot({ path: 'e2e/screenshots/bloque-sombre.png' })
+})

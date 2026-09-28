@@ -1,7 +1,7 @@
 import { onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
-import App from './App'
+import { HealthStatus as App } from './HealthStatus'
 
 function renderApp() {
   // Aucun réglage par défaut ici : on teste les options réellement portées par App.
