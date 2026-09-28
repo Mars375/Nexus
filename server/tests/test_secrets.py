@@ -45,6 +45,10 @@ def test_labelled_values_are_masked_but_label_kept(text):
         ("AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENG", "AWS_SECRET_ACCESS_KEY=[REDACTED]"),
         ("CLIENT_SECRET=abc123", "CLIENT_SECRET=[REDACTED]"),
         ('{"db.password": "x1"}', '{"db.password": "[REDACTED]"}'),
+        ("otp: 123456", "otp: [REDACTED]"),
+        ("2fa_code=123456", "2fa_code=[REDACTED]"),
+        ("verification_code=123456", "verification_code=[REDACTED]"),
+        ("code de vérification : 123456", "code de vérification : [REDACTED]"),
     ],
 )
 def test_quoted_credentials_are_masked(text, expected):

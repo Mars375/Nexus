@@ -32,9 +32,11 @@ _FULL: list[tuple[str, re.Pattern[str]]] = [
 _ASSIGNMENT = re.compile(
     r"(?i)(?<![\w.-])("
     r"(?:[\w.-]*[_.-])?"
-    r"(?:password|passwd|pwd|secret|api[ _-]?key|access[ _-]?token|private[ _-]?key|token)"
+    r"(?:password|passwd|pwd|secret|api[ _-]?key|access[ _-]?token|private[ _-]?key|token"
+    # Codes à usage unique (SECURITY §1 : les codes 2FA sont des secrets).
+    r"|otp|totp|2fa|mfa|verification[ _-]?code|one[ _-]?time[ _-]?code)"
     r"(?:[_.-][\w.-]*)?"
-    r"|mot de passe|mdp)"
+    r"|mot de passe|mdp|code de vérification)"
     r"([\"']?\s*[:=]\s*)"
     r"(?:\"([^\"]*)\"|'([^']*)'|([^\s,;}\"']+))"
 )

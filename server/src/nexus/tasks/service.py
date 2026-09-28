@@ -105,6 +105,9 @@ def update_task(session: Session, task: Task, changes: dict[str, Any], actor: st
         if old != value:
             diff[field] = [old, value]
             setattr(task, field, value)
+    # Tracé même si rien ne change : un secret recollé dans un champ déjà masqué reste une
+    # exposition à signaler.
+    _record_redactions(session, task, actor, redacted)
     if not diff:
         return task
     rules.check_next_action(task.status, task.next_action)
@@ -128,7 +131,6 @@ def update_task(session: Session, task: Task, changes: dict[str, Any], actor: st
             return task
     task.updated_at = now()
     _record(session, task, actor, "updated", diff)
-    _record_redactions(session, task, actor, redacted)
     return task
 
 

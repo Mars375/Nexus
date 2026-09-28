@@ -243,6 +243,17 @@ def test_secrets_are_redacted_everywhere_and_traced(client):
     assert traced[0]["changes"] == {"fields": ["context", "objective"], "kinds": ["github_token"]}
 
 
+def test_secret_repasted_into_masked_field_is_still_traced(client):
+    ref = create(client, origin=f"collé : {SECRET}")["id"]
+    other = "ghp_" + "C" * 36
+    client.patch(f"/api/tasks/{ref}", json={"origin": f"collé : {other}"})  # même valeur masquée
+
+    history = client.get(f"/api/tasks/{ref}/history").json()
+    assert other not in str(history)
+    assert [h["action"] for h in history].count("secret_redacted") == 2
+    assert [h["action"] for h in history].count("updated") == 0
+
+
 def test_database_enforces_one_main_operation_under_concurrency(client):
     from sqlalchemy.exc import IntegrityError
 
