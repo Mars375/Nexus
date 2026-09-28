@@ -1,102 +1,115 @@
 # INTEGRATIONS — Nexus
 
-**Version :** 0.1 (draft à valider)
+**Version :** 0.2 (refonte : exécutants et sources derrière adaptateurs — ADR-011, ADR-013, ADR-016)
 **Date :** 2026-09-28
 
 ---
 
 ## Principe
 
-> **Agréger sans dupliquer.** Chaque source reste propriétaire de ses données ; Nexus lit, corrèle, référence. Les écritures passent par les surfaces natives, avec gating et read-back.
+> **Nexus est autonome ; les systèmes externes sont branchés derrière des adaptateurs remplaçables.** Nexus possède ses tâches et événements. Les données externes restent chez leur propriétaire : Nexus les lit, les affiche, et agit dessus via l'adaptateur — avec gating et read-back pour toute action sortante.
+
+Deux familles :
+
+- **Exécutants** — à qui Nexus confie du travail (« confier à ») : Hermes, Claude Code, Codex, Orca.
+- **Sources** — ce que Nexus lit et sur quoi il agit : chats, mail, agenda, Git, mémoire, infra, nœuds, quotas, cron.
 
 ---
 
-## 1. Hermes Kanban — le moteur des tâches (P0/MVP)
+## A. Exécutants
 
-**Vérifié le 2026-09-27 (audit lecture seule) :**
+### 1. Hermes — agents de nœud (Phase 2)
 
-- SQLite multi-boards, machine d'états complète : `création → triage/todo/ready/blocked → claim atomique → running + task_run → complete/review/block/crash/timeout`, avec heartbeat, fences de propriété, reclaim, retry.
+**Rôle :** exécutant pour Helios, Mnēma et Aether (ADR-013).
+
+**Vérifié le 2026-09-27/28 (lecture seule) :**
+
+- Hermes Kanban est une file de travail **pour agents** : toute tâche assignée à un profil et `ready` est lancée par le dispatcher (60 s) ; `triage` passe par un décomposeur LLM (mode Auto, actif sur Helios) ; `review` lance un relecteur. C'est pourquoi les tâches Nexus n'y vivent pas (ADR-011).
+- Machine d'états : claim atomique, heartbeat, reclaim, retry (`failure_limit=2`), stale timeout 14 400 s, circuit breaker.
 - Tables : `tasks`, `task_runs`, `task_events`, `task_comments`, `task_links`, `task_attachments`, `kanban_notify_subs`.
-- Dispatcher : toutes les 60 s ; `failure_limit=2` ; stale timeout 14 400 s ; review automatique ; auto-décomposition ≤ 3/tick ; `max_in_progress` non configuré ; board `default` vide (état initial sain).
-- Surfaces d'intégration : CLI `hermes kanban …`, outils agent (Kanban tools), API dashboard + WebSocket `/api/plugins/kanban/events?since=<event_id>&board=<slug>`.
+- Surfaces : CLI `hermes kanban …`, API dashboard + WebSocket `/api/plugins/kanban/events?since=<event_id>&board=<slug>`.
+- Statuts et événements relevés : [notes/2026-09-28-releve-enums-hermes-kanban.md](notes/2026-09-28-releve-enums-hermes-kanban.md).
 
-**Nexus :**
+**Adaptateur `hermes` :**
 
-- MVP : lecture (tâches, runs, events, comments) → vues Maintenant/Travail. Lecture première via CLI/DB **en lecture seule**.
-- v1 : écritures via les outils natifs (events/comments/transitions), read-back obligatoire.
-- Le mapping exact des enums de statut sera relevé en Phase 0 (lecture seule de `kanban_db.py`) — aucune valeur devinée.
+- `dispatch` : crée une tâche Hermes assignée au profil de l'agent choisi (`hermes kanban create … --assignee <profil> --idempotency-key <nx-run-id>`), sur un board dédié à Nexus (à créer, ex. `nexus`).
+- `watch` : suit le run via WS/DB ; traduit `claimed`, `blocked`, `review_requested`, `completed` en événements Nexus ; reprend `metadata` de complétion comme preuves.
+- Ne crée jamais de tâche Hermes sans « confier à » explicite.
 
-## 2. Hermes Cron — le planificateur (v1)
+### 2. Claude Code, Codex, Orca (Phase 2)
+
+- Claude Code : sessions locales (`~/.claude`) ; Codex : `codex exec -p <profil>`, `~/.codex` ; Orca : CLI `orca`, worktrees/devcontainers.
+- `dispatch` : lance une session non interactive sur la tâche (brief = objectif + contexte + preuves attendues) ; l'agent publie ses événements via l'API Nexus.
+- `watch` : suit le processus/la session ; relie `run ↔ session ↔ artefacts`.
+- **DONE ≠ preuve** : la preuve est relue, pas supposée.
+
+## B. Sources
+
+### 3. Chats (Phase 3)
+
+- **Lecture :** Telegram (dont le groupe « Hermes collective »), sessions Hermes (`state.db` : sessions/messages), sessions Claude Code (`~/.claude`) et Codex (`~/.codex`).
+- **Envoi :** canal à trancher — gateway Hermes (les agents de nœud y écoutent déjà), bot Telegram, ou API propre. Tout envoi passe par l'adaptateur, avec read-back.
+- Les chats restent dans leur système ; Nexus en garde un index daté pour l'affichage et la recherche.
+
+### 4. Hermes Cron (Phase 4)
 
 - Sources : `cron/jobs.json`, `cron/executions.db` ; diagnostic `hermes cron doctor`.
-- Nexus affiche : jobs actifs, dernier/prochain run, échecs, états `unknown` (jamais de « OK » inventé).
-- Contexte connu : des échecs 429 transitoires existent côté Cortex (quota Go) ; le retry/fallback est géré par les nœuds, Nexus **observe**.
-- Rappel : le comportement mémoire des jobs cron est version-dépendant — à revérifier au moment de l'intégration.
+- Nexus affiche : jobs actifs, dernier/prochain run, échecs, `unknown` (jamais de « OK » inventé).
+- Contexte : des échecs 429 transitoires existent côté Cortex (quota Go) ; le retry/fallback est géré par les nœuds, Nexus **observe**.
 
-## 3. Sessions & délégations (v1 → v2)
+### 5. Mail (Phase 4, règles à définir)
 
-- `state.db` (sessions/messages) pour les traces Hermes ; dossiers de délégation (`cache/delegation/live/…`).
-- Claude Code : sessions locales (`~/.claude`) ; Codex : `~/.codex` ; Orca : worktrees/devcontainers.
-- Délégation standard actuelle : `codex exec -p <profil>` (ex. brief non interactif) — à aligner avec le protocole d'événements.
-- Nexus relie `run ↔ session ↔ artefacts` ; **DONE ≠ preuve** : la preuve est relue, pas supposée.
+- Objectif : traiter les mails dans Nexus — lire, trier, préparer une réponse, créer une tâche.
+- Les triages mail existent déjà côté Helios (jobs quotidiens) ; leur sortie est une source possible.
+- Contraintes : **aucun envoi sans validation** ; minimisation du contenu sensible conservé.
+- Scopes : le token Google vérifié (gog) couvre `calendar` et `drive.file` — **pas Gmail**. Accès Gmail à cadrer (nouveau scope = validation explicite, SECURITY §8).
 
-## 4. Git / GitHub (v1)
+### 6. Calendrier (Phase 4)
 
-- Repos locaux (`F:/Projet/…`), commits, branches, worktrees ; `gh` CLI pour les PR/issues si besoin.
-- Rôle : preuves de code (commit/hash), état des chantiers, liens depuis les cartes.
+- Scope `calendar` (lecture vérifiée, 7 calendriers visibles). Rôle : événements, échéances, conflits. Création/modification gated.
 
-## 5. Mail (v1, règles à définir)
+### 7. Git / GitHub (Phase 5)
 
-- Les triages mail existent déjà côté Helios (jobs quotidiens) ; Nexus s'y **réfère** au lieu de recréer un client mail.
-- Objectif : surface « mails à traiter » (nécessite réponse / échéance) dans Maintenant + À ne pas oublier.
-- Contraintes : lecture seule par défaut ; **aucun envoi sans validation** ; ne jamais stocker de contenu sensible au-delà du nécessaire.
-- Note scopes : le token Google vérifié (gog) couvre `calendar` et `drive.file` — **pas Gmail**. Le périmètre mail passe par d'autres voies (jobs dédiés) ; à cadrer en Phase 0.
+- Repos locaux (`F:/Projet/…`), commits, branches, worktrees ; `gh` pour PR, checks, diffs.
+- Rôle : vue Code, preuves (commit/hash), liens depuis les cartes.
 
-## 6. Calendrier (v1)
+### 8. Mémoire — Mnēma / Hindsight (Phase 5)
 
-- Scopes existants : `calendar` (lecture vérifiée, 7 calendriers visibles). Rôle : échéances, événements, conflits.
+- Banks : `helios` (Helios), `mnema`, etc.
+- Nexus **affiche** les souvenirs et rapports utiles (ADR-016) ; la mémoire reste dans Hindsight.
 
-## 7. Quotas & budgets (v1)
+### 9. Infrastructure — Synapse / Aether (Phase 5)
 
-- OpenCode Go : fenêtres de limite (HTTP 429) observées ; état à afficher avec fraîcheur.
-- Contenus : crédits de génération (Higgsfield) ; solde et coûts par épisode.
-- Autres pools : via le registre de credentials (présence seulement — jamais de valeur affichée).
+- Services, santé, incidents : lus et affichés dans la vue Système.
+- Lecture Tailscale/SSH read-only ; jamais de mutation croisée sans le gardien du nœud.
+
+### 10. Nœuds (Phase 1 → 5)
+
+- Helios, Cortex, Synapse, Artémis : santé, dernier contact.
+- Artémis : `offline-by-design` — jamais « en panne ». Aucun serveur permanent de ce côté sans décision.
+
+### 11. Quotas & budgets (Phase 5)
+
+- OpenCode Go : fenêtres de limite (HTTP 429) ; crédits Higgsfield ; autres pools via le registre de credentials (présence seulement — jamais de valeur).
 - Politique : zéro paiement par défaut ; toute bascule payante = décision explicite.
 
-## 8. Mnēma / Hindsight — la mémoire (v1, référence)
+### 12. Artémis — l'usine de contenu (Phase 6, éteint volontairement)
 
-- Bank active : `helios` (Helios) ; autres banks selon nœud (`mnema`, etc.).
-- Nexus **référence** (liens contextuels vers souvenirs/rapports) ; il ne duplique pas le contenu mémoire.
-- Les rapports Mnēma restent dans leurs surfaces ; Nexus pointe dessus.
-
-## 9. Synapse / Aether — l'architecture (v1, référence)
-
-- Dashboard existant → référence contextuelle uniquement.
-- État du nœud : lecture (Tailscale/SSH read-only) ; jamais de mutation croisée sans le gardien du nœud.
-
-## 10. Artémis — l'usine de contenu (v2, éteint volontairement)
-
-- État `offline-by-design` : jamais « en panne », affiché tel quel.
 - Contrat à préparer (quand rallumé) : tâches de production + artefacts (épisodes, rapports de coûts) publiés au format Nexus.
-- Rappel : aucun serveur permanent ne doit rester actif de ce côté sans décision.
 
-## 11. Exécutants : Claude / Codex / Orca / Hermes (v2)
+## C. Matrice de statut
 
-- Claude Code, Codex CLI et Orca sont des **exécutants** derrière des contrats communs, sans confusion d'identité.
-- Chacun peut, à terme : recevoir une tâche, publier `claimed/working/progress/blocked/handoff/done`, livrer des preuves.
-- Deux vitesses : (a) agents Hermes natifs (Helios/Mnēma/Aether) qui utilisent déjà les outils Kanban ; (b) CLI externes (Claude/Codex/Orca) qui passeront par un adaptateur dédié en v2.
-
-## 12. Matrice de statut
-
-| Intégration | Sens | Phase | État |
-|---|---|---|---|
-| Hermes Kanban | R (→W) | MVP | audit fait ; pont à construire |
-| Hermes Cron | R | v1 | sources connues |
-| Sessions | R | v1 | sources connues |
-| Git | R | v1 | local |
-| Mail | R | v1 | règles à définir |
-| Calendrier | R | v1 | scope lecture OK |
-| Quotas | R | v1 | mesures à brancher |
-| Mnēma / Synapse | Réf | v1 | liens |
-| Artémis | R/É | v2 | éteint |
-| Claude / Codex / Orca | R/W | v2 | contrats à écrire |
+| Intégration | Famille | Sens | Phase | État |
+|---|---|---|---|---|
+| Nœuds | source | R | 1 | à brancher |
+| Hermes | exécutant | dispatch + R | 2 | audit fait ; enums relevés |
+| Claude / Codex / Orca | exécutant | dispatch + R | 2 | contrats à écrire |
+| Chats | source | R (+ envoi gated) | 3 | sources connues ; canal d'envoi à trancher |
+| Cron | source | R | 4 | sources connues |
+| Mail | source | R (+ envoi gated) | 4 | scope Gmail à cadrer |
+| Calendrier | source | R (+ écriture gated) | 4 | scope lecture OK |
+| Git / GitHub | source | R | 5 | local + `gh` authentifié |
+| Mnēma / Hindsight | source | R | 5 | banks connues |
+| Synapse | source | R | 5 | à brancher |
+| Quotas | source | R | 5 | mesures à brancher |
+| Artémis | source/exécutant | R | 6 | éteint |

@@ -6,7 +6,10 @@
 
 ## Le système
 
-- **Nexus** — le système de coordination personnel humain + agents : tâches, présence, événements, preuves, vues. Ce dépôt.
+- **Nexus** — l'application autonome, centre de contrôle de Loïc et de ses agents : tâches, conversations, mails, agenda, code, mémoire, infra, preuves. Ce dépôt.
+- **Adaptateur** — module remplaçable qui branche un système externe (exécutant ou source) sur Nexus.
+- **Exécutant** — système auquel Nexus confie du travail : Hermes (pour Helios/Mnēma/Aether), Claude Code, Codex, Orca.
+- **Confier à** — action explicite de Loïc qui envoie une tâche Nexus à un agent via son exécutant ; seule façon de faire exécuter une tâche.
 - **Nœud** — une machine de l'écosystème : Helios (poste), Cortex, Synapse, Artémis.
 - **Gardien local** — l'agent qui applique les changements de son nœud et en répond (règle de frontière Nexus).
 - **Nexus (le nom)** — retenu le 2026-09-27 ; « Orion Cockpit » est abandonné.
@@ -18,12 +21,13 @@
 - **Mnēma** — agent de Cortex : mémoire, diagnostic, supervision ; rapporteur.
 - **Aether** — agent de Synapse : homelab, architecture, services.
 - **Artémis** — agent de l'usine de contenu ; inclus dans le modèle, **éteint volontairement** (`offline-by-design`).
-- **Exécutants** — Claude Code, Codex CLI, Orca : outils de code pilotables ; **Hermes** : moteur d'exécution durable.
+- **Exécutants** — Claude Code, Codex CLI, Orca : outils de code pilotables ; **Hermes** : moteur d'exécution sur lequel tournent Helios, Mnēma et Aether.
 
 ## Le travail
 
-- **Task / Carte** — unité de travail durable ; vit dans Hermes Kanban ; enrichie par Nexus (propriétaire, prochaine action, échéance, preuves).
-- **Run** — une exécution concrète d'une tâche par un agent (session, durée, résultat).
+- **Task / Carte** — unité de travail durable ; vit dans Nexus (`nexus.db`) ; porte propriétaire, prochaine action, échéance, preuves. Ne s'exécute jamais toute seule.
+- **Run** — une exécution concrète d'une tâche par un agent, chez un exécutant (session, durée, résultat, statut natif).
+- **Conversation / Message** — un fil de discussion, natif Nexus ou lu depuis Telegram, Hermes, Claude, Codex.
 - **Événement** — fait daté publié par un acteur (claimed, progress, blocked, handoff, done…), immuable.
 - **Preuve / Artifact** — ce qui rend une clôture vérifiable : commit, fichier, log, capture, URL.
 - **Blocker** — cause nommée qui empêche d'avancer + ce qui débloquerait + relance prévue.
@@ -42,9 +46,9 @@
 - **Gating** — action sensible nécessitant un go humain explicite à chaque fois.
 - **Read-back** — relire l'effet d'une écriture pour confirmer qu'elle a bien eu lieu.
 
-## Sources de vérité
+## Systèmes externes
 
-- **Hermes Kanban** — le moteur des tâches exécutables (SQLite, dispatcher, runs, workers).
+- **Hermes Kanban** — file de travail pour agents (SQLite, dispatcher, runs, workers) : toute tâche assignée et prête y est exécutée automatiquement. Branché comme exécutant, jamais comme lieu des tâches Nexus.
 - **Cron** — le planificateur (jobs, exécutions).
 - **Hindsight** — la mémoire longue (banks : `helios`, `mnema`…).
 - **Board / Tenant** — frontières fortes / namespaces souples dans Hermes Kanban.

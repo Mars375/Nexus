@@ -4,7 +4,7 @@
 
 ### Issue tracker
 
-Issues live in this repo's GitHub Issues, managed with the `gh` CLI. They track the development of Nexus itself; operational tasks run by the agents live in Hermes Kanban (ADR-002). See `docs/agents/issue-tracker.md`.
+Issues live in this repo's GitHub Issues, managed with the `gh` CLI. They track the development of Nexus itself; operational tasks will live in Nexus once it runs (ADR-012) — never mirror one into the other. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

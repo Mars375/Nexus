@@ -20,7 +20,7 @@
 |---|---|---|
 | Public | docs projet, inspirations | libre |
 | Interne | tâches, runs, quotas, planning | local uniquement |
-| Sensible | mails, identités, finances | local, accès restreint, minimisation |
+| Sensible | mails, conversations (chats, sessions), identités, finances | local, accès restreint, minimisation, jamais exporté |
 | Secret | tokens, clés, mots de passe | jamais stocké — coffre uniquement |
 
 ## 3. Matrice de permissions (cible)
@@ -35,10 +35,12 @@
 
 - **Suppression** : jamais par un agent. Seul Loïc supprime — ou un script explicitement validé par lui.
 - **Exécution** : chaque agent exécute dans son périmètre de nœud et ses permissions locales existantes (inchangées par Nexus).
+- **« Confier à »** : depuis Nexus, seul Loïc déclenche l'exécution d'une tâche par un agent (ADR-012) ; un agent peut le proposer (`needs_human`), jamais le déclencher lui-même via Nexus.
 
 ## 4. Actions gated (go humain explicite, à chaque fois)
 
-- Envoi de mail, publication (réseaux, web), achat/dépense, suppression de données,
+- Envoi de mail, envoi de message à un tiers humain, publication (réseaux, web), achat/dépense, suppression de données,
+- Création ou modification d'un événement d'agenda partagé,
 - Déploiement/service permanent, modification de config critique (routing, gateways, backups),
 - Toute mutation touchant un autre nœud que le sien,
 - Toute bascule de modèle/provider payant.
@@ -76,6 +78,7 @@ Format d'une demande de validation : **quoi · pourquoi · conséquence · plan 
 
 - Stocker un secret, même « temporairement » ou « chiffré maison ».
 - Envoyer/publier/dépenser sans go explicite.
+- Lancer un agent sans action explicite de Loïc.
 - Fermer une tâche sans preuve lisible.
 - Exposer une surface d'administration hors de la machine locale.
 - Prendre une décision à la place de Loïc (il propose, Loïc tranche).

@@ -19,7 +19,7 @@ Toute décision structurante s'ajoute ici.
 - **Contexte :** audit lecture seule du 27/09 : Hermes Kanban est une machine d'états complète (SQLite multi-boards, dispatcher 60 s, runs, workers, reclaim/retry, review auto) ; le board `default` est vide.
 - **Décision :** les tâches exécutables vivent dans Hermes ; Nexus lit, corrèle, affiche, et n'écrit que via les surfaces natives (outils Kanban, events/comments) avec read-back. Pas de file parallèle, pas de seconde base de vérité.
 - **Conséquences :** le MVP est read-only ; toute duplication de données est interdite ; la base locale de Nexus (si créée) est un index reconstructible.
-- **Statut :** accepté.
+- **Statut :** **remplacé par ADR-011 et ADR-013** (2026-09-28) — Hermes Kanban exécute automatiquement ses tâches par des agents ; il ne peut pas porter les tâches de Loïc sans violer ADR-003.
 
 ## ADR-003 — Aucun LLM requis pour l'usage de base
 
@@ -59,7 +59,7 @@ Toute décision structurante s'ajoute ici.
 - **Contexte :** Mnēma et Synapse ont déjà leurs dashboards ; Loïc ne veut pas de duplication (« pas besoin de dashboard de synapse et Mnema vu qu'on a déjà un dashboard… une ref dedans »).
 - **Décision :** Nexus fournit des **références contextuelles** (liens, états, fraîcheur) vers ces dashboards ; il ne recopie ni leurs données ni leurs vues.
 - **Conséquences :** chaque source garde sa surface ; Nexus reste la couche de corrélation.
-- **Statut :** accepté.
+- **Statut :** **remplacé par ADR-016** (2026-09-28) — Nexus doit être la seule application ouverte ; les informations utiles de Mnēma et Synapse s'affichent dans Nexus.
 
 ## ADR-008 — Artémis inclus dans le modèle, éteint dans les faits
 
@@ -84,12 +84,56 @@ Toute décision structurante s'ajoute ici.
 - **Conséquences :** pas de mutation croisée silencieuse ; toute intervention croisée se demande et se trace.
 - **Statut :** accepté.
 
+## ADR-011 — Nexus est une application autonome, le centre de contrôle unique
+
+- **Date :** 2026-09-28 (décidé par Loïc)
+- **Contexte :** relecture de la documentation de Hermes Kanban (`website/docs/user-guide/features/kanban.md`) : c'est une file de travail **pour agents**. Chaque tâche a un `assignee` qui est un profil d'agent ; en `ready`, le dispatcher lance un worker (appel LLM) ; en `triage`, le décomposeur automatique (actif sur Helios) appelle un LLM ; en `review`, un agent relecteur est lancé. Y placer les tâches de Loïc contredit ADR-003. Loïc : « je ne veux pas que Nexus soit une copie d'un truc […] je veux que Nexus devienne quelque chose d'indépendant, mais que ce soit notre centre de contrôle, la seule app que l'on veut utiliser ».
+- **Décision :** Nexus est une application autonome, avec son propre modèle et ses propres données (`nexus.db`). Il n'est ni une surcouche ni une copie d'un outil existant. Les outils existants sont branchés derrière des adaptateurs remplaçables.
+- **Conséquences :** ADR-002 et ADR-007 sont remplacées ; le MVP n'est plus un « pont lecture Hermes » mais le noyau de Nexus (tableau, vue Maintenant, API d'événements).
+- **Statut :** accepté.
+
+## ADR-012 — Les tâches vivent dans Nexus ; aucune exécution automatique
+
+- **Date :** 2026-09-28
+- **Décision :** `nexus.db` est la source de vérité des tâches de coordination (celles de Loïc comme celles des agents), de leurs événements, approbations et décisions. Une tâche Nexus n'est **jamais** exécutée automatiquement : « confier à » un agent est une action explicite, qui crée un run chez l'exécutant choisi.
+- **Conséquences :** les statuts de tâche sont propres à Nexus (DATA-MODEL §3) ; les statuts des exécutants sont lus au niveau du run.
+- **Statut :** accepté.
+
+## ADR-013 — Hermes est un exécutant parmi d'autres
+
+- **Date :** 2026-09-28
+- **Contexte :** Helios, Mnēma et Aether tournent sur Hermes ; son dispatcher gère claim, heartbeat, reprise et retries. Le remplacer coûterait cher sans gain.
+- **Décision :** Hermes est branché derrière un adaptateur d'exécution, au même rang que Claude Code, Codex et Orca. Confier une tâche à Helios, Mnēma ou Aether crée une tâche côté Hermes ; Nexus suit le run et relit le résultat.
+- **Conséquences :** Nexus ne dépend pas de Hermes pour fonctionner ; si Hermes change, seul l'adaptateur change.
+- **Statut :** accepté.
+
+## ADR-014 — Stack : FastAPI + SQLite + UI web locale
+
+- **Date :** 2026-09-28 (décidé par Loïc)
+- **Décision :** serveur Python (FastAPI), base SQLite (`nexus.db`), UI web servie en local. Patterns API + WebSocket repris du dashboard Hermes quand ils servent.
+- **Conséquences :** le framework front reste à choisir (décision ouverte).
+- **Statut :** accepté.
+
+## ADR-015 — Deux façons pour un agent de travailler avec Nexus
+
+- **Date :** 2026-09-28 (décidé par Loïc)
+- **Décision :** (a) Nexus lance un agent sur action explicite de Loïc (« confier à ») et suit son run ; (b) un agent lancé ailleurs (terminal, Telegram, Hermes) se déclare dans Nexus via l'API d'événements.
+- **Conséquences :** l'API d'événements est publique en local dès la Phase 1 ; les adaptateurs d'exécution arrivent en Phase 2.
+- **Statut :** accepté.
+
+## ADR-016 — La seule application : Nexus absorbe les surfaces utiles
+
+- **Date :** 2026-09-28 (décidé par Loïc)
+- **Décision :** Nexus affiche et permet d'agir sur : les chats (lecture des conversations existantes et discussion avec les agents), les mails et l'agenda, Git et le code, la mémoire (Mnēma/Hindsight) et l'infrastructure (Synapse, nœuds, quotas). Les données externes restent chez leur propriétaire : Nexus les lit, les indexe si besoin, et agit via l'adaptateur — il n'en devient pas la source.
+- **Conséquences :** toute action sortante (envoi de mail, message, publication) reste gated (SECURITY §4).
+- **Statut :** accepté.
+
 ---
 
-## Décisions ouvertes (à trancher — Phase 0)
+## Décisions ouvertes
 
-- **Stack UI/serveur** : serveur Python + UI web vs extension du dashboard Hermes (ARCHITECTURE §7).
-- **Événements de coordination** : surfaces natives Hermes vs `nexus.db` (DATA-MODEL §6).
+- **Framework front** de l'UI web (ADR-014).
+- **Canal d'envoi des messages aux agents** depuis Nexus : gateway Hermes, bot Telegram, ou API propre (INTEGRATIONS §3).
 - **Périmètre mail** : boîtes couvertes, règles de confidentialité (INTEGRATIONS §5).
 - **Cadence des rapports** : quotidien, hebdo, ou les deux (PRD §13).
 - **Critère « attend Loïc »** : relance automatique vs attente passive (PRD §13).

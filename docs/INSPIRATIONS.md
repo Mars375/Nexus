@@ -38,7 +38,7 @@
 
 ### Autres dépôts survolés (Kandev, Claw-Kanban, T0ggles, Nimbalyst, Conductor, Claude Command Center, Jarvis-Copilot, openclaw-dashboard, kanbots)
 - **Prendre :** idées ponctuelles (files par agent, board d'équipe, orchestration de worktrees, revue).
-- **Éviter :** l'adoption complète d'un produit ; on reste une surcouche locale.
+- **Éviter :** l'adoption complète d'un produit ; Nexus reste notre application.
 
 ## Protocoles
 
@@ -71,7 +71,7 @@
 
 ## Ce que la recherche conclut
 
-1. **Ne pas adopter un produit existant** — construire notre système, au-dessus d'Hermes.
+1. **Ne pas adopter ni copier un produit existant** — construire notre propre application, autonome, avec les outils existants (Hermes compris) branchés derrière des adaptateurs.
 2. **Les patterns gagnants :** espaces partagés, rôles/permissions, messages structurés, worktrees/tentatives, heartbeat, preuves, budgets visibles.
 3. **Les pièges :** dashboards-décor, autonomie promise, duplication des sources, mémoire opaque.
-4. **Notre différenciateur :** l'honnêteté des états (provenance, fraîcheur, `unknown`), l'usage sans LLM, et l'intégration réelle de nos 4 nœuds + exécutants.
+4. **Notre différenciateur :** l'honnêteté des états (provenance, fraîcheur, `unknown`), l'usage sans LLM, l'exécution uniquement sur action explicite, et l'intégration réelle de nos 4 nœuds + exécutants dans une seule application.

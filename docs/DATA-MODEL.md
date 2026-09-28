@@ -1,20 +1,21 @@
 # DATA-MODEL — Nexus
 
-**Version :** 0.1 (draft à valider)
+**Version :** 0.2 (refonte : application autonome — ADR-011, ADR-012)
 **Date :** 2026-09-28
 
 ---
 
 ## 1. Conventions
 
-- **Ids** — les objets natifs gardent leur id d'origine (`kanban:default#<id>`, `cron:<job>`, `commit:<sha>`…). Les objets propres à Nexus utilisent le préfixe `nx-`.
+- **Ids** — les objets propres à Nexus utilisent le préfixe `nx-` (`nx-task-42`, `nx-evt-…`). Les objets externes gardent leur id d'origine, préfixé par leur système (`hermes:default#t_abcd`, `commit:<sha>`, `telegram:<chat>/<msg>`, `gmail:<thread>`…).
 - **Temps** — ISO-8601 avec fuseau (Europe/Paris). Toute donnée affichée porte `measured_at` (fraîcheur) et `source` (provenance).
 - **`unknown`** — valeur pleine et assumée : elle signifie « non vérifié », jamais « faux » ni « vide ».
 - **Secrets** — interdits ; remplacés par `[REDACTED]` partout (schéma, logs, export).
+- **Propriété** — une entité est soit **native** (source de vérité : `nexus.db`), soit **externe** (Nexus en garde un snapshot daté, la vérité reste à la source).
 
 ## 2. Entités
 
-### 2.1 Node (nœud)
+### 2.1 Node (nœud) — native
 
 | Champ | Type | Notes |
 |---|---|---|
@@ -24,68 +25,101 @@
 | `last_check_at` | ts | dernière vérification |
 | `guardian_agent` | ref | qui applique les changements locaux |
 
-### 2.2 Agent
+### 2.2 Agent — native
 
 | Champ | Type | Notes |
 |---|---|---|
-| `id` | str | `loic` (humain), `helios`, `mnema`, `aether`, `artemis`, `claude`, `codex`, `orca`, `hermes` |
+| `id` | str | `loic` (humain), `helios`, `mnema`, `aether`, `artemis`, `claude`, `codex`, `orca` |
 | `kind` | enum | `human`, `node-agent`, `executor` |
 | `node` | ref Node | son nœud d'attache |
+| `executor` | ref Executor | par où on le fait travailler (ex. `helios` → `hermes`) |
 | `capabilities` | list | ce qu'il peut faire (exécuter, publier, browser…) |
 | `presence` | enum | `idle`, `working`, `blocked`, `offline`, `unknown` |
 
-### 2.3 Task (tâche)
+### 2.3 Executor (exécutant) — native
 
-L'unité de travail durable. Vit dans **Hermes Kanban** ; Nexus l'enrichit conceptuellement.
-
-| Champ | Requis | Notes |
-|---|---|---|
-| `id` | ✓ | id kanban |
-| `title`, `objective` | ✓ | objectif clair, une phrase |
-| `status` | ✓ | selon source ; sinon `unknown` |
-| `human_owner` | ✓ | humain responsable (souvent Loïc) |
-| `lead_agent` | — | agent principal |
-| `collaborators` | — | autres agents mobilisés |
-| `next_action` | ✓* | *obligatoire pour toute tâche active |
-| `due_at` / `review_at` | — | échéance / relance |
-| `blockers` | — | liste (voir Blocker) |
-| `depends_on` | — | ids de tâches |
-| `context` | — | liens (sessions, repos, docs, conversations) |
-| `expected_evidence` | — | ce qui prouvera la clôture |
-| `events` | — | journal (voir Event) |
-| `priority` | — | `low`, `normal`, `high`, `critical` |
-| `operation_role` | — | `main` ou `auxiliary` (politique une op principale) |
-
-### 2.4 Run
-
-Une exécution concrète (agent, session, durée, résultat).
+Un système capable d'exécuter du travail confié par Nexus, derrière un adaptateur.
 
 | Champ | Notes |
 |---|---|
-| `id` | id natif (Hermes run, session Claude/Codex…) |
+| `id` | `hermes`, `claude-code`, `codex`, `orca` |
+| `agents` | agents joignables par cet exécutant (ex. `hermes` → `helios`, `mnema`, `aether`) |
+| `status` | `available`, `unavailable`, `unknown` (+ `measured_at`) |
+
+### 2.4 Task (tâche) — native
+
+L'unité de travail durable. Vit dans **`nexus.db`** (ADR-012).
+
+| Champ | Requis | Notes |
+|---|---|---|
+| `id` | ✓ | `nx-task-<n>` |
+| `title`, `objective` | ✓ | objectif clair, une phrase |
+| `status` | ✓ | voir §3 |
+| `human_owner` | ✓ | humain responsable (souvent Loïc) |
+| `lead_agent` | — | agent principal (humain ou agent) |
+| `collaborators` | — | autres agents mobilisés |
+| `next_action` | ✓* | *obligatoire pour toute tâche active |
+| `due_at` / `follow_up_at` | — | échéance / relance |
+| `blockers` | — | liste (voir Blocker) |
+| `depends_on` | — | ids de tâches |
+| `context` | — | liens (conversations, repos, docs, mails) |
+| `expected_evidence` | — | ce qui prouvera la clôture |
+| `priority` | — | `low`, `normal`, `high`, `critical` |
+| `operation_role` | — | `main` ou `auxiliary` (politique une op principale) |
+| `origin` | — | d'où vient la tâche (message, mail, décision…) |
+
+### 2.5 Run — native (miroir d'un travail externe)
+
+Une exécution concrète, créée par « confier à » ou déclarée par un agent.
+
+| Champ | Notes |
+|---|---|
+| `id` | `nx-run-<n>` |
 | `task` | ref Task |
-| `agent`, `executor` | qui, avec quel outil (claude/codex/orca/hermes) |
+| `agent`, `executor` | qui, par quel exécutant |
+| `external_ref` | id chez l'exécutant (ex. `hermes:default#t_abcd`, session Claude) |
 | `started_at`, `ended_at` | |
-| `outcome` | `success`, `failed`, `blocked`, `unknown` |
+| `status` | `dispatched`, `running`, `blocked`, `review`, `done`, `failed`, `cancelled`, `unknown` |
+| `native_status` | valeur brute de l'exécutant (ex. Hermes `running`, outcome `crashed`) |
 | `artifacts` | refs (commits, fichiers, logs, captures) |
-| `session_ref` | lien vers la session/transcript |
 
-### 2.5 Event
+### 2.6 Event — native
 
-Message structuré publié par un acteur (voir [EVENT-PROTOCOL.md](EVENT-PROTOCOL.md)).
+Fait structuré publié par un acteur (voir [EVENT-PROTOCOL.md](EVENT-PROTOCOL.md)). Immuable.
 
 | Champ | Notes |
 |---|---|
 | `id`, `at` | |
-| `task` | ref Task (ou null pour présence/coordination) |
+| `task`, `run` | refs (ou null pour présence/coordination) |
 | `actor` | qui publie |
 | `kind` | `claimed` `working` `progress` `question` `blocked` `needs_human` `handoff` `review` `done` `failed` `unknown` |
 | `subject`, `body` | court, puis détail |
 | `payload` | données spécifiques au kind |
 | `evidence` | refs |
-| `needs` | destinataires attendus (pour question/needs_human/handoff) |
+| `needs` | destinataires attendus (question/needs_human/handoff) |
+| `source` | `api` (agent direct) ou adaptateur (`hermes`, `codex`…) |
 
-### 2.6 Artifact / Evidence
+### 2.7 Conversation — native ou externe
+
+| Champ | Notes |
+|---|---|
+| `id` | `nx-conv-<n>` (native) ou id externe (`telegram:<chat>`, `hermes-session:<id>`, `claude-session:<id>`…) |
+| `source` | `nexus`, `telegram`, `hermes`, `claude-code`, `codex` |
+| `participants` | acteurs |
+| `title` | |
+| `task` | ref optionnelle |
+| `last_message_at`, `measured_at` | |
+
+### 2.8 Message — native ou externe
+
+| Champ | Notes |
+|---|---|
+| `id`, `conversation`, `from`, `to[]`, `at` | |
+| `kind` | `chat`, `question`, `answer`, `handoff`, `note`, `decision` |
+| `body` | contenu (secrets → `[REDACTED]`) |
+| `task` | ref optionnelle (tâche née du message, ou liée) |
+
+### 2.9 Artifact / Evidence — native (référence)
 
 | Champ | Notes |
 |---|---|
@@ -95,18 +129,7 @@ Message structuré publié par un acteur (voir [EVENT-PROTOCOL.md](EVENT-PROTOCO
 | `hash` | optionnel (intégrité) |
 | `created_by`, `at` | |
 
-### 2.7 Message
-
-Communication structurée entre acteurs (question/réponse/handoff/note), visible de tous.
-
-| Champ | Notes |
-|---|---|
-| `id`, `thread`, `from`, `to[]` | |
-| `task` | ref optionnelle |
-| `kind` | `question`, `answer`, `handoff`, `note`, `decision` |
-| `body`, `at` | |
-
-### 2.8 Approval (validation)
+### 2.10 Approval (validation) — native
 
 Toute décision attendue de Loïc (ou d'un gardien) est un objet explicite.
 
@@ -118,7 +141,7 @@ Toute décision attendue de Loïc (ou d'un gardien) est un objet explicite.
 | `decided_by`, `decided_at` | |
 | `consequence` | ce qui se passera après approbation |
 
-### 2.9 Decision (décision)
+### 2.11 Decision (décision) — native
 
 | Champ | Notes |
 |---|---|
@@ -127,62 +150,63 @@ Toute décision attendue de Loïc (ou d'un gardien) est un objet explicite.
 | `affects` | tâches/agents concernés |
 | `status` | `active`, `superseded`, `reversed` |
 
-### 2.10 Quota
+### 2.12 Entités externes indexées
 
-| Champ | Notes |
-|---|---|
-| `source` | `opencode-go`, `higgsfield`, `openrouter`, … |
-| `window`, `used`, `limit` | fenêtre, consommation, plafond |
-| `measured_at` | fraîcheur (obligatoire) |
-| `state` | `ok`, `near-limit`, `exhausted`, `unknown` |
+Snapshots datés, jamais source de vérité : `MailThread` (Gmail), `CalendarEvent`, `Commit` / `Branch` / `PullRequest` (Git/GitHub), `MemoryRef` (Hindsight), `Service` (Synapse), `CronJob`, `Quota`. Chacune porte `source`, `external_id`, `measured_at`.
 
-## 3. Enums de statut (tâche)
+`Quota` : `source` (`opencode-go`, `higgsfield`, `openrouter`…), `window`, `used`, `limit`, `measured_at`, `state` (`ok`, `near-limit`, `exhausted`, `unknown`).
 
-Proposition Nexus (le mapping exact vers Hermes sera relevé en Phase 0, lecture seule) :
+## 3. Statuts de tâche
+
+Propres à Nexus (ADR-012) :
 
 ```text
-backlog → todo → ready → in_progress → review → done
-                    ↘ blocked ↗         ↘ failed
-                    ↘ dropped            ↘ unknown
+backlog → todo → in_progress → review → done
+             ↘ blocked ↗
+             ↘ dropped
 ```
 
 - `in_progress` : au plus **une opération principale** par humain.
+- `blocked` : avec cause, ce qui débloquerait, relance prévue.
 - `review` : terminé déclaré mais preuve manquante ou validation requise.
-- `unknown` : état non vérifié (source injoignable, run non confirmé).
+- `dropped` : abandon explicite (jamais silencieux).
+- Une tâche Nexus n'est jamais `unknown` : Nexus en est la source. `unknown` s'applique aux runs, nœuds et données externes non vérifiés.
+- Les statuts natifs des exécutants (ex. Hermes `triage`, `ready`, `running`, `archived`) restent au niveau du run (`native_status`).
 
 ## 4. Relations (schéma)
 
 ```text
-Node 1─* Agent
+Node 1─* Agent *─1 Executor
 Human 1─* Task (human_owner)
 Task 1─* Run 1─* Artifact
 Task 1─* Event
 Task *─* Task (depends_on)
-Message *─1 Task
-Approval *─1 Task (optionnel)
+Conversation 1─* Message *─0..1 Task
+Approval *─0..1 Task
 Decision *─* Task
 ```
 
 ## 5. Règles de données
 
 1. **Provenance obligatoire** — toute donnée a `source` + `measured_at`.
-2. **Pas de double écriture** — on modifie une tâche dans sa source (Hermes), pas dans deux endroits.
+2. **Une seule source par donnée** — une tâche se modifie dans Nexus ; un mail dans Gmail (via adaptateur). Jamais deux écritures concurrentes.
 3. **Immutabilité des événements** — un événement publié ne se réécrit pas ; on en publie un nouveau (correction).
-4. **Preuve ou review** — une tâche `done` sans `expected_evidence` fourni repasse en `review`.
+4. **Preuve ou review** — une tâche `done` sans preuve fournie repasse en `review`.
 5. **Secrets interdits** — validation automatique à l'écriture ; toute correspondance sensible → `[REDACTED]` + alerte.
 6. **`unknown` honnête** — jamais de valeur par défaut qui masque l'incertitude.
+7. **Cache ≠ vérité** — un snapshot externe affiche toujours sa fraîcheur et peut être reconstruit.
 
 ## 6. Où vivent les données
 
 | Donnée | Propriétaire | Nexus |
 |---|---|---|
-| Tâches exécutables, runs, events kanban | Hermes (`kanban.db`) | lit (MVP), écrit via natif (v1) |
-| Jobs cron, exécutions | Hermes cron | lit |
-| Sessions, transcripts | état local par nœud | lit/référence |
-| Code, commits | Git | lit/référence |
-| Mails | Gmail | lit (règles à définir) |
-| Calendrier | Google Calendar | lit |
-| Mémoire | Hindsight (bank `helios` / `mnema`) | référence |
-| Corrélations, politiques, événements hors tâche | **Nexus** (`nexus.db`) | propriétaire |
-
-**Question ouverte n°2 (PRD) :** les événements liés aux tâches doivent-ils être écrits dans les surfaces natives Hermes (recommandé — une seule source) ou dans `nexus.db` ? Arbitrage en Phase 0.
+| Tâches, événements, runs, approbations, décisions | **Nexus** (`nexus.db`) | propriétaire |
+| Conversations nées dans Nexus | **Nexus** | propriétaire |
+| Travail confié à Hermes / Claude / Codex / Orca | l'exécutant | suit via `Run.external_ref` |
+| Chats Telegram, sessions Hermes/Claude/Codex | leur système | lit, indexe ; envoie via adaptateur (gated) |
+| Mails | Gmail | lit, indexe ; brouillons ; envoi gated |
+| Calendrier | Google Calendar | lit ; création gated |
+| Code, commits, PR | Git / GitHub | lit, référence |
+| Mémoire | Hindsight (banks `helios`, `mnema`…) | lit, affiche |
+| Services, santé | Synapse / nœuds | lit, affiche |
+| Jobs cron | Hermes cron | lit |

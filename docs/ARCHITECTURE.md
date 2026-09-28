@@ -1,6 +1,6 @@
 # ARCHITECTURE — Nexus
 
-**Version :** 0.1 (draft à valider)
+**Version :** 0.2 (refonte : application autonome — ADR-011)
 **Date :** 2026-09-28
 
 ---
@@ -10,30 +10,34 @@
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
 │  SURFACES                                                        │
-│  Page web locale (Maintenant · Travail · À ne pas oublier ·      │
-│  Planning · Ressources)  ·  Telegram (alertes/rapports)          │
+│  UI web locale : Maintenant · Travail · Conversations · Inbox ·  │
+│  Planning · Code · Système · À ne pas oublier                    │
+│  Telegram (alertes mobiles)                                      │
 ├─────────────────────────────────────────────────────────────────┤
 │  CORE NEXUS (local, zéro LLM par défaut)                         │
-│  · Modèle commun (Task/Agent/Run/Event/Artifact)                 │
-│  · Corrélation multi-sources (par ids, jamais par recopie)       │
+│  · Modèle propre : Task / Run / Event / Conversation / Approval… │
+│  · nexus.db = source de vérité de la coordination                │
 │  · Politiques (une op principale, unknown, preuves, gating)      │
-│  · Bus d'événements (agents → tous)                              │
+│  · API d'événements (agents → Nexus) + WebSocket (Nexus → UI)    │
+│  · Dispatch explicite (« confier à ») — jamais automatique       │
 ├─────────────────────────────────────────────────────────────────┤
-│  ADAPTATEURS (un par source, remplaçables)                       │
-│  hermes-kanban · hermes-cron · sessions · git · mail ·           │
-│  calendar · quotas · nodes · memory-refs                         │
+│  ADAPTATEURS (un par système externe, remplaçables)              │
+│  exécutants : hermes · claude-code · codex · orca                │
+│  données    : chats · mail · calendar · git · memory · infra ·   │
+│               nodes · quotas · cron                              │
 ├─────────────────────────────────────────────────────────────────┤
-│  SOURCES DE VÉRITÉ (restent chez leurs propriétaires)            │
-│  Hermes (tâches/runs) · Cron (jobs) · Git (code) ·               │
-│  sessions locales · Gmail/Calendrier · Hindsight (mémoire)       │
+│  SYSTÈMES EXTERNES (propriétaires de leurs données)              │
+│  Hermes · Claude/Codex/Orca · Telegram · Gmail · Google Calendar │
+│  Git/GitHub · Hindsight · Synapse · nœuds                        │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## 2. Décision structurante : surcouche, pas remplacement
+## 2. Décision structurante : application autonome
 
-- **Hermes Kanban reste le moteur durable** des tâches exécutables (SQLite multi-boards, machine d'états, dispatcher, workers, runs, preuves — audité le 2026-09-27 : cycle `claim → spawn → surveillance → reclaim/retry`, heartbeat, fences de propriété).
-- Nexus **lit** Hermes et les autres sources, **corrèle**, **affiche** ; il **écrit** uniquement via les surfaces natives (outils Kanban, comments/events, transitions) ou via des adaptateurs explicites.
-- Aucune seconde base « vérité » : la base locale de Nexus est un **index de corrélation + cache**, reconstructible à tout moment depuis les sources.
+- **Nexus possède son modèle et ses données** (ADR-011, ADR-012) : tâches, événements, approbations, décisions, conversations natives, preuves. Ils vivent dans `nexus.db`.
+- **Aucun système externe n'est sa colonne vertébrale.** Hermes, Gmail, Git, etc. sont branchés derrière des adaptateurs ; si l'un disparaît, seul son adaptateur change.
+- **Les données externes restent chez leur propriétaire** (ADR-016) : Nexus les lit, peut en garder un index/cache daté pour la recherche et l'affichage, et agit via l'adaptateur — il n'en devient pas la source.
+- **Aucune exécution automatique** : une tâche ne part chez un exécutant que par « confier à » (ADR-012, ADR-015).
 
 ## 3. Composants
 
@@ -41,100 +45,129 @@
 
 | Module | Rôle |
 |---|---|
-| `model` | Types communs (Task, Run, Event, Artifact, Approval…) et validations |
-| `correlate` | Jointures par ids : tâche ↔ run ↔ session ↔ commit ↔ preuve |
-| `policy` | Règles produit : une op principale, staleness, `unknown`, gating |
-| `events` | Réception/normalisation/publication des événements d'agents |
+| `model` | Types (Task, Run, Event, Conversation, Message, Artifact, Approval, Decision…) et validations |
+| `store` | Accès `nexus.db` : tâches, événements, index/cache des sources externes |
+| `policy` | Règles produit : une op principale, staleness, `unknown`, preuve ou review, gating |
+| `events` | API d'événements : réception, validation, publication, read-back |
+| `dispatch` | « Confier à » : crée le run chez l'exécutant, suit son état, rapatrie les preuves |
 | `views` | Calcul des vues (agrégations, détections « à ne pas oublier ») |
+| `search` | Recherche globale (tâches, chats, mails, code) avec lien vers la source |
 
 ### 3.2 Adaptateurs
 
-Chaque adaptateur expose la même interface minimale :
+Interface commune :
 
 ```text
 probe()        → état de la source (joignable, fraîcheur, erreurs)
 read(query)    → données normalisées + provenance
-write(action)  → mutation gated (si supportée)
+act(action)    → action sur la source (gated si sortante ou irréversible) + read-back
 ```
 
-| Adaptateur | Source | Sens | Notes |
+Les adaptateurs d'exécution ajoutent :
+
+```text
+dispatch(task, options) → run_ref        (création du travail chez l'exécutant)
+watch(run_ref)          → événements du run (claimed, progress, blocked, done…)
+```
+
+| Adaptateur | Système | Phase | Notes |
 |---|---|---|---|
-| `hermes-kanban` | `kanban.db` + CLI `hermes kanban` | R→(W) | cœur du MVP ; lecture via CLI/DB en lecture seule d'abord |
-| `hermes-cron` | `cron/jobs.json`, `cron/executions.db` | R | jobs, dernier/prochain run, échecs |
-| `sessions` | `state.db` (sessions/messages), dossiers de sessions Claude/Codex | R | lier runs et traces |
-| `git` | repos locaux (F:/Projet/…), `gh` | R | commits, branches, preuves |
-| `mail` | Gmail (via outils/skills existants) | R | à traiter seulement ; jamais d'envoi sans validation |
-| `calendar` | Google Calendar (scopes existants) | R | échéances, événements |
-| `quotas` | Go usage, crédits Higgsfield, pools | R | fenêtres 429, soldes |
-| `nodes` | Tailscale/SSH, healthchecks | R | Helios, Cortex, Synapse, Artémis (éteint = `unknown` propre) |
-| `memory-refs` | Hindsight (bank `helios`) | R | références contextuelles, pas de duplication |
+| `hermes` | Hermes Kanban (`kanban.db`, CLI `hermes kanban`, dashboard API + WS) | 2 | exécutant pour Helios/Mnēma/Aether ; lit runs/events ; statuts relevés : [notes/2026-09-28-releve-enums-hermes-kanban.md](notes/2026-09-28-releve-enums-hermes-kanban.md) |
+| `claude-code` | sessions `~/.claude` | 2 | lancer une session sur une tâche ; lire transcript + artefacts |
+| `codex` | `codex exec -p <profil>`, `~/.codex` | 2 | idem |
+| `orca` | CLI `orca`, worktrees | 2 | idem, avec worktrees |
+| `chats` | Telegram, `state.db` Hermes, sessions Claude/Codex | 3 | lecture des conversations ; envoi (canal à trancher) |
+| `mail` | Gmail | 4 | lecture, tri, brouillons ; envoi gated |
+| `calendar` | Google Calendar | 4 | lecture ; création d'événement gated |
+| `git` | repos locaux (`F:/Projet/…`), `gh` | 5 | commits, branches, worktrees, PR, diffs |
+| `memory` | Hindsight (banks `helios`, `mnema`…) | 5 | lecture des souvenirs/rapports utiles |
+| `infra` | Synapse (services, santé) | 5 | lecture ; aucune mutation croisée |
+| `nodes` | Tailscale/SSH read-only, healthchecks | 1→5 | Helios, Cortex, Synapse, Artémis (éteint = `offline-by-design`) |
+| `quotas` | Go usage, crédits Higgsfield, pools | 5 | fenêtres 429, soldes |
+| `cron` | Hermes cron (`jobs.json`, `executions.db`) | 4 | jobs, dernier/prochain run, échecs |
 
-### 3.3 Stockage local
+### 3.3 Stockage
 
-- **`nexus.db` (SQLite)** — index de corrélation, cache, événements de coordination, politiques. Reconstructible.
-- Rien de propriétaire n'y est dupliqué en dur : les données restent à la source, Nexus garde ids + snapshots datés.
+- **`nexus.db` (SQLite)** — source de vérité pour : tâches, événements, runs (côté Nexus), approbations, décisions, conversations natives Nexus, politiques.
+- **Index/cache externe** (dans `nexus.db`, tables séparées) — snapshots datés des données externes (chats, mails, commits…) pour l'affichage et la recherche. Reconstructible depuis les sources ; jamais considéré comme vérité.
+- Sauvegarde : `nexus.db` est la seule donnée non reconstructible → sauvegarde régulière obligatoire (à définir en Phase 1).
 
 ### 3.4 Interface
 
-- **Page web locale** (servie sur le poste de Loïc) : les 5 vues, recherche, provenance cliquable.
-- **Telegram** (canal existant) : alertes, rapports périodiques, questions (le mobile passe par là).
+- **UI web locale** (servie sur le poste de Loïc) : les vues, recherche, provenance cliquable, actions.
+- **Telegram** : alertes, rapports, questions urgentes (surface mobile).
 - Pas d'exposition publique ; pas d'app mobile dédiée.
 
-### 3.5 Bus d'événements
+### 3.5 Événements
 
-- Les agents publient leurs événements (claimed, progress, blocked, handoff…) — voir [EVENT-PROTOCOL.md](EVENT-PROTOCOL.md).
-- Transport : d'abord via les surfaces natives Hermes (events/comments Kanban) ; bus local Nexus si besoin d'événements hors tâche (présence, coordination).
-- Lecture temps réel : le dashboard Kanban expose déjà un WebSocket (`/api/plugins/kanban/events`) — pattern à réutiliser.
+- Les agents publient leurs événements via l'**API locale** de Nexus (EVENT-PROTOCOL).
+- Pour un run confié à un exécutant, l'adaptateur traduit les événements natifs (ex. Hermes `claimed`, `blocked`, `completed`, `review_requested`) en événements Nexus.
+- L'UI reçoit les changements en temps réel par WebSocket.
 
 ## 4. Flux
 
-### 4.1 Lecture (MVP)
+### 4.1 Travail humain (Phase 1)
 
 ```text
-adaptateurs → normalisation → corrélation → vues → page locale
-                 ↑
-          provenance + fraîcheur attachées à CHAQUE donnée
+Loïc crée / déplace / commente une carte → nexus.db → vues
+                    (aucun appel LLM, aucun agent déclenché)
 ```
 
-- Fréquences : kanban/cron ≈ 30–60 s (ou événementiel si dispo) ; git/sessions à la demande ; quotas ≈ 15 min.
-- Un nœud injoignable → état `unknown` + dernière vérification, jamais d'erreur bloquante.
-
-### 4.2 Écriture (v1+)
+### 4.2 Agent qui se déclare (Phase 1)
 
 ```text
-action (humain ou agent)
-  → validation politique (gating si sensible)
-  → adaptateur de la source
-  → read-back obligatoire (l'effet est relu et confirmé)
-  → événement "done"/"failed" publié
+agent lancé ailleurs → POST /api/events → validation → nexus.db → read-back → vues
 ```
 
-- Toute mutation est : **réversible**, **sauvegardée avant**, **tracée**, **relue après**.
+### 4.3 « Confier à » (Phase 2)
+
+```text
+Loïc clique « confier à <exécutant> » sur une carte
+  → policy (gating si coûteux/sensible)
+  → adaptateur.dispatch() → run créé chez l'exécutant (ex. tâche Hermes assignée à helios)
+  → adaptateur.watch() → événements traduits → nexus.db
+  → done + preuve relue → carte en done (ou review si preuve absente)
+```
+
+### 4.4 Lecture des sources externes (Phases 3–5)
+
+```text
+adaptateurs → normalisation → index daté (provenance + fraîcheur) → vues / recherche
+```
+
+- Fréquences : événementiel quand possible (WS Hermes), sinon 30–60 s pour l'actif, à la demande pour le reste.
+- Source injoignable → `unknown` + dernière vérification, jamais d'erreur bloquante.
+
+### 4.5 Action sortante (Phases 3–5)
+
+```text
+action (répondre à un chat, envoyer un mail, créer un événement…)
+  → gating (go explicite de Loïc)
+  → adaptateur.act()
+  → read-back (l'effet est relu et confirmé)
+  → événement publié
+```
 
 ## 5. Frontières multi-nœuds
 
-- **Règle Nexus :** chaque nœud applique ses changements locaux par son gardien (Cortex/Mnēma, Synapse/Aether, Helios, Artémis).
-- Phase actuelle : lecture distante uniquement (SSH/Tailscale read-only) ; aucune mutation croisée.
-- Artémis : éteint volontairement → considéré `offline by design`, données `unknown`, jamais « en panne ».
+- **Règle Nexus :** chaque nœud applique ses changements locaux par son gardien (Helios, Mnēma/Cortex, Aether/Synapse, Artémis).
+- Nexus tourne sur Helios ; la lecture distante passe par SSH/Tailscale read-only ; aucune mutation croisée sans demande au gardien.
+- Artémis : éteint volontairement → `offline-by-design`, jamais « en panne ».
 
 ## 6. Sûreté de fonctionnement
 
-- Nexus dégradé (source morte, parse error) → la vue affiche la dernière donnée connue **datée**, marquée périmée.
-- Pas de dépendance unique : chaque adaptateur est indépendant et remplaçable.
-- La page Maintenant doit rester utile même si 100 % des LLM sont indisponibles.
+- Source morte ou erreur de parsing → la vue affiche la dernière donnée connue **datée**, marquée périmée.
+- Chaque adaptateur est indépendant : une panne n'en affecte pas d'autre.
+- Le noyau (tableau, Maintenant, événements) reste utile si 100 % des LLM et des sources externes sont indisponibles.
 
-## 7. Stack proposée (à trancher en Phase 0)
+## 7. Stack (ADR-014)
 
-| Option | Avantages | Inconvénients |
-|---|---|---|
-| **A. Serveur Python (FastAPI) + SQLite + UI web légère** | local, maîtrisé, testable ; cohérent avec l'existant | à construire |
-| **B. Extension du dashboard Hermes existant** (plugin kanban) | réutilise l'existant | couplage fort à Hermes ; moins libre |
-| **C. App statique + scripts** | minimal | limites d'agrégation temps réel |
+- **Serveur :** Python, FastAPI.
+- **Base :** SQLite (`nexus.db`).
+- **UI :** web locale ; framework front à choisir (décision ouverte).
+- **Temps réel :** WebSocket serveur → UI ; patterns repris du dashboard Hermes quand utiles.
 
-**Recommandation :** A, avec réutilisation des patterns du dashboard Hermes (API + WS). Décision à valider avec Loïc en Phase 0.
+## 8. Contraintes techniques connues (vérifiées 2026-09-27/28)
 
-## 8. Contraintes techniques connues (vérifiées 2026-09-27)
-
-- Hermes v0.21.4 sur Helios ; board `default` vide ; dispatcher 60 s ; `failure_limit=2` ; stale timeout 14 400 s ; review auto ; auto-décomposition max 3/tick ; `max_in_progress` = non configuré (la politique « une op principale » sera portée par Nexus).
-- Tables Kanban : `tasks`, `task_runs`, `task_events`, `task_comments`, `task_links`, `task_attachments`, `kanban_notify_subs`.
-- Le détail exact des enums de statut sera relevé en Phase 0 par lecture seule de `hermes_cli/kanban_db.py` (aucune valeur devinée).
+- Hermes v0.21.4 sur Helios (version exécutée à reconfirmer — voir la note de relevé) ; dispatcher 60 s ; décomposition automatique active ; `review_dispatch` actif : **toute tâche posée dans Hermes finit exécutée par un agent** — d'où ADR-011.
+- Statuts Hermes : `triage`, `todo`, `scheduled`, `ready`, `running`, `blocked`, `review`, `done`, `archived` — lus au niveau du run par l'adaptateur `hermes`, jamais comme statuts de tâche Nexus.

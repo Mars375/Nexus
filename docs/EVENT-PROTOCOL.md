@@ -1,6 +1,6 @@
 # EVENT-PROTOCOL — Nexus
 
-**Version :** 0.1 (draft à valider)
+**Version :** 0.2 (transport via l'API Nexus — ADR-011, ADR-015)
 **Date :** 2026-09-28
 
 ---
@@ -35,11 +35,12 @@ Règles générales :
   "v": 1,
   "id": "evt_20260928_helios_0007",
   "at": "2026-09-28T07:46:00+02:00",
-  "task": "kanban:default#142",
+  "task": "nx-task-142",
+  "run": "nx-run-31",
   "actor": "helios",
   "kind": "progress",
-  "subject": "Pont lecture Kanban : parse des tâches OK",
-  "body": "Tâches du board default parsées (board vide à ce jour) ; structure validée sur les tables tasks et task_runs.",
+  "subject": "Adaptateur Hermes : lecture des runs OK",
+  "body": "Runs du board default lus ; structure validée sur les tables tasks et task_runs.",
   "payload": { "percent": 40 },
   "evidence": ["commit:a1b2c3d", "file:F:/Projet/Nexus/docs/ARCHITECTURE.md"],
   "needs": []
@@ -51,7 +52,8 @@ Règles générales :
 | `v` | ✓ | version du protocole |
 | `id` | ✓ | unique, local à l'acteur |
 | `at` | ✓ | ISO-8601 avec fuseau |
-| `task` | opt | réf tâche ; `null` pour un événement de coordination |
+| `task` | opt | réf tâche Nexus (`nx-task-…`) ; `null` pour un événement de coordination |
+| `run` | opt | réf run Nexus (`nx-run-…`) quand l'événement concerne un travail confié |
 | `actor` | ✓ | `loic`, `helios`, `mnema`, `aether`, `artemis`, `claude`, `codex`, `orca`, `hermes` |
 | `kind` | ✓ | voir §3 |
 | `subject` | ✓ | une ligne lisible |
@@ -95,15 +97,15 @@ Prise en charge :
 
 ```json
 { "v": 1, "id": "evt_0001", "at": "2026-09-28T09:05:00+02:00",
-  "task": "kanban:default#7", "actor": "helios", "kind": "claimed",
-  "subject": "Je prends le pont lecture Kanban", "needs": [] }
+  "task": "nx-task-7", "actor": "helios", "kind": "claimed",
+  "subject": "Je prends l'API d'événements", "needs": [] }
 ```
 
 Blocage :
 
 ```json
 { "v": 1, "id": "evt_0002", "at": "2026-09-28T11:22:00+02:00",
-  "task": "kanban:default#7", "actor": "helios", "kind": "blocked",
+  "task": "nx-task-7", "actor": "helios", "kind": "blocked",
   "subject": "SSH Artémis injoignable",
   "body": "Timeout Tailscale. Impact : pas de lecture de l'usine. Déblocage : nœud rallumé par Loïc.",
   "payload": { "follow_up_at": "2026-09-29T09:00:00+02:00" }, "needs": ["loic"] }
@@ -113,16 +115,17 @@ Terminé avec preuve :
 
 ```json
 { "v": 1, "id": "evt_0003", "at": "2026-09-28T17:40:00+02:00",
-  "task": "kanban:default#7", "actor": "helios", "kind": "done",
-  "subject": "Pont lecture Kanban livré",
+  "task": "nx-task-7", "actor": "helios", "kind": "done",
+  "subject": "API d'événements livrée",
   "evidence": ["commit:f00db4r", "log:artifacts/smoke-read-20260928.txt"] }
 ```
 
 ## 6. Transport
 
-- **Cible v1 :** publication via les surfaces natives Hermes (events/comments de tâche) — une seule source de vérité, déjà lisible par le dashboard.
-- **Complément :** bus local Nexus pour les événements hors tâche (présence, coordination, alertes).
-- **Read-back :** l'émetteur relit l'événement (via l'adaptateur) et confirme visibilité ; tant que ce n'est pas confirmé, l'événement reste `unknown` côté Nexus.
+- **API locale Nexus (Phase 1) :** un agent publie par `POST /api/events` ; Nexus valide (champs requis, anti-patterns §7, scan de secrets) puis écrit dans `nexus.db`. C'est le chemin des agents lancés ailleurs (ADR-015 b).
+- **Adaptateurs d'exécution (Phase 2) :** pour un travail confié, l'adaptateur traduit les événements natifs en événements Nexus (`source` = nom de l'adaptateur). Ex. Hermes : `claimed` → `claimed`, `blocked` → `blocked`, `review_requested` → `review`, `completed` → `done` (preuves reprises du `metadata` de complétion).
+- **Read-back :** l'émetteur relit l'événement (`GET /api/events/<id>`) et confirme sa visibilité ; tant que ce n'est pas confirmé, il reste `unknown` côté émetteur.
+- **Diffusion :** l'UI reçoit les nouveaux événements par WebSocket ; les alertes urgentes (`needs_human`, `blocked` critique) partent aussi sur Telegram.
 
 ## 7. Anti-patterns (refusés)
 
