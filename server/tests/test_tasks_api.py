@@ -243,6 +243,31 @@ def test_secrets_are_redacted_everywhere_and_traced(client):
     assert traced[0]["changes"] == {"fields": ["context", "objective"], "kinds": ["github_token"]}
 
 
+def test_validation_errors_never_echo_the_input(client):
+    too_long = SECRET + "x" * 300
+    res = client.post("/api/tasks", json={"title": too_long, "objective": "o"})
+
+    assert res.status_code == 422
+    assert SECRET not in res.text
+    assert res.json()["detail"][0]["loc"] == ["body", "title"]
+
+
+def test_secret_only_workflow_text_does_not_count(client):
+    res = client.post(
+        "/api/tasks", json={"title": "t", "objective": "o", "status": "todo", "next_action": SECRET}
+    )
+    assert violation(res) == "next_action_required"
+
+    ref = create(client, next_action="x")["id"]
+    move(client, ref, "in_progress")
+    assert violation(move(client, ref, "blocked", block_cause=SECRET, block_plan="p")) == (
+        "block_cause_required"
+    )
+    assert violation(move(client, ref, "dropped", reason=f" {SECRET} ")) == (
+        "drop_reason_required"
+    )
+
+
 def test_secret_repasted_into_masked_field_is_still_traced(client):
     ref = create(client, origin=f"collé : {SECRET}")["id"]
     other = "ghp_" + "C" * 36

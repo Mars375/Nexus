@@ -9,6 +9,7 @@ from functools import partial
 from importlib.metadata import version
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
@@ -93,6 +94,16 @@ def create_app(
 
     app = FastAPI(title="Nexus", version=version("nexus"), lifespan=lifespan)
     app.include_router(tasks_api.router)
+
+    @app.exception_handler(RequestValidationError)
+    def _invalid(_request: Request, exc: RequestValidationError) -> JSONResponse:
+        # Jamais la valeur reçue dans la réponse : elle peut contenir un secret (ADR-006),
+        # et la validation a lieu avant le masquage.
+        errors = [
+            {"loc": list(e.get("loc", ())), "msg": e.get("msg"), "type": e.get("type")}
+            for e in exc.errors()
+        ]
+        return JSONResponse(status_code=422, content={"detail": errors})
 
     @app.exception_handler(RuleViolation)
     def _rule_violation(_request: Request, exc: RuleViolation) -> JSONResponse:

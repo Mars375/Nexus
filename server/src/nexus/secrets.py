@@ -25,6 +25,9 @@ _FULL: list[tuple[str, re.Pattern[str]]] = [
     ("bearer_token", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{20,}")),
 ]
 
+# Mot de passe dans une URL de connexion : postgresql://alice:hunter2@hôte/base.
+_URL_CREDENTIALS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^\s:/@]+:)([^\s@/]+)(@)")
+
 # « mot de passe : xyz », « token=abc »… : on masque la valeur, on garde l'étiquette.
 # Couvre aussi la forme JSON/YAML collée ({"password": "hunter2"}, 'token': 'abc') et les
 # variables d'environnement préfixées (AWS_SECRET_ACCESS_KEY=…, CLIENT_SECRET=…). Préfixe
@@ -59,8 +62,20 @@ def redact(text: str) -> tuple[str, list[str]]:
         quote = '"' if double is not None else "'" if single is not None else ""
         return f"{label}{separator}{quote}{REDACTED}{quote}"
 
+    def mask_url(match: re.Match[str]) -> str:
+        if match.group(2) == REDACTED:
+            return match.group(0)
+        found.append("url_credentials")
+        return f"{match.group(1)}{REDACTED}{match.group(3)}"
+
+    text = _URL_CREDENTIALS.sub(mask_url, text)
     text = _ASSIGNMENT.sub(mask_value, text)
     return text, sorted(set(found))
+
+
+def is_blank(text: str | None) -> bool:
+    """Vide, ou ne contenant que des secrets masqués : ne dit rien d'utilisable."""
+    return not (text and text.replace(REDACTED, "").strip(" \t\n:;,.-"))
 
 
 def redact_value(value: Any) -> tuple[Any, list[str]]:

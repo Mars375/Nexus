@@ -8,6 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from nexus.secrets import is_blank
+
 STATUSES = ("backlog", "todo", "in_progress", "blocked", "review", "done", "dropped")
 
 # Tâche active : doit toujours porter une prochaine action (DATA-MODEL §2.4).
@@ -55,7 +57,7 @@ def check_transition(current: str, target: str) -> None:
 
 
 def check_next_action(status: str, next_action: str | None) -> None:
-    if status in ACTIVE and not (next_action and next_action.strip()):
+    if status in ACTIVE and is_blank(next_action):
         raise RuleViolation(
             "next_action_required", "une tâche active doit avoir une prochaine action"
         )
@@ -63,9 +65,9 @@ def check_next_action(status: str, next_action: str | None) -> None:
 
 def check_block(cause: str | None, plan: str | None, follow_up_at: datetime | None) -> None:
     """Un blocage dit sa cause, et soit sa relance prévue, soit ce qui le débloquerait."""
-    if not (cause and cause.strip()):
+    if is_blank(cause):
         raise RuleViolation("block_cause_required", "un blocage doit donner sa cause")
-    if follow_up_at is None and not (plan and plan.strip()):
+    if follow_up_at is None and is_blank(plan):
         raise RuleViolation(
             "block_follow_up_required",
             "un blocage doit prévoir une relance ou dire ce qui le débloquerait",
@@ -73,7 +75,7 @@ def check_block(cause: str | None, plan: str | None, follow_up_at: datetime | No
 
 
 def check_drop(reason: str | None) -> None:
-    if not (reason and reason.strip()):
+    if is_blank(reason):
         raise RuleViolation("drop_reason_required", "un abandon doit être motivé")
 
 

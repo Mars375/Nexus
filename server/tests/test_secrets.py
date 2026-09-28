@@ -46,6 +46,10 @@ def test_labelled_values_are_masked_but_label_kept(text):
         ("CLIENT_SECRET=abc123", "CLIENT_SECRET=[REDACTED]"),
         ('{"db.password": "x1"}', '{"db.password": "[REDACTED]"}'),
         ("otp: 123456", "otp: [REDACTED]"),
+        (
+            "DATABASE_URL=postgresql://alice:hunter2@db.example/nexus",
+            "DATABASE_URL=postgresql://alice:[REDACTED]@db.example/nexus",
+        ),
         ("2fa_code=123456", "2fa_code=[REDACTED]"),
         ("verification_code=123456", "verification_code=[REDACTED]"),
         ("code de vérification : 123456", "code de vérification : [REDACTED]"),
@@ -54,7 +58,7 @@ def test_labelled_values_are_masked_but_label_kept(text):
 def test_quoted_credentials_are_masked(text, expected):
     cleaned, found = redact(text)
     assert cleaned == expected
-    assert found == ["credential"]
+    assert found in (["credential"], ["url_credentials"])
 
 
 @pytest.mark.parametrize(
