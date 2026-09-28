@@ -18,6 +18,8 @@ from nexus.db import make_engine
 
 log = logging.getLogger("nexus")
 
+FIRST_NODES_READ_SECONDS = 1.0
+
 
 def create_app(
     settings: Settings | None = None, nodes_runner: nodes.Runner | None = None
@@ -30,13 +32,16 @@ def create_app(
         app.state.nodes = await asyncio.to_thread(nodes.probe, nodes_runner)
         return app.state.nodes
 
-    async def nodes_loop(app: FastAPI) -> None:
+    async def nodes_loop(app: FastAPI, first_read: asyncio.Task) -> None:
+        # Une seule lecture à la fois : on attend la première avant de rafraîchir.
+        with suppress(Exception):
+            await first_read
         while True:
+            await asyncio.sleep(settings.nodes_refresh_seconds)
             try:
                 await refresh_nodes(app)
             except Exception:
                 log.exception("lecture de l'état des nœuds échouée")
-            await asyncio.sleep(settings.nodes_refresh_seconds)
 
     async def backup_loop() -> None:
         while True:
@@ -62,8 +67,15 @@ def create_app(
         app.state.engine = make_engine(settings.db_url)
         if not before_migration:
             backup.backup(settings.db_path, settings.backup_dir, settings.backup_keep)
-        app.state.nodes = None
-        tasks = [asyncio.create_task(backup_loop()), asyncio.create_task(nodes_loop(app))]
+        # Réponse immédiate (unknown) tant que la première lecture n'a pas abouti ; on lui
+        # laisse une seconde pour que le cas normal serve d'emblée l'état réel.
+        app.state.nodes = nodes.pending_snapshot()
+        first_read = asyncio.create_task(refresh_nodes(app))
+        await asyncio.wait({first_read}, timeout=FIRST_NODES_READ_SECONDS)
+        tasks = [
+            asyncio.create_task(backup_loop()),
+            asyncio.create_task(nodes_loop(app, first_read)),
+        ]
         try:
             yield
         finally:
@@ -95,7 +107,6 @@ def create_app(
     @app.get("/api/nodes")
     async def list_nodes() -> list[dict]:
         """État des nœuds (lecture seule), chacun avec sa source et sa fraîcheur."""
-        states = app.state.nodes or await refresh_nodes(app)
-        return [s.to_dict() for s in states]
+        return [s.to_dict() for s in app.state.nodes]
 
     return app

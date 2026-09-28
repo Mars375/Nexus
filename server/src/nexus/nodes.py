@@ -86,22 +86,32 @@ def probe(runner: Runner) -> list[NodeState]:
         log.warning("lecture Tailscale impossible : %s", exc)
         return _all_unknown("lecture de Tailscale impossible", measured_at)
 
+    try:
+        return _read(status, measured_at)
+    except (AttributeError, TypeError) as exc:  # JSON valide mais de forme inattendue
+        log.warning("réponse Tailscale inattendue : %s", exc)
+        return _all_unknown("réponse de Tailscale inattendue", measured_at)
+
+
+def pending_snapshot() -> list[NodeState]:
+    """État servi avant la première lecture : honnête et immédiat, jamais bloquant."""
+    return _all_unknown("première lecture de Tailscale en cours", now().isoformat())
+
+
+def _read(status: dict, measured_at: str) -> list[NodeState]:
     if status.get("BackendState") != "Running":
         return _all_unknown(
             f"Tailscale n'est pas connecté (état : {status.get('BackendState', 'inconnu')})",
             measured_at,
         )
-
-    self_host = (status.get("Self") or {}).get("HostName", "").lower()
+    self_node = status.get("Self") or {}
+    self_host = (self_node.get("HostName") or "").lower()
     peers = {
         (p.get("HostName") or "").lower(): p for p in (status.get("Peer") or {}).values()
     }
     states = []
     for spec in NODES:
-        if spec.tailscale_host == self_host:
-            peer = status.get("Self") or {}
-        else:
-            peer = peers.get(spec.tailscale_host)
+        peer = self_node if spec.tailscale_host == self_host else peers.get(spec.tailscale_host)
         states.append(_state(spec, peer, measured_at))
     return states
 

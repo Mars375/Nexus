@@ -91,6 +91,38 @@ def test_tailscale_unavailable_makes_every_node_unknown(runner, detail):
     assert all(s.detail.startswith(detail) for s in states)
 
 
+@pytest.mark.parametrize("payload", ["null", "[]", '"texte"', '{"BackendState": "Running", '
+                                     '"Peer": [1]}', '{"BackendState": "Running", "Self": 3}'])
+def test_unexpected_json_shape_makes_every_node_unknown(payload):
+    states = nodes.probe(lambda: payload)
+
+    assert {s.status for s in states} == {"unknown"}
+    assert {s.detail for s in states} == {"réponse de Tailscale inattendue"}
+
+
+def test_hanging_tailscale_does_not_block_the_api(settings):
+    import threading
+    import time
+
+    release = threading.Event()
+
+    def hanging():
+        release.wait(10)
+        return tailscale_json()
+
+    with TestClient(create_app(settings, nodes_runner=hanging)) as client:
+        try:
+            started = time.monotonic()
+            body = client.get("/api/nodes").json()
+            elapsed = time.monotonic() - started
+        finally:
+            release.set()  # avant l'arrêt de l'app, qui attend la lecture en cours
+
+    assert elapsed < 0.5
+    assert {n["status"] for n in body} == {"unknown"}
+    assert {n["detail"] for n in body} == {"première lecture de Tailscale en cours"}
+
+
 def test_api_returns_the_four_nodes(client):
     body = client.get("/api/nodes").json()
 
