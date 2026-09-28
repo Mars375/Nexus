@@ -1,0 +1,13 @@
+{
+  "name": "nexus",
+  "private": true,
+  "scripts": {
+    "bootstrap":"uv sync --directory server && pnpm --dir web install",
+    "dev": "concurrently -k -n server,web -c blue,green \"uv run --directory server uvicorn nexus.app:create_app --factory --reload --host 127.0.0.1 --port 8765\" \"pnpm --dir web dev\"",
+    "test": "uv run --directory server pytest -q && pnpm --dir web test",
+    "lint": "uv run --directory server ruff check . && pnpm --dir web lint"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5"
+  }
+}
