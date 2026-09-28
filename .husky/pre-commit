@@ -1,0 +1,34 @@
+# Nexus — contrôles avant chaque commit (voir docs/agents/review-checklist.md).
+set -e
+
+# 1. Artefacts de tests et bases locales : jamais commités.
+blocked=$(git diff --cached --name-only --diff-filter=AM \
+  | grep -E '^web/(e2e/screenshots|test-results|playwright-report)/|\.db(-wal|-shm)?$' || true)
+if [ -n "$blocked" ]; then
+  echo "Commit refusé : artefacts de tests ou base locale dans l'index :"
+  echo "$blocked"
+  echo "Retire-les avec : git restore --staged <fichier>"
+  exit 1
+fi
+
+# 2. Secrets : gitleaks sur ce qui est indexé (ADR-006).
+GITLEAKS=$(command -v gitleaks || true)
+if [ -z "$GITLEAKS" ] && [ -n "$LOCALAPPDATA" ]; then
+  lad=$(cygpath -u "$LOCALAPPDATA" 2>/dev/null || echo "$LOCALAPPDATA")
+  for candidate in "$lad"/Microsoft/WinGet/Links/gitleaks.exe \
+                   "$lad"/Microsoft/WinGet/Packages/Gitleaks.Gitleaks_*/gitleaks.exe; do
+    if [ -x "$candidate" ]; then GITLEAKS="$candidate"; break; fi
+  done
+fi
+if [ -z "$GITLEAKS" ]; then
+  echo "Commit refusé : gitleaks introuvable. Installe-le (Windows : winget install Gitleaks.Gitleaks)."
+  exit 1
+fi
+"$GITLEAKS" git --pre-commit --staged --redact --no-banner --config .gitleaks.toml
+
+# 3. Lint des fichiers indexés (ruff, oxlint).
+pnpm exec lint-staged
+
+# 4. Typage et tests rapides. La suite Playwright se lance avant d'ouvrir la PR.
+pnpm typecheck
+pnpm test
