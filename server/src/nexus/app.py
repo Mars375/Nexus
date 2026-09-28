@@ -35,6 +35,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         settings.data_dir.mkdir(parents=True, exist_ok=True)
+        # Réversibilité (ROADMAP, règle 5) : copie de la base existante avant toute migration.
+        if settings.db_path.is_file() and migrate.pending(settings.db_url):
+            backup.backup(settings.db_path, settings.backup_dir, settings.backup_keep)
         migrate.upgrade(settings.db_url)
         app.state.engine = make_engine(settings.db_url)
         backup.backup(settings.db_path, settings.backup_dir, settings.backup_keep)
