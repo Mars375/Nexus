@@ -19,8 +19,16 @@ function explain(error: unknown): string {
   return error instanceof ApiError ? error.message : 'Le serveur Nexus ne répond pas.'
 }
 
+/** En attendant le temps réel (#5), relecture régulière : un agent peut modifier une tâche. */
+export const TASKS_REFRESH_MS = 10_000
+
 export function useTasks() {
-  return useQuery({ queryKey: tasksKey, queryFn: tasksApi.list, ...local })
+  return useQuery({
+    queryKey: tasksKey,
+    queryFn: tasksApi.list,
+    refetchInterval: TASKS_REFRESH_MS,
+    ...local,
+  })
 }
 
 export function useComments(id: string) {

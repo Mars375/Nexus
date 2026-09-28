@@ -14,7 +14,8 @@ export const TRANSITIONS: Record<Status, Status[]> = {
   dropped: ['backlog'],
 }
 
-const ACTIVE: Status[] = ['todo', 'in_progress', 'blocked', 'review']
+/** Tâche active : elle doit toujours porter une prochaine action. */
+export const ACTIVE_STATUSES: Status[] = ['todo', 'in_progress', 'blocked', 'review']
 
 export function canMove(from: Status, to: Status): boolean {
   return TRANSITIONS[from].includes(to)
@@ -31,7 +32,7 @@ export type MoveNeeds = {
 
 export function moveNeeds(task: Task, to: Status): MoveNeeds {
   return {
-    nextAction: ACTIVE.includes(to) && !task.next_action?.trim(),
+    nextAction: ACTIVE_STATUSES.includes(to) && !task.next_action?.trim(),
     block: to === 'blocked',
     reason: to === 'dropped',
     evidence: to === 'done' && !!task.expected_evidence?.trim() && task.evidence.length === 0,

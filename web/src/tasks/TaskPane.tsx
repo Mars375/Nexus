@@ -4,7 +4,7 @@ import type { Actor, HistoryEntry, Priority, Status, Task, TaskChanges } from '@
 import { formatDateTime, isoToLocalInput, localInputToIso } from '@/format'
 import { AgentMark, Button, Field, inputClass } from '@/ui'
 import { MoveDialog } from './MoveDialog'
-import { moveNeeds, needsPrompt, TRANSITIONS } from './moves'
+import { ACTIVE_STATUSES, moveNeeds, needsPrompt, TRANSITIONS } from './moves'
 import {
   useAddComment,
   useComments,
@@ -138,10 +138,18 @@ function EditForm({ task }: { task: Task }) {
     }),
   ) as TaskChanges
   const dirty = Object.keys(changes).length > 0
+  // Mêmes exigences que le serveur : on ne propose pas d'enregistrer ce qu'il refusera.
+  const problem = !form.title.trim()
+    ? 'Le titre ne peut pas être vide.'
+    : !form.objective.trim()
+      ? "L'objectif ne peut pas être vide."
+      : ACTIVE_STATUSES.includes(task.status) && !form.next_action.trim()
+        ? 'Une tâche active doit garder une prochaine action.'
+        : null
 
   function save(event: FormEvent) {
     event.preventDefault()
-    if (dirty) update.mutate({ id: task.id, changes })
+    if (dirty && !problem) update.mutate({ id: task.id, changes })
   }
 
   return (
@@ -211,8 +219,9 @@ function EditForm({ task }: { task: Task }) {
             Propriétaire : {ACTOR_NAME[task.human_owner]}. Créée par {ACTOR_NAME[task.created_by]} le{' '}
             {formatDateTime(task.created_at)}.
           </p>
-          <div className="flex justify-end">
-            <Button type="submit" variant="primary" disabled={!dirty || update.isPending}>
+          <div className="flex items-center justify-end gap-3">
+            {dirty && problem && <p className="text-xs text-danger">{problem}</p>}
+            <Button type="submit" variant="primary" disabled={!dirty || !!problem || update.isPending}>
               Enregistrer
             </Button>
           </div>

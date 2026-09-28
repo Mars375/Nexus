@@ -45,6 +45,12 @@ test('créer, déplacer, commenter et filtrer une tâche', async ({ page }) => {
   await expect(pane.getByText('Tables relevées, reste les enums.')).toBeVisible()
   await expect(pane.getByText(/Loïc l'a passée de à faire à en cours/)).toBeVisible()
 
+  const title = pane.getByLabel('Titre')
+  await title.fill('')
+  await expect(pane.getByText('Le titre ne peut pas être vide.')).toBeVisible()
+  await expect(pane.getByRole('button', { name: 'Enregistrer' })).toBeDisabled()
+  await title.fill('Relever les statuts')
+
   await pane.getByLabel('Agent principal').selectOption('helios')
   await pane.getByRole('button', { name: 'Enregistrer' }).click()
   await expect(page.getByText('Modifications enregistrées')).toBeVisible()
