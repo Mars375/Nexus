@@ -13,7 +13,7 @@ import re
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
@@ -130,6 +130,9 @@ def publish(
         if winner is not None:
             return winner, False
         raise RuleViolation("event_id_reused", "identifiant d'événement déjà utilisé") from exc
+    # Second contrôle, après l'insertion et dans la même transaction : SQLite sérialisant les
+    # écritures, un fait identique publié en parallèle sous un autre identifiant est vu ici.
+    _refuse_noise(session, envelope, task, actor_event_id, exclude_id=event.id)
     event.effects = _apply_effects(session, event, envelope, task) if task else []
     return event, True
 
@@ -244,7 +247,11 @@ def _refuse_second_active_run(session: Session, e: Envelope, task: Task | None) 
 
 
 def _refuse_noise(
-    session: Session, e: Envelope, task: Task | None, actor_event_id: str
+    session: Session,
+    e: Envelope,
+    task: Task | None,
+    actor_event_id: str,
+    exclude_id: int | None = None,
 ) -> None:
     # `task_id = NULL` n'est jamais vrai en SQL : il faut IS NULL pour les événements sans tâche.
     same_task = Event.task_id == task.id if task else Event.task_id.is_(None)
@@ -253,6 +260,7 @@ def _refuse_noise(
             Event.actor == e.actor, same_task, Event.received_at >= now() - NOISE_WINDOW,
             # Le même identifiant n'est pas du bruit : c'est un renvoi, traité en relecture.
             Event.actor_event_id != actor_event_id,
+            Event.id != exclude_id if exclude_id is not None else true(),
         )
     )
     for previous in recent:

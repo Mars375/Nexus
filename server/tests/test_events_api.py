@@ -468,3 +468,51 @@ def test_conflicting_run_references_are_refused(client):
     ref = task(client, next_action="x")
     res = publish(client, "working", task=ref, run="r1", payload={"run_ref": "r2"})
     assert res.json()["detail"]["code"] == "run_ref_conflict"
+
+
+@pytest.mark.parametrize(
+    ("kind", "payload", "code"),
+    [
+        ("blocked", {"follow_up_at": "2026-09-29T09:00:00+02:00", "plan": {}}, "invalid_plan"),
+        ("blocked", {"plan": "p", "cause": ["c"]}, "invalid_cause"),
+        ("handoff", {"next_action": {"x": 1}}, "invalid_next_action"),
+    ],
+)
+def test_non_text_workflow_fields_are_refused_not_500(client, kind, payload, code):
+    ref = task(client, next_action="x")
+    publish(client, "working", task=ref, payload={"run_ref": "r1"})
+
+    res = publish(client, kind, task=ref, body="cause écrite", needs=["aether"], payload=payload)
+
+    assert res.status_code == 409
+    assert res.json()["detail"]["code"] == code
+
+
+def test_identical_facts_racing_under_different_ids_are_noise(client, monkeypatch):
+    from datetime import datetime
+
+    from nexus.events import service
+    from nexus.events.rules import Envelope
+
+    ref = task(client)
+    make = client.app.state.sessionmaker
+    original = service._refuse_noise
+    calls = []
+
+    def racing(session, envelope, task_row, actor_event_id, **kwargs):
+        original(session, envelope, task_row, actor_event_id, **kwargs)
+        calls.append(actor_event_id)
+        if len(calls) == 1:  # juste après le premier contrôle, le même fait arrive sous un autre id
+            with make() as other:
+                service.publish(other, Envelope(actor="helios", kind="progress", subject="40 %",
+                                                task=ref, payload={"percent": 40}),
+                                "evt_twin", datetime.fromisoformat(AT))
+                other.commit()
+
+    monkeypatch.setattr(service, "_refuse_noise", racing)
+    res = publish(client, "progress", "40 %", task=ref, id="evt_mine", payload={"percent": 40})
+
+    assert res.status_code == 409
+    assert res.json()["detail"]["code"] == "noise"
+    stored = client.get("/api/events", params={"task": ref}).json()
+    assert [e["actor_event_id"] for e in stored] == ["evt_twin"]

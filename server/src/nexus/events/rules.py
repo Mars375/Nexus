@@ -25,6 +25,11 @@ TASK_REQUIRED = frozenset(
 )
 
 
+# Champs du payload recopiés dans la tâche (cause, plan de déblocage, prochaine action) :
+# ils doivent être du texte, sinon l'écriture en base échouerait.
+TEXT_PAYLOAD_FIELDS = ("cause", "plan", "next_action")
+
+
 @dataclass
 class Envelope:
     actor: str
@@ -79,6 +84,10 @@ def validate(e: Envelope) -> str:
         raise RuleViolation(
             "run_ref_conflict", "run et payload.run_ref désignent des runs différents"
         )
+    for name in TEXT_PAYLOAD_FIELDS:
+        value = e.payload.get(name)
+        if value is not None and not isinstance(value, str):
+            raise RuleViolation(f"invalid_{name}", f"payload.{name} doit être un texte")
     unknown_needs = sorted(set(e.needs) - ACTORS)
     if unknown_needs:
         raise RuleViolation("unknown_recipient", f"destinataires inconnus : {unknown_needs}")
