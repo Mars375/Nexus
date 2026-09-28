@@ -166,10 +166,12 @@ backlog → todo → in_progress → review → done
              ↘ dropped
 ```
 
-- `in_progress` : au plus **une opération principale** par humain.
-- `blocked` : avec cause, ce qui débloquerait, relance prévue.
+- `in_progress` : au plus **une opération principale** par humain (garanti par un index unique). Le rôle `main`/`auxiliary` n'a de sens qu'en cours : il est effacé quand la tâche en sort.
+- `blocked` : une cause, **et** une relance prévue ou ce qui débloquerait. Un blocage sans relance reste permis s'il a un plan ; la vue « À ne pas oublier » le signale après 48 h (VIEWS §8).
 - `review` : terminé déclaré mais preuve manquante ou validation requise.
-- `dropped` : abandon explicite (jamais silencieux).
+- `dropped` : abandon explicite et motivé (jamais silencieux).
+- **Dépendances** : une tâche n'entre en `in_progress`, `review` ou `done` que si toutes ses dépendances sont `done` ou `dropped`.
+- Transitions autorisées : `server/src/nexus/tasks/rules.py` (`TRANSITIONS`).
 - Une tâche Nexus n'est jamais `unknown` : Nexus en est la source. `unknown` s'applique aux runs, nœuds et données externes non vérifiés.
 - Les statuts natifs des exécutants (ex. Hermes `triage`, `ready`, `running`, `archived`) restent au niveau du run (`native_status`).
 
@@ -191,7 +193,7 @@ Decision *─* Task
 1. **Provenance obligatoire** — toute donnée a `source` + `measured_at`.
 2. **Une seule source par donnée** — une tâche se modifie dans Nexus ; un mail dans Gmail (via adaptateur). Jamais deux écritures concurrentes.
 3. **Immutabilité des événements** — un événement publié ne se réécrit pas ; on en publie un nouveau (correction).
-4. **Preuve ou review** — une tâche `done` sans preuve fournie repasse en `review`.
+4. **Preuve ou review** — une tâche qui déclare une preuve attendue (`expected_evidence`, c.-à-d. une tâche « importante », PRD §10) et qu'on clôt sans preuve passe en `review`. Un agent, lui, doit toujours joindre une preuve à un événement `done` (EVENT-PROTOCOL §4). Une preuve vide ne compte pas.
 5. **Secrets interdits** — validation automatique à l'écriture ; toute correspondance sensible → `[REDACTED]` + alerte.
 6. **`unknown` honnête** — jamais de valeur par défaut qui masque l'incertitude.
 7. **Cache ≠ vérité** — un snapshot externe affiche toujours sa fraîcheur et peut être reconstruit.

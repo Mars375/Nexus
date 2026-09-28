@@ -8,13 +8,21 @@ from contextlib import asynccontextmanager, suppress
 from functools import partial
 from importlib.metadata import version
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm.exc import StaleDataError
 
 from nexus import backup, migrate, nodes
 from nexus.clock import now
 from nexus.config import Settings
 from nexus.db import make_engine
+from nexus.tasks import api as tasks_api
+from nexus.tasks.rules import RuleViolation
+from nexus.tasks.service import TaskNotFound
+from nexus.validation import french_errors
 
 log = logging.getLogger("nexus")
 
@@ -65,6 +73,7 @@ def create_app(
             backup.backup(settings.db_path, settings.backup_dir, settings.backup_keep)
         migrate.upgrade(settings.db_url)
         app.state.engine = make_engine(settings.db_url)
+        app.state.sessionmaker = sessionmaker(app.state.engine, expire_on_commit=False)
         if not before_migration:
             backup.backup(settings.db_path, settings.backup_dir, settings.backup_keep)
         # Réponse immédiate (unknown) tant que la première lecture n'a pas abouti ; on lui
@@ -86,6 +95,33 @@ def create_app(
             app.state.engine.dispose()
 
     app = FastAPI(title="Nexus", version=version("nexus"), lifespan=lifespan)
+    app.include_router(tasks_api.router)
+
+    @app.exception_handler(RequestValidationError)
+    def _invalid(_request: Request, exc: RequestValidationError) -> JSONResponse:
+        # Jamais la valeur reçue dans la réponse : elle peut contenir un secret (ADR-006),
+        # et la validation a lieu avant le masquage.
+        return JSONResponse(status_code=422, content={"detail": french_errors(exc.errors())})
+
+    @app.exception_handler(StaleDataError)
+    def _stale(_request: Request, _exc: StaleDataError) -> JSONResponse:
+        # Verrou optimiste : la tâche a changé depuis sa lecture (autre requête, agent…).
+        return JSONResponse(status_code=409, content={"detail": {
+            "code": "concurrent_update",
+            "message": "la tâche vient d'être modifiée par ailleurs : recharge-la et réessaie",
+        }})
+
+    @app.exception_handler(RuleViolation)
+    def _rule_violation(_request: Request, exc: RuleViolation) -> JSONResponse:
+        return JSONResponse(
+            status_code=409, content={"detail": {"code": exc.code, "message": exc.message}}
+        )
+
+    @app.exception_handler(TaskNotFound)
+    def _not_found(_request: Request, exc: TaskNotFound) -> JSONResponse:
+        return JSONResponse(
+            status_code=404, content={"detail": {"code": "not_found", "message": str(exc)}}
+        )
 
     @app.get("/api/health")
     def health() -> dict:
