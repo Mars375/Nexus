@@ -32,11 +32,21 @@ export function useTasks() {
 }
 
 export function useComments(id: string) {
-  return useQuery({ queryKey: taskDetailKey(id, 'comments'), queryFn: () => tasksApi.comments(id), ...local })
+  return useQuery({
+    queryKey: taskDetailKey(id, 'comments'),
+    queryFn: () => tasksApi.comments(id),
+    refetchInterval: TASKS_REFRESH_MS,
+    ...local,
+  })
 }
 
 export function useHistory(id: string) {
-  return useQuery({ queryKey: taskDetailKey(id, 'history'), queryFn: () => tasksApi.history(id), ...local })
+  return useQuery({
+    queryKey: taskDetailKey(id, 'history'),
+    queryFn: () => tasksApi.history(id),
+    refetchInterval: TASKS_REFRESH_MS,
+    ...local,
+  })
 }
 
 function useRefresh() {

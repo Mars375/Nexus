@@ -70,7 +70,7 @@ export function TaskPane({ task, tasks, onClose }: Props) {
           )}
         </Section>
 
-        <EditForm key={task.id + task.updated_at} task={task} />
+        <EditForm key={task.id} task={task} />
 
         {task.evidence.length > 0 && (
           <Section title="Preuves">
@@ -101,9 +101,20 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   )
 }
 
-function EditForm({ task }: { task: Task }) {
-  const update = useUpdateTask()
-  const [form, setForm] = useState({
+type Draft = {
+  title: string
+  objective: string
+  next_action: string
+  lead_agent: string
+  collaborators: Actor[]
+  priority: Priority
+  due_at: string
+  follow_up_at: string
+  expected_evidence: string
+}
+
+function draftFrom(task: Task): Draft {
+  return {
     title: task.title,
     objective: task.objective,
     next_action: task.next_action ?? '',
@@ -113,31 +124,58 @@ function EditForm({ task }: { task: Task }) {
     due_at: isoToLocalInput(task.due_at),
     follow_up_at: isoToLocalInput(task.follow_up_at),
     expected_evidence: task.expected_evidence ?? '',
-  })
-  const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) =>
+  }
+}
+
+function toChange(key: keyof Draft, form: Draft): TaskChanges {
+  switch (key) {
+    case 'title':
+    case 'objective':
+      return { [key]: form[key].trim() }
+    case 'next_action':
+    case 'expected_evidence':
+      return { [key]: form[key].trim() || null }
+    case 'lead_agent':
+      return { lead_agent: (form.lead_agent || null) as Actor | null }
+    case 'due_at':
+    case 'follow_up_at':
+      return { [key]: localInputToIso(form[key]) }
+    default:
+      return { [key]: form[key] }
+  }
+}
+
+function EditForm({ task }: { task: Task }) {
+  const update = useUpdateTask()
+  // `base` : la version de la tâche sur laquelle le brouillon a été commencé. On n'envoie que
+  // les champs que Loïc a touchés, pour ne pas écraser ce qu'un agent a changé entre-temps.
+  const [base, setBase] = useState(() => draftFrom(task))
+  const [form, setForm] = useState(base)
+  const [seen, setSeen] = useState(task.updated_at)
+  const [changedElsewhere, setChangedElsewhere] = useState(false)
+  const set = <K extends keyof Draft>(key: K, value: Draft[K]) =>
     setForm((f) => ({ ...f, [key]: value }))
 
-  const candidate: TaskChanges = {
-    title: form.title.trim(),
-    objective: form.objective.trim(),
-    next_action: form.next_action.trim() || null,
-    lead_agent: (form.lead_agent || null) as Actor | null,
-    collaborators: form.collaborators,
-    priority: form.priority,
-    due_at: localInputToIso(form.due_at),
-    follow_up_at: localInputToIso(form.follow_up_at),
-    expected_evidence: form.expected_evidence.trim() || null,
+  const edited = (Object.keys(form) as (keyof Draft)[]).filter(
+    (key) => JSON.stringify(form[key]) !== JSON.stringify(base[key]),
+  )
+  const dirty = edited.length > 0
+
+  // La tâche a changé ailleurs (rafraîchissement, agent) : sans brouillon en cours, on suit ;
+  // avec un brouillon, on le garde et on le signale.
+  if (task.updated_at !== seen) {
+    setSeen(task.updated_at)
+    if (dirty) {
+      setChangedElsewhere(true)
+    } else {
+      const next = draftFrom(task)
+      setBase(next)
+      setForm(next)
+      setChangedElsewhere(false)
+    }
   }
-  const changes = Object.fromEntries(
-    Object.entries(candidate).filter(([key, value]) => {
-      const current = task[key as keyof Task]
-      if (key === 'due_at' || key === 'follow_up_at') {
-        return isoToLocalInput(current as string | null) !== isoToLocalInput(value as string | null)
-      }
-      return JSON.stringify(current) !== JSON.stringify(value)
-    }),
-  ) as TaskChanges
-  const dirty = Object.keys(changes).length > 0
+
+  const changes = Object.assign({}, ...edited.map((key) => toChange(key, form))) as TaskChanges
   // Mêmes exigences que le serveur : on ne propose pas d'enregistrer ce qu'il refusera.
   const problem = !form.title.trim()
     ? 'Le titre ne peut pas être vide.'
@@ -145,11 +183,26 @@ function EditForm({ task }: { task: Task }) {
       ? "L'objectif ne peut pas être vide."
       : ACTIVE_STATUSES.includes(task.status) && !form.next_action.trim()
         ? 'Une tâche active doit garder une prochaine action.'
-        : null
+        : task.status === 'done' &&
+            task.evidence.length === 0 &&
+            edited.includes('expected_evidence') &&
+            form.expected_evidence.trim()
+          ? 'Cette tâche est terminée sans preuve : rouvre-la pour exiger une preuve.'
+          : null
 
   function save(event: FormEvent) {
     event.preventDefault()
-    if (dirty && !problem) update.mutate({ id: task.id, changes })
+    if (!dirty || problem) return
+    const saved = form
+    update.mutate(
+      { id: task.id, changes },
+      {
+        onSuccess: () => {
+          setBase(saved)
+          setChangedElsewhere(false)
+        },
+      },
+    )
   }
 
   return (
@@ -221,6 +274,12 @@ function EditForm({ task }: { task: Task }) {
           </p>
           <div className="flex items-center justify-end gap-3">
             {dirty && problem && <p className="text-xs text-danger">{problem}</p>}
+            {dirty && !problem && changedElsewhere && (
+              <p className="text-xs text-attention">
+                Modifiée ailleurs pendant ta saisie : seuls les champs que tu as changés seront
+                enregistrés.
+              </p>
+            )}
             <Button type="submit" variant="primary" disabled={!dirty || !!problem || update.isPending}>
               Enregistrer
             </Button>

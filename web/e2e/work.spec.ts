@@ -98,3 +98,31 @@ test('bloquer demande la cause et ce qui débloquerait', async ({ page }) => {
   await expect(column(page, 'Bloqué').getByText('Bloqué : Artémis éteint')).toBeVisible()
   await page.screenshot({ path: 'e2e/screenshots/bloque-sombre.png' })
 })
+
+test("une modification d'un agent pendant la saisie n'efface pas le brouillon", async ({ page }) => {
+  test.setTimeout(60_000)
+  await page.goto('/')
+  await createTask(page, 'Tâche partagée', { todo: 'Étape initiale' })
+  await card(page, 'Tâche partagée').click()
+  const pane = page.getByRole('complementary', { name: /Détail de Tâche partagée/ })
+  await pane.getByLabel('Titre').fill('Tâche partagée (renommée)')
+
+  // Un agent change la prochaine action via l'API, pendant que Loïc tape.
+  const tasks = await (await page.request.get('/api/tasks')).json()
+  const id = tasks.find((t: { title: string }) => t.title === 'Tâche partagée').id
+  const res = await page.request.patch(`/api/tasks/${id}`, {
+    data: { next_action: "Étape posée par l'agent" },
+    headers: { 'X-Nexus-Actor': 'helios' },
+  })
+  expect(res.ok()).toBeTruthy()
+
+  // Au prochain rafraîchissement, le brouillon reste et le changement est signalé.
+  await expect(pane.getByText('Modifiée ailleurs pendant ta saisie')).toBeVisible({ timeout: 20_000 })
+  await expect(pane.getByLabel('Titre')).toHaveValue('Tâche partagée (renommée)')
+
+  await pane.getByRole('button', { name: 'Enregistrer' }).click()
+  await expect(page.getByText('Modifications enregistrées')).toBeVisible()
+  const saved = await (await page.request.get(`/api/tasks/${id}`)).json()
+  expect(saved.title).toBe('Tâche partagée (renommée)')
+  expect(saved.next_action).toBe("Étape posée par l'agent")
+})
