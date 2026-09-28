@@ -7,6 +7,7 @@ dans l'événement (`effects`) au lieu de faire échouer la publication.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import datetime, timedelta
@@ -47,7 +48,11 @@ def parse_task_ref(ref: str) -> int:
 
 
 def publish(
-    session: Session, envelope: Envelope, actor_event_id: str, at: datetime
+    session: Session,
+    envelope: Envelope,
+    actor_event_id: str,
+    at: datetime,
+    origin: str = "api",
 ) -> tuple[Event, bool]:
     """Enregistre l'événement ; renvoie (événement, créé). Un renvoi identique est une relecture."""
     redacted: dict[str, list[str]] = {}
@@ -99,6 +104,7 @@ def publish(
         subject=envelope.subject, body=envelope.body, payload=envelope.payload,
         evidence=envelope.evidence, needs=envelope.needs,
         redacted=sorted({k for kinds in redacted.values() for k in kinds}),
+        origin=origin,
     )
     if event.redacted:
         log.warning("secret masqué dans un événement de %s (%s)", envelope.actor, event.redacted)
@@ -163,7 +169,9 @@ def _run_ref(e: Envelope) -> str | None:
 
 
 def _fingerprint(kind, task_id, run, subject, body, payload, evidence, needs) -> tuple:
-    return (kind, task_id, run, subject, body, repr(sorted(payload.items())), evidence, needs)
+    # JSON canonique : un renvoi identique aux clés imbriquées réordonnées reste identique.
+    canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    return (kind, task_id, run, subject, body, canonical, evidence, needs)
 
 
 def _same(existing: Event, e: Envelope, task: Task | None) -> bool:

@@ -318,3 +318,21 @@ def test_concurrent_working_runs_cannot_both_open(client, monkeypatch):
     assert res.json()["detail"]["code"] == "concurrent_update"
     runs = [e["payload"]["run_ref"] for e in client.get("/api/events", params={"task": ref}).json()]
     assert runs == ["r1"]
+
+
+def test_nested_key_order_does_not_break_idempotency(client):
+    ref = task(client)
+    first = publish(client, "progress", task=ref, id="evt_n",
+                    payload={"percent": 5, "meta": {"a": 1, "b": 2}})
+    again = publish(client, "progress", task=ref, id="evt_n",
+                    payload={"meta": {"b": 2, "a": 1}, "percent": 5})
+
+    assert (first.status_code, again.status_code) == (201, 200)
+
+
+def test_event_carries_its_origin(client):
+    ref = task(client)
+    event = publish(client, "claimed", task=ref).json()
+
+    assert event["origin"] == "api"
+    assert event["source"] == "nexus.db"

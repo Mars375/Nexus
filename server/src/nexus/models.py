@@ -128,6 +128,8 @@ class Event(Base):
     evidence: Mapped[list[str]] = mapped_column(JSON, default=list)
     needs: Mapped[list[str]] = mapped_column(JSON, default=list)
     redacted: Mapped[list[str]] = mapped_column(JSON, default=list)
+    # D'où vient l'événement : « api » (agent direct) ou le nom d'un adaptateur (hermes…).
+    origin: Mapped[str] = mapped_column(String(32))
     effects: Mapped[list[dict]] = mapped_column(JSON, default=list)
 
     @property

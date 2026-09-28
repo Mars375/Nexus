@@ -123,7 +123,7 @@ Terminé avec preuve :
 ## 6. Transport
 
 - **API locale Nexus (Phase 1) :** un agent publie par `POST /api/events` ; Nexus valide (champs requis, anti-patterns §7, scan de secrets) puis écrit dans `nexus.db`. C'est le chemin des agents lancés ailleurs (ADR-015 b).
-- **Adaptateurs d'exécution (Phase 2) :** pour un travail confié, l'adaptateur traduit les événements natifs en événements Nexus (`source` = nom de l'adaptateur). Ex. Hermes : `claimed` → `claimed`, `blocked` → `blocked`, `review_requested` → `review`, `completed` → `done` (preuves reprises du `metadata` de complétion).
+- **Adaptateurs d'exécution (Phase 2) :** pour un travail confié, l'adaptateur traduit les événements natifs en événements Nexus (`origin` = nom de l'adaptateur). Ex. Hermes : `claimed` → `claimed`, `blocked` → `blocked`, `review_requested` → `review`, `completed` → `done` (preuves reprises du `metadata` de complétion).
 - **Read-back :** l'émetteur relit l'événement (`GET /api/events/<id>`) et confirme sa visibilité ; tant que ce n'est pas confirmé, il reste `unknown` côté émetteur.
 - **Diffusion :** l'UI reçoit les nouveaux événements par WebSocket ; les alertes urgentes (`needs_human`, `blocked` critique) partent aussi sur Telegram.
 

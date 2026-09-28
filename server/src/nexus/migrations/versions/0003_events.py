@@ -34,6 +34,7 @@ def upgrade() -> None:
         sa.Column("evidence", sa.JSON(), nullable=False),
         sa.Column("needs", sa.JSON(), nullable=False),
         sa.Column("redacted", sa.JSON(), nullable=False),
+        sa.Column("origin", sa.String(length=32), nullable=False, server_default="api"),
         sa.Column("effects", sa.JSON(), nullable=False),
         sa.UniqueConstraint("actor", "actor_event_id", name="uq_events_actor_event_id"),
     )

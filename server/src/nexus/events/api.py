@@ -60,6 +60,7 @@ class EventOut(BaseModel):
     evidence: list[str]
     needs: list[str]
     redacted: list[str]
+    origin: str  # « api » ou nom de l'adaptateur qui a traduit l'événement
     effects: list[dict[str, Any]]
     source: str = "nexus.db"
     measured_at: datetime
@@ -70,7 +71,7 @@ def to_out(e: Event) -> EventOut:
         id=e.ref, actor_event_id=e.actor_event_id, at=e.at, received_at=e.received_at,
         task=f"nx-task-{e.task_id}" if e.task_id else None, run=e.run_ref, actor=e.actor,
         kind=e.kind, requested_kind=e.requested_kind, subject=e.subject, body=e.body,
-        payload=e.payload, evidence=e.evidence, needs=e.needs, redacted=e.redacted,
+        payload=e.payload, evidence=e.evidence, needs=e.needs, redacted=e.redacted, origin=e.origin,
         effects=e.effects, measured_at=now(),
     )
 
