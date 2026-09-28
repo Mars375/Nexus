@@ -54,6 +54,8 @@ test('créer, déplacer, commenter et filtrer une tâche', async ({ page }) => {
   await pane.getByLabel('Agent principal').selectOption('helios')
   await pane.getByRole('button', { name: 'Enregistrer' }).click()
   await expect(page.getByText('Modifications enregistrées')).toBeVisible()
+  // L'historique suit tout de suite, sans attendre le rafraîchissement périodique (10 s).
+  await expect(pane.getByText('Loïc a modifié un champ')).toBeVisible({ timeout: 3_000 })
 
   await createTask(page, 'Écrire la note')
   await page.getByLabel('Filtrer par agent').selectOption('helios')
@@ -125,4 +127,27 @@ test("une modification d'un agent pendant la saisie n'efface pas le brouillon", 
   const saved = await (await page.request.get(`/api/tasks/${id}`)).json()
   expect(saved.title).toBe('Tâche partagée (renommée)')
   expect(saved.next_action).toBe("Étape posée par l'agent")
+})
+
+test("un champ rempli par un agent pendant la saisie ne bloque pas l'enregistrement", async ({ page }) => {
+  test.setTimeout(60_000)
+  await page.goto('/')
+  await createTask(page, 'Idée à mûrir')
+  await card(page, 'Idée à mûrir').click()
+  const pane = page.getByRole('complementary', { name: /Détail de Idée à mûrir/ })
+  await pane.getByLabel('Objectif').fill('Objectif précisé par Loïc')
+
+  // Pendant ce temps, un agent l'active (à faire) en posant une prochaine action.
+  const tasks = await (await page.request.get('/api/tasks')).json()
+  const id = tasks.find((t: { title: string }) => t.title === 'Idée à mûrir').id
+  await page.request.post(`/api/tasks/${id}/status`, {
+    data: { status: 'todo', next_action: 'Étape posée par Helios' },
+    headers: { 'X-Nexus-Actor': 'helios' },
+  })
+
+  await expect(pane.getByText('Modifiée ailleurs pendant ta saisie')).toBeVisible({ timeout: 20_000 })
+  const save = pane.getByRole('button', { name: 'Enregistrer' })
+  await expect(save).toBeEnabled()
+  await save.click()
+  await expect(page.getByText('Modifications enregistrées')).toBeVisible()
 })

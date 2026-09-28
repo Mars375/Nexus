@@ -177,11 +177,16 @@ function EditForm({ task }: { task: Task }) {
 
   const changes = Object.assign({}, ...edited.map((key) => toChange(key, form))) as TaskChanges
   // Mêmes exigences que le serveur : on ne propose pas d'enregistrer ce qu'il refusera.
-  const problem = !form.title.trim()
+  // Ce que la tâche vaudra après enregistrement : les champs touchés viennent du brouillon,
+  // les autres de la dernière version connue (un agent a pu les remplir entre-temps).
+  const latest = draftFrom(task)
+  const after = <K extends keyof Draft>(key: K): Draft[K] =>
+    edited.includes(key) ? form[key] : latest[key]
+  const problem = !after('title').trim()
     ? 'Le titre ne peut pas être vide.'
-    : !form.objective.trim()
+    : !after('objective').trim()
       ? "L'objectif ne peut pas être vide."
-      : ACTIVE_STATUSES.includes(task.status) && !form.next_action.trim()
+      : ACTIVE_STATUSES.includes(task.status) && !after('next_action').trim()
         ? 'Une tâche active doit garder une prochaine action.'
         : task.status === 'done' &&
             task.evidence.length === 0 &&
