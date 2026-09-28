@@ -51,13 +51,15 @@ def publish(
 ) -> tuple[Event, bool]:
     """Enregistre l'événement ; renvoie (événement, créé). Un renvoi identique est une relecture."""
     redacted: dict[str, list[str]] = {}
+    # Tout ce qui sera stocké passe par le scanner, identifiants compris (ADR-006).
     clean = secrets.redact_fields(
         {"subject": envelope.subject, "body": envelope.body, "payload": envelope.payload,
-         "evidence": envelope.evidence},
+         "evidence": envelope.evidence, "id": actor_event_id, "run": envelope.run},
         redacted.__setitem__,
     )
     envelope.subject, envelope.body = clean["subject"], clean["body"]
     envelope.payload, envelope.evidence = clean["payload"], clean["evidence"]
+    actor_event_id, envelope.run = clean["id"], clean["run"]
 
     kind = rules.validate(envelope)
     task = _task(session, envelope.task)
@@ -66,7 +68,7 @@ def publish(
         select(Event).where(Event.actor == envelope.actor, Event.actor_event_id == actor_event_id)
     )
     if existing is not None:
-        if _same(existing, envelope, task):
+        if _same(existing, envelope, task) and existing.at.timestamp() == at.timestamp():
             return existing, False
         raise RuleViolation(
             "event_id_reused",
@@ -74,12 +76,14 @@ def publish(
             f"{envelope.actor} : un événement ne se réécrit pas, publie une correction",
         )
     _refuse_noise(session, envelope, task)
+    if kind == "working":
+        _refuse_second_active_run(session, envelope, task)
 
     received = now()
     event = Event(
         actor=envelope.actor, actor_event_id=actor_event_id, at=at, received_at=received,
         task_id=task.id if task else None,
-        run_ref=envelope.run or envelope.payload.get("run_ref"),
+        run_ref=_run_ref(envelope),
         kind=kind, requested_kind=envelope.kind if kind != envelope.kind else None,
         subject=envelope.subject, body=envelope.body, payload=envelope.payload,
         evidence=envelope.evidence, needs=envelope.needs,
@@ -133,18 +137,50 @@ def _task(session: Session, ref: str | None) -> Task | None:
     return tasks.get_task(session, parse_task_ref(ref))
 
 
-def _fingerprint(kind, task_id, subject, body, payload, evidence, needs) -> tuple:
-    return (kind, task_id, subject, body, repr(sorted(payload.items())), evidence, needs)
+def _run_ref(e: Envelope) -> str | None:
+    return e.run or e.payload.get("run_ref")
+
+
+def _fingerprint(kind, task_id, run, subject, body, payload, evidence, needs) -> tuple:
+    return (kind, task_id, run, subject, body, repr(sorted(payload.items())), evidence, needs)
 
 
 def _same(existing: Event, e: Envelope, task: Task | None) -> bool:
+    """Même contenu (type demandé, tâche, run, textes, preuves, destinataires)."""
     requested = existing.requested_kind or existing.kind
     return _fingerprint(
-        requested, existing.task_id, existing.subject, existing.body, existing.payload,
-        existing.evidence, existing.needs,
+        requested, existing.task_id, existing.run_ref, existing.subject, existing.body,
+        existing.payload, existing.evidence, existing.needs,
     ) == _fingerprint(
-        e.kind, task.id if task else None, e.subject, e.body, e.payload, e.evidence, e.needs
+        e.kind, task.id if task else None, _run_ref(e), e.subject, e.body, e.payload,
+        e.evidence, e.needs,
     )
+
+
+# Ce qui clôt ou suspend un run : après l'un d'eux, l'agent peut en ouvrir un autre.
+RUN_CLOSERS = frozenset({"done", "review", "failed", "handoff", "blocked"})
+
+
+def _refuse_second_active_run(session: Session, e: Envelope, task: Task | None) -> None:
+    """Un seul run actif par agent et par tâche (EVENT-PROTOCOL §4)."""
+    if task is None:
+        return
+    history = session.scalars(
+        select(Event)
+        .where(Event.actor == e.actor, Event.task_id == task.id)
+        .order_by(Event.id.desc())
+    )
+    for previous in history:
+        if previous.kind in RUN_CLOSERS:
+            return
+        if previous.kind == "working":
+            if previous.run_ref != _run_ref(e):
+                raise RuleViolation(
+                    "run_already_active",
+                    f"{e.actor} a déjà un run actif sur {task.ref} : termine-le (done, review, "
+                    "failed, handoff ou blocked) avant d'en ouvrir un autre",
+                )
+            return
 
 
 def _refuse_noise(session: Session, e: Envelope, task: Task | None) -> None:

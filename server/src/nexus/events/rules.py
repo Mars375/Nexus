@@ -68,6 +68,11 @@ def validate(e: Envelope) -> str:
         raise RuleViolation("unknown_kind", f"type d'événement inconnu : {e.kind}")
     if e.kind in TASK_REQUIRED and not e.task:
         raise RuleViolation("task_required", f"un événement {e.kind} doit viser une tâche")
+    run_ref = e.payload.get("run_ref")
+    if run_ref is not None and not (isinstance(run_ref, str) and 0 < len(run_ref.strip()) <= 128):
+        raise RuleViolation(
+            "invalid_run_ref", "payload.run_ref doit être un texte de 128 caractères au plus"
+        )
     unknown_needs = sorted(set(e.needs) - ACTORS)
     if unknown_needs:
         raise RuleViolation("unknown_recipient", f"destinataires inconnus : {unknown_needs}")

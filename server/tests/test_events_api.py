@@ -197,3 +197,49 @@ def test_secret_only_cause_or_evidence_does_not_count(client):
 
     done = publish(client, "done", "Fini", task=ref, evidence=[SECRET]).json()
     assert done["kind"] == "review"
+
+
+def test_secret_in_event_id_or_run_is_never_stored(client):
+    ref = task(client, next_action="x")
+    event = publish(client, "working", task=ref, id=SECRET, run=SECRET,
+                    payload={"run_ref": "r1"}).json()
+
+    stored = client.get(f"/api/events/{event['id']}").text
+    assert SECRET not in stored
+    assert "[REDACTED]" in event["actor_event_id"]
+
+
+def test_non_string_run_ref_is_refused_not_500(client):
+    ref = task(client)
+    res = publish(client, "progress", task=ref, payload={"percent": 40, "run_ref": {}})
+    assert res.json()["detail"]["code"] == "invalid_run_ref"
+
+
+def test_same_id_with_another_date_or_run_is_refused(client):
+    ref = task(client)
+    publish(client, "working", task=ref, id="evt_a", payload={"run_ref": "r1"})
+
+    other_date = client.post("/api/events", json={
+        "id": "evt_a", "at": "2026-09-28T10:00:00+02:00", "actor": "helios", "kind": "working",
+        "subject": "s", "task": ref, "payload": {"run_ref": "r1"},
+    })
+    assert other_date.json()["detail"]["code"] == "event_id_reused"
+
+
+def test_only_one_active_run_per_agent_and_task(client):
+    ref = task(client, next_action="x")
+    publish(client, "working", "Run 1", task=ref, payload={"run_ref": "r1"})
+
+    second = publish(client, "working", "Run 2", task=ref, payload={"run_ref": "r2"})
+    assert second.json()["detail"]["code"] == "run_already_active"
+
+    # un autre agent peut travailler en parallèle
+    other = client.post("/api/events", json={
+        "id": "evt_codex", "at": AT, "actor": "codex", "kind": "working", "subject": "Run C",
+        "task": ref, "payload": {"run_ref": "c1"},
+    })
+    assert other.status_code == 201
+
+    publish(client, "blocked", task=ref, body="attente", payload={"plan": "p"})
+    assert publish(client, "working", "Reprise", task=ref,
+                   payload={"run_ref": "r2"}).status_code == 201
