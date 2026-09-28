@@ -98,6 +98,7 @@ def update_task(session: Session, task: Task, changes: dict[str, Any], actor: st
         raise RuleViolation("not_updatable", f"champs non modifiables ici : {sorted(unknown)}")
     redacted: dict[str, list[str]] = {}
     changes = secrets.redact_fields(changes, redacted.__setitem__)
+    role_before = task.operation_role
     diff = {}
     for field, value in changes.items():
         old = getattr(task, field)
@@ -109,10 +110,22 @@ def update_task(session: Session, task: Task, changes: dict[str, Any], actor: st
     rules.check_next_action(task.status, task.next_action)
     if task.status == "blocked":
         rules.check_block(task.block_cause, task.block_plan, task.follow_up_at)
+    proven = rules.resolve_done(task.expected_evidence, task.evidence) == "done"
+    if task.status == "done" and not proven:
+        raise RuleViolation(
+            "evidence_missing_on_done",
+            "cette tâche est terminée sans preuve : rouvre-la pour joindre la preuve attendue",
+        )
     if task.status == "in_progress" and ({"operation_role", "human_owner"} & diff.keys()):
         task.operation_role = rules.resolve_role(
             task.operation_role, _other_main_in_progress(session, task)
         )
+        # L'historique dit ce qui est réellement enregistré, pas ce qui a été demandé.
+        diff.pop("operation_role", None)
+        if task.operation_role != role_before:
+            diff["operation_role"] = [role_before, task.operation_role]
+        if not diff:
+            return task
     task.updated_at = now()
     _record(session, task, actor, "updated", diff)
     _record_redactions(session, task, actor, redacted)

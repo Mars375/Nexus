@@ -286,6 +286,28 @@ def test_prepared_role_is_honoured_at_start(client):
     assert violation(move(client, other, "in_progress")) == "main_operation_taken"
 
 
+def test_expected_evidence_cannot_be_added_to_a_task_done_without_proof(client):
+    ref = create(client, next_action="x")["id"]
+    move(client, ref, "in_progress")
+    move(client, ref, "done")
+
+    res = client.patch(f"/api/tasks/{ref}", json={"expected_evidence": "commit"})
+    assert violation(res) == "evidence_missing_on_done"
+    assert client.get(f"/api/tasks/{ref}").json()["expected_evidence"] is None
+
+
+def test_history_records_the_role_actually_stored(client):
+    ref = create(client, next_action="x")["id"]
+    move(client, ref, "in_progress")  # devient main
+
+    client.patch(f"/api/tasks/{ref}", json={"operation_role": None})  # redéduit : reste main
+    client.patch(f"/api/tasks/{ref}", json={"operation_role": "auxiliary"})
+
+    history = client.get(f"/api/tasks/{ref}/history").json()
+    updates = [h for h in history if h["action"] == "updated"]
+    assert [u["changes"] for u in updates] == [{"operation_role": ["main", "auxiliary"]}]
+
+
 def test_role_is_cleared_when_leaving_progress(client):
     ref = create(client, next_action="x")["id"]
     move(client, ref, "in_progress")
