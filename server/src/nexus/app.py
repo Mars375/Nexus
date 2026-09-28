@@ -7,13 +7,18 @@ import logging
 from contextlib import asynccontextmanager, suppress
 from importlib.metadata import version
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from sqlalchemy.orm import sessionmaker
 
 from nexus import backup, migrate
 from nexus.clock import now
 from nexus.config import Settings
 from nexus.db import make_engine
+from nexus.tasks import api as tasks_api
+from nexus.tasks.rules import RuleViolation
+from nexus.tasks.service import TaskNotFound
 
 log = logging.getLogger("nexus")
 
@@ -37,6 +42,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         migrate.upgrade(settings.db_url)
         app.state.engine = make_engine(settings.db_url)
+        app.state.sessionmaker = sessionmaker(app.state.engine, expire_on_commit=False)
         backup.backup(settings.db_path, settings.backup_dir, settings.backup_keep)
         task = asyncio.create_task(backup_loop())
         try:
@@ -48,6 +54,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.engine.dispose()
 
     app = FastAPI(title="Nexus", version=version("nexus"), lifespan=lifespan)
+    app.include_router(tasks_api.router)
+
+    @app.exception_handler(RuleViolation)
+    def _rule_violation(_request: Request, exc: RuleViolation) -> JSONResponse:
+        return JSONResponse(
+            status_code=409, content={"detail": {"code": exc.code, "message": exc.message}}
+        )
+
+    @app.exception_handler(TaskNotFound)
+    def _not_found(_request: Request, exc: TaskNotFound) -> JSONResponse:
+        return JSONResponse(
+            status_code=404, content={"detail": {"code": "not_found", "message": str(exc)}}
+        )
 
     @app.get("/api/health")
     def health() -> dict:

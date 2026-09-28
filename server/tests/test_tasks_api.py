@@ -1,0 +1,225 @@
+import socket
+from datetime import datetime
+
+import pytest
+
+
+def create(client, **fields):
+    body = {"title": "Pont lecture", "objective": "Lire les runs Hermes"} | fields
+    res = client.post("/api/tasks", json=body)
+    assert res.status_code == 201, res.text
+    return res.json()
+
+
+def move(client, ref, status, **fields):
+    return client.post(f"/api/tasks/{ref}/status", json={"status": status} | fields)
+
+
+def violation(res):
+    assert res.status_code == 409, res.text
+    return res.json()["detail"]["code"]
+
+
+def test_create_returns_task_with_nexus_id_and_provenance(client):
+    task = create(client, next_action="relever les tables", status="todo", lead_agent="helios")
+
+    assert task["id"].startswith("nx-task-")
+    assert task["status"] == "todo"
+    assert task["human_owner"] == "loic"
+    assert task["created_by"] == "loic"
+    assert task["source"] == "nexus.db"
+    assert datetime.fromisoformat(task["measured_at"]).tzinfo is not None
+
+
+def test_create_refuses_active_task_without_next_action(client):
+    res = client.post("/api/tasks", json={"title": "x", "objective": "y", "status": "todo"})
+    assert violation(res) == "next_action_required"
+
+
+def test_create_refuses_to_start_beyond_todo(client):
+    res = client.post(
+        "/api/tasks", json={"title": "x", "objective": "y", "status": "in_progress"}
+    )
+    assert res.status_code == 422
+
+
+def test_unknown_actor_is_refused(client):
+    res = client.post(
+        "/api/tasks", json={"title": "x", "objective": "y"}, headers={"X-Nexus-Actor": "mallory"}
+    )
+    assert res.status_code == 422
+
+
+def test_actor_header_is_recorded(client):
+    task = create(client)
+    res = client.post(
+        f"/api/tasks/{task['id']}/comments", json={"body": "je regarde"},
+        headers={"X-Nexus-Actor": "helios"},
+    )
+    assert res.json()["author"] == "helios"
+
+
+def test_read_accepts_short_and_long_ids_and_404s(client):
+    task = create(client)
+    short = task["id"].removeprefix("nx-task-")
+
+    assert client.get(f"/api/tasks/{short}").json()["id"] == task["id"]
+    assert client.get("/api/tasks/nx-task-999").status_code == 404
+    assert client.get("/api/tasks/nimporte").status_code == 404
+
+
+def test_full_lifecycle_through_status_route(client):
+    ref = create(client)["id"]
+
+    assert move(client, ref, "todo", next_action="relever les tables").status_code == 200
+    started = move(client, ref, "in_progress").json()
+    assert started["status"] == "in_progress"
+    assert started["operation_role"] == "main"
+
+    blocked = move(client, ref, "blocked", block_cause="SSH timeout", block_plan="rallumer")
+    assert blocked.json()["block_cause"] == "SSH timeout"
+    resumed = move(client, ref, "in_progress").json()
+    assert resumed["block_cause"] is None
+
+    assert move(client, ref, "done").json()["status"] == "done"
+
+
+def test_refused_transition_is_explained(client):
+    ref = create(client)["id"]
+    assert violation(move(client, ref, "review")) == "transition_refused"
+
+
+def test_blocked_requires_cause_and_follow_up(client):
+    ref = create(client, next_action="x")["id"]
+    move(client, ref, "in_progress")
+
+    assert violation(move(client, ref, "blocked")) == "block_cause_required"
+    assert violation(move(client, ref, "blocked", block_cause="SSH")) == "block_follow_up_required"
+    ok = move(client, ref, "blocked", block_cause="SSH", follow_up_at="2026-09-29T09:00:00+02:00")
+    assert ok.status_code == 200
+
+
+def test_dropped_requires_reason(client):
+    ref = create(client)["id"]
+    assert violation(move(client, ref, "dropped")) == "drop_reason_required"
+    assert move(client, ref, "dropped", reason="doublon").json()["drop_reason"] == "doublon"
+
+
+def test_done_without_expected_evidence_goes_to_review(client):
+    ref = create(client, next_action="x", expected_evidence="commit + tests verts")["id"]
+    move(client, ref, "in_progress")
+
+    closed = move(client, ref, "done").json()
+    assert closed["status"] == "review"
+
+    assert violation(move(client, ref, "done")) == "evidence_required"
+    done = move(client, ref, "done", evidence=["commit:a1b2c3d"]).json()
+    assert done["status"] == "done"
+    assert done["evidence"] == ["commit:a1b2c3d"]
+
+
+def test_only_one_main_operation_in_progress(client):
+    first = create(client, next_action="x")["id"]
+    second = create(client, next_action="y")["id"]
+    move(client, first, "in_progress")
+
+    assert move(client, second, "in_progress").json()["operation_role"] == "auxiliary"
+    move(client, second, "todo")
+    assert violation(move(client, second, "in_progress", role="main")) == "main_operation_taken"
+
+
+def test_promoting_auxiliary_to_main_is_checked(client):
+    first = create(client, next_action="x")["id"]
+    second = create(client, next_action="y")["id"]
+    move(client, first, "in_progress")
+    move(client, second, "in_progress")
+
+    res = client.patch(f"/api/tasks/{second}", json={"operation_role": "main"})
+    assert violation(res) == "main_operation_taken"
+
+
+def test_patch_cannot_empty_next_action_of_active_task(client):
+    ref = create(client, status="todo", next_action="x")["id"]
+    res = client.patch(f"/api/tasks/{ref}", json={"next_action": ""})
+    assert violation(res) == "next_action_required"
+
+
+def test_patch_cannot_null_required_fields(client):
+    ref = create(client)["id"]
+    assert client.patch(f"/api/tasks/{ref}", json={"title": None}).status_code == 422
+
+
+def test_assign_via_patch(client):
+    ref = create(client)["id"]
+    task = client.patch(
+        f"/api/tasks/{ref}", json={"lead_agent": "codex", "collaborators": ["helios"]}
+    ).json()
+    assert task["lead_agent"] == "codex"
+    assert task["collaborators"] == ["helios"]
+
+
+def test_list_filters(client):
+    a = create(client, lead_agent="helios", priority="high", due_at="2026-10-01T12:00:00+02:00")
+    b = create(client, collaborators=["helios"], status="todo", next_action="x")
+    create(client, lead_agent="codex")
+
+    ids = lambda res: {t["id"] for t in res.json()}  # noqa: E731
+    assert ids(client.get("/api/tasks", params={"agent": "helios"})) == {a["id"], b["id"]}
+    assert ids(client.get("/api/tasks", params={"status": "todo"})) == {b["id"]}
+    assert ids(client.get("/api/tasks", params={"priority": "high"})) == {a["id"]}
+    due = client.get("/api/tasks", params={"due_before": "2026-10-02T00:00:00+02:00"})
+    assert ids(due) == {a["id"]}
+
+
+def test_dependencies_and_cycles(client):
+    a, b, c = (create(client)["id"] for _ in range(3))
+
+    assert client.put(f"/api/tasks/{a}/dependencies/{b}").status_code == 204
+    assert client.put(f"/api/tasks/{b}/dependencies/{c}").status_code == 204
+    assert client.get(f"/api/tasks/{a}").json()["depends_on"] == [b]
+
+    assert violation(client.put(f"/api/tasks/{c}/dependencies/{a}")) == "dependency_cycle"
+    assert violation(client.put(f"/api/tasks/{a}/dependencies/{a}")) == "self_dependency"
+
+    assert client.delete(f"/api/tasks/{a}/dependencies/{b}").status_code == 204
+    assert client.delete(f"/api/tasks/{a}/dependencies/{b}").status_code == 404
+
+
+def test_every_mutation_is_in_history(client):
+    ref = create(client, next_action="x")["id"]
+    other = create(client)["id"]
+    client.patch(f"/api/tasks/{ref}", json={"priority": "high"})
+    move(client, ref, "in_progress")
+    client.post(f"/api/tasks/{ref}/comments", json={"body": "note"})
+    client.put(f"/api/tasks/{ref}/dependencies/{other}")
+
+    history = client.get(f"/api/tasks/{ref}/history").json()
+
+    assert [h["action"] for h in history] == ["created", "updated", "status", "commented", "linked"]
+    assert history[1]["changes"]["priority"] == ["normal", "high"]
+    assert history[2]["changes"]["status"] == ["backlog", "in_progress"]
+    assert all(h["actor"] == "loic" for h in history)
+
+
+def test_no_route_opens_a_network_connection(client, monkeypatch):
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("appel réseau sortant interdit")
+
+    monkeypatch.setattr(socket, "create_connection", refuse)
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+
+    ref = create(client, next_action="x")["id"]
+    other = create(client)["id"]
+    client.patch(f"/api/tasks/{ref}", json={"lead_agent": "hermes"})
+    move(client, ref, "in_progress")
+    move(client, ref, "blocked", block_cause="c", block_plan="p")
+    move(client, ref, "in_progress")
+    client.post(f"/api/tasks/{ref}/comments", json={"body": "b"})
+    client.put(f"/api/tasks/{ref}/dependencies/{other}")
+    move(client, ref, "done")
+    client.get("/api/tasks")
+
+
+@pytest.mark.parametrize("path", ["/api/tasks/nx-task-1/history", "/api/tasks/nx-task-1/comments"])
+def test_sub_resources_404_on_unknown_task(client, path):
+    assert client.get(path).status_code == 404
