@@ -59,6 +59,12 @@ def publish(
     )
     envelope.subject, envelope.body = clean["subject"], clean["body"]
     envelope.payload, envelope.evidence = clean["payload"], clean["evidence"]
+    if "id" in redacted:
+        # Masqué, l'identifiant perdrait son unicité (deux secrets → même « [REDACTED] ») :
+        # on le refuse plutôt que de confondre deux événements.
+        raise RuleViolation(
+            "secret_in_event_id", "l'identifiant de l'événement contient un secret : changes-le"
+        )
     actor_event_id, envelope.run = clean["id"], clean["run"]
 
     kind = rules.validate(envelope)
@@ -78,6 +84,11 @@ def publish(
     _refuse_noise(session, envelope, task, actor_event_id)
     if kind == "working":
         _refuse_second_active_run(session, envelope, task)
+        if task is not None:
+            # Sérialise les ouvertures de run : toucher la tâche fait jouer son verrou de version,
+            # si bien que de deux « working » simultanés, le second échoue (409) au lieu de passer.
+            task.updated_at = now()
+            session.flush()
 
     received = now()
     event = Event(

@@ -199,14 +199,14 @@ def test_secret_only_cause_or_evidence_does_not_count(client):
     assert done["kind"] == "review"
 
 
-def test_secret_in_event_id_or_run_is_never_stored(client):
+def test_secret_in_event_id_is_refused_and_run_is_masked(client):
     ref = task(client, next_action="x")
-    event = publish(client, "working", task=ref, id=SECRET, run=SECRET,
-                    payload={"run_ref": "r1"}).json()
+    refused = publish(client, "claimed", task=ref, id=f"evt {SECRET}")
+    assert refused.json()["detail"]["code"] == "secret_in_event_id"
+    assert SECRET not in refused.text
 
-    stored = client.get(f"/api/events/{event['id']}").text
-    assert SECRET not in stored
-    assert "[REDACTED]" in event["actor_event_id"]
+    event = publish(client, "working", task=ref, run=SECRET, payload={"run_ref": "r1"}).json()
+    assert SECRET not in client.get(f"/api/events/{event['id']}").text
 
 
 def test_non_string_run_ref_is_refused_not_500(client):
@@ -290,3 +290,31 @@ def test_identical_resend_racing_the_first_is_a_read_back(client, monkeypatch):
 
     assert res.status_code == 200
     assert len(client.get("/api/events", params={"task": ref}).json()) == 1
+
+
+def test_concurrent_working_runs_cannot_both_open(client, monkeypatch):
+    from datetime import datetime
+
+    from nexus.events import service
+    from nexus.events.rules import Envelope
+
+    ref = task(client, next_action="x")
+    at = datetime.fromisoformat(AT)
+    make = client.app.state.sessionmaker
+    original = service._refuse_second_active_run
+
+    def racing(session, envelope, task_row):
+        original(session, envelope, task_row)  # r2 ne voit aucun run actif…
+        monkeypatch.setattr(service, "_refuse_second_active_run", original)
+        with make() as other:  # …mais r1 s'ouvre et s'enregistre juste avant son écriture
+            service.publish(other, Envelope(actor="helios", kind="working", subject="r1",
+                                            task=ref, payload={"run_ref": "r1"}), "evt_w1", at)
+            other.commit()
+
+    monkeypatch.setattr(service, "_refuse_second_active_run", racing)
+    res = publish(client, "working", "r2", task=ref, id="evt_w2", payload={"run_ref": "r2"})
+
+    assert res.status_code == 409
+    assert res.json()["detail"]["code"] == "concurrent_update"
+    runs = [e["payload"]["run_ref"] for e in client.get("/api/events", params={"task": ref}).json()]
+    assert runs == ["r1"]
