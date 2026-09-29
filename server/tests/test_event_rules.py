@@ -95,3 +95,10 @@ def test_refusals_never_echo_a_secret_received_by_an_adapter(fields):
     with pytest.raises(RuleViolation) as refused:
         validate(envelope)
     assert "S" * 36 not in refused.value.message
+
+
+def test_unknown_actor_from_an_adapter_is_refused():
+    envelope = Envelope(actor="codx", kind="claimed", subject="s", task="nx-task-1")
+    with pytest.raises(RuleViolation) as refused:
+        validate(envelope)
+    assert refused.value.code == "unknown_actor"

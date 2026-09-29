@@ -69,6 +69,9 @@ def cause_of(e: Envelope) -> str | None:
 
 def validate(e: Envelope) -> str:
     """Vérifie l'événement et renvoie son type effectif (un `done` sans preuve devient `review`)."""
+    if e.actor not in ACTORS:
+        # L'API le garantit déjà ; un adaptateur qui appelle publish() directement, non.
+        raise RuleViolation("unknown_actor", f"acteur inconnu : {redact(e.actor)[0]}")
     if e.kind not in KINDS:
         # Valeur reçue passée au scanner : un adaptateur peut appeler publish() sans l'API.
         raise RuleViolation("unknown_kind", f"type d'événement inconnu : {redact(e.kind)[0]}")

@@ -743,3 +743,15 @@ def test_review_evidence_is_attached_so_loic_can_close_the_task(client):
     # Loïc valide : la preuve de l'agent suffit, la tâche se clôt.
     closed = client.post(f"/api/tasks/{ref}/status", json={"status": "done"}).json()
     assert closed["status"] == "done"
+
+
+@pytest.mark.parametrize(
+    "fields", [{"actor": "codx"}, {"kind": "termine"}, {"needs": ["loic", "codx"]}]
+)
+def test_http_api_refuses_unknown_actor_kind_or_recipient_with_422(client, fields):
+    ref = task(client)
+    body = {"id": "evt_bad", "at": AT, "actor": "helios", "kind": "question",
+            "subject": "s", "task": ref, "needs": ["loic"]} | fields
+    res = client.post("/api/events", json=body)
+    assert res.status_code == 422, res.text
+    assert client.get("/api/events", params={"task": ref}).json() == []
