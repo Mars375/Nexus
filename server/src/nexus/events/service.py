@@ -236,33 +236,33 @@ def _same(existing: Event, e: Envelope, task: Task | None) -> bool:
 RUN_CLOSERS = frozenset({"done", "review", "failed", "handoff", "blocked"})
 
 
-def _active_run(
+def _runs(
     session: Session, actor: str, task: Task, before_id: int | None = None
-) -> tuple[bool, str | None]:
-    """Le run de l'agent sur la tâche : (encore ouvert ?, référence du dernier `working`).
+) -> tuple[str | None, set[str | None]]:
+    """Runs de l'agent sur la tâche : (référence du run actif ou None, références closes).
 
-    Une clôture ne ferme que le run qu'elle nomme : une clôture sans run ne ferme qu'un run
-    sans référence, et une clôture tardive d'un ancien run ne libère pas le run actif.
+    Une clôture ne ferme que le run qu'elle nomme, et pour de bon : une clôture tardive d'un
+    ancien run ne libère pas le run actif, et un `working` tardif d'un run clos ne le rouvre pas.
     """
     query = select(Event).where(Event.actor == actor, Event.task_id == task.id)
     if before_id is not None:
         query = query.where(Event.id < before_id)
-    closed: set[str | None] = set()
-    # Du plus récent au plus ancien : seules les clôtures postérieures au dernier working jouent.
-    for previous in session.scalars(query.order_by(Event.id.desc())):
-        if previous.kind in RUN_CLOSERS:
-            closed.add(previous.run_ref)
-        elif previous.kind == "working":
-            return previous.run_ref not in closed, previous.run_ref
-    return False, None
+    history = list(session.scalars(query.order_by(Event.id.desc())))
+    closed = {e.run_ref for e in history if e.kind in RUN_CLOSERS}
+    for previous in history:
+        if previous.kind == "working" and previous.run_ref not in closed:
+            return previous.run_ref, closed
+    return None, closed
 
 
 def _refuse_second_active_run(session: Session, e: Envelope, task: Task | None) -> None:
     """Un seul run actif par agent et par tâche (EVENT-PROTOCOL §4)."""
     if task is None:
         return
-    active, run_ref = _active_run(session, e.actor, task)
-    if active and run_ref != _run_ref(e):
+    active, closed = _runs(session, e.actor, task)
+    if _run_ref(e) in closed:
+        return  # working tardif d'un run clos : enregistré, sans effet (voir _stale_run)
+    if active is not None and active != _run_ref(e):
         raise RuleViolation(
             "run_already_active",
             f"{e.actor} a déjà un run actif sur {task.ref} : termine-le (done, review, "
@@ -302,19 +302,21 @@ def _stale_run(session: Session, event: Event, task: Task) -> str | None:
     Ex. : `done(r1)` arrivé après `working(r2)` ne clôt pas la tâche pendant que r2 tourne ;
     un `done` sans run non plus, puisque rien ne dit qu'il ne vient pas de r1.
     """
+    active, closed = _runs(session, event.actor, task, before_id=event.id)
     if event.kind == "working":
+        if event.run_ref in closed:
+            return f"le run {event.run_ref} de {event.actor} est déjà clos : ouvre un nouveau run"
         return None
-    active, run_ref = _active_run(session, event.actor, task, before_id=event.id)
-    if not active or event.run_ref == run_ref:
+    if active is None or event.run_ref == active:
         return None
     if event.run_ref is None:
         return (
-            f"ne nomme aucun run, alors que le run actif de {event.actor} est {run_ref} : "
+            f"ne nomme aucun run, alors que le run actif de {event.actor} est {active} : "
             "précise le run concerné"
         )
     return (
         f"concerne le run {event.run_ref}, alors que le run actif de {event.actor} "
-        f"est {run_ref}"
+        f"est {active}"
     )
 
 

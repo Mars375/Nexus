@@ -616,3 +616,36 @@ def test_refused_working_does_not_make_the_task_look_recently_modified(client):
 
     assert working["effects"][0]["applied"] is False  # prérequis non traité
     assert client.get(f"/api/tasks/{ref}").json()["updated_at"] == before
+
+
+def test_late_working_of_a_closed_run_does_not_reopen_the_task(client):
+    ref = task(client, next_action="x")
+    publish(client, "working", "r1", task=ref, id="evt_w1", payload={"run_ref": "r1"})
+    publish(client, "done", "fini", task=ref, evidence=["commit:r1"], run="r1")
+
+    # Un working tardif (ou rejoué) de r1 arrive après sa clôture.
+    late = publish(client, "working", "r1 en retard", task=ref, payload={"run_ref": "r1"})
+
+    assert late.status_code == 201, late.text  # le fait est enregistré…
+    effect = late.json()["effects"][0]
+    assert effect["applied"] is False  # … sans rouvrir la tâche
+    assert "r1" in effect["reason"] and "clos" in effect["reason"]
+    assert client.get(f"/api/tasks/{ref}").json()["status"] == "done"
+
+
+def test_late_working_of_a_closed_run_does_not_count_as_active(client):
+    ref = task(client, next_action="x")
+    publish(client, "working", "r1", task=ref, payload={"run_ref": "r1"})
+    publish(client, "blocked", "pause", task=ref, body="attente", payload={"plan": "p"}, run="r1")
+    publish(client, "working", "r1 en retard", task=ref, payload={"run_ref": "r1"})
+
+    res = publish(client, "working", "r2", task=ref, payload={"run_ref": "r2"})
+
+    assert res.status_code == 201, res.text
+    assert res.json()["effects"] == [{"action": "status:in_progress", "applied": True}]
+
+
+def test_working_whose_run_reads_as_redacted_is_refused(client):
+    ref = task(client, next_action="x")
+    res = publish(client, "working", task=ref, payload={"run_ref": "[REDACTED]"})
+    assert res.json()["detail"]["code"] == "run_ref_required"
