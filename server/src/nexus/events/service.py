@@ -414,6 +414,7 @@ def _apply_effects(session: Session, event: Event, e: Envelope, task: Task) -> l
 
     match event.kind:
         case "claimed":
+            session.refresh(task)  # jugé sur l'état courant, pas sur la lecture initiale
             if task.lead_agent != event.actor:
                 attempt("lead_agent", lambda: tasks.update_task(
                     session, task, {"lead_agent": event.actor}, event.actor

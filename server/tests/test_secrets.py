@@ -202,6 +202,8 @@ def test_multi_part_http_credentials_are_masked_whole(text, expected):
         ("commit: token=[REDACTED]", True),
         ("commit:[REDACTED]", True),
         ("url: [REDACTED]", True),
+        ("commit: token=[REDACTED] url:", True),
+        ("commit: [REDACTED] note: [REDACTED] url:", True),
         ("commit:a1b2c3d token=[REDACTED]", False),
         ("commit:a1b2c3d", False),
         ("https://github.com/Mars375/Nexus/pull/9", False),

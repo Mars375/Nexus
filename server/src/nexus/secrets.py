@@ -124,6 +124,8 @@ def is_blank_reference(text: str | None) -> bool:
         return True
     rest = _REDACTED_SPAN.sub("", text)
     rest = re.sub(r"^\s*[\w.-]+\s*:", "", rest, count=1)  # étiquette : commit:, url:, https:
+    # Étiquettes restées vides ailleurs (« … url: ») : elles ne portent aucun identifiant.
+    rest = re.sub(r"[\w.-]+\s*[:=](?=\s|$)", "", rest)
     return not re.search(r"\w", rest)
 
 

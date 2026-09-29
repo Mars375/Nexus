@@ -1001,3 +1001,27 @@ def test_attach_evidence_refuses_references_without_identifier(client):
         with pytest.raises(RuleViolation) as refused:
             tasks.attach_evidence(session, row, ["commit: [REDACTED]"], "helios")
     assert refused.value.code == "evidence_required"
+
+
+def test_claim_is_judged_on_the_current_lead_agent(client, monkeypatch):
+    from nexus.events import service
+    from nexus.models import Task
+
+    ref = task(client)
+    publish(client, "claimed", task=ref)  # helios est agent principal
+    make = client.app.state.sessionmaker
+    original = service._refuse_noise
+
+    def racing(session, envelope, task_row, actor_event_id, exclude_id=None):
+        if exclude_id is None:  # Codex prend la tâche entre la lecture et l'insertion
+            monkeypatch.setattr(service, "_refuse_noise", original)
+            with make() as other:
+                other.get(Task, int(ref.removeprefix("nx-task-"))).lead_agent = "codex"
+                other.commit()
+        original(session, envelope, task_row, actor_event_id, exclude_id=exclude_id)
+
+    monkeypatch.setattr(service, "_refuse_noise", racing)
+    again = publish(client, "claimed", "je reprends", task=ref).json()
+
+    assert again["effects"] == [{"action": "lead_agent", "applied": True}]
+    assert client.get(f"/api/tasks/{ref}").json()["lead_agent"] == "helios"
