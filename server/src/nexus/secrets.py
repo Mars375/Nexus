@@ -137,7 +137,7 @@ def redact_value(value: Any) -> tuple[Any, list[str]]:
             cleaned, kinds = redact(v)
             found.update(kinds)
             return cleaned
-        if isinstance(v, list):
+        if isinstance(v, (list, tuple)):  # un tuple part en JSON comme une liste
             return [walk(x) for x in v]
         if isinstance(v, dict):
             return {

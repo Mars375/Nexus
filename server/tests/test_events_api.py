@@ -920,3 +920,57 @@ def test_blank_or_redacted_event_id_is_refused(client, event_id):
     res = publish(client, "claimed", task=ref, id=event_id)
     assert res.status_code in (409, 422), res.text
     assert client.get("/api/events", params={"task": ref}).json() == []
+
+
+def test_naive_timestamp_from_an_adapter_is_refused(client):
+    from datetime import datetime
+
+    from nexus.events import service
+    from nexus.events.rules import Envelope
+    from nexus.tasks.rules import RuleViolation
+
+    ref = task(client)
+    with client.app.state.sessionmaker() as session:
+        with pytest.raises(RuleViolation) as refused:
+            service.publish(session, Envelope(actor="helios", kind="claimed", subject="s",
+                                              task=ref), "evt_naive", datetime(2026, 9, 29, 9, 0),
+                            origin="hermes")
+    assert refused.value.code == "invalid_instant"
+
+
+def test_review_evidence_is_attached_even_when_the_task_is_already_in_review(client):
+    ref = task(client, status="todo", next_action="x", expected_evidence="le commit")
+    client.post(f"/api/tasks/{ref}/status", json={"status": "in_progress"})
+    client.post(f"/api/tasks/{ref}/status", json={"status": "review"})  # par Loïc, sans preuve
+
+    event = publish(client, "review", "preuve", task=ref, evidence=["commit:a1b2c3d"]).json()
+
+    assert client.get(f"/api/tasks/{ref}").json()["evidence"] == ["commit:a1b2c3d"]
+    assert event["effects"][0]["applied"] is True
+
+
+def test_already_in_target_status_is_judged_on_the_current_state(client, monkeypatch):
+    from nexus.events import service
+    from nexus.models import Task
+
+    ref = task(client, next_action="x")
+    publish(client, "working", task=ref, payload={"run_ref": "r1"})
+    publish(client, "blocked", "pause", task=ref, body="attente", payload={"plan": "p"}, run="r1")
+    make = client.app.state.sessionmaker
+    original = service._refuse_noise
+
+    def racing(session, envelope, task_row, actor_event_id, exclude_id=None):
+        if exclude_id is None:  # la tâche était bloquée à la lecture ; Loïc la débloque entre-temps
+            monkeypatch.setattr(service, "_refuse_noise", original)
+            with make() as other:
+                other.get(Task, int(ref.removeprefix("nx-task-"))).status = "todo"
+                other.commit()
+        original(session, envelope, task_row, actor_event_id, exclude_id=exclude_id)
+
+    monkeypatch.setattr(service, "_refuse_noise", racing)
+    codex = client.post("/api/events", json={
+        "id": "evt_cx", "at": AT, "actor": "codex", "kind": "blocked", "subject": "bloqué",
+        "task": ref, "body": "dépendance", "payload": {"plan": "attendre"},
+    }).json()
+
+    assert codex["effects"][0]["reason"] != "déjà en blocked"

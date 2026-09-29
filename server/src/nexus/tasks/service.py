@@ -304,6 +304,19 @@ def add_dependency(session: Session, task: Task, other: Task, actor: str) -> Non
     _record(session, task, actor, "linked", {"depends_on": [None, other.ref]})
 
 
+def attach_evidence(session: Session, task: Task, evidence: list[str], actor: str) -> None:
+    """Joint des preuves sans changer de statut (ex. review déjà en cours, sans preuve)."""
+    refs = [e.strip() for e in evidence if not secrets.is_blank_reference(e)]
+    merged = list(dict.fromkeys([*task.evidence, *refs]))
+    if not refs:
+        raise RuleViolation("evidence_required", "evidence : aucune preuve lisible")
+    if merged == task.evidence:
+        return
+    before, task.evidence = task.evidence, merged
+    task.updated_at = now()
+    _record(session, task, actor, "updated", {"evidence": [before, merged]})
+
+
 def remove_dependency(session: Session, task: Task, other: Task, actor: str) -> None:
     link = session.get(TaskDependency, (task.id, other.id))
     if link is None:

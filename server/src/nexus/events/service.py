@@ -73,6 +73,9 @@ def publish(
     if not isinstance(origin, str) or not _ORIGIN.fullmatch(origin) or secrets.redact(origin)[1]:
         # Stockée et renvoyée telle quelle : seul un nom d'adaptateur est accepté (ADR-006).
         raise RuleViolation("invalid_origin", "origin : nom d'adaptateur invalide")
+    if not isinstance(at, datetime) or at.utcoffset() is None:
+        # L'API l'exige (AwareDatetime) ; un adaptateur ferait sinon échouer l'écriture.
+        raise RuleViolation("invalid_instant", "at : instant avec fuseau horaire requis")
     incoming = (envelope.subject, envelope.body, envelope.payload, envelope.evidence,
                 envelope.needs, envelope.run, actor_event_id)
     if has_unencodable(incoming):
@@ -390,7 +393,16 @@ def _apply_effects(session: Session, event: Event, e: Envelope, task: Task) -> l
         if stale:
             effects.append({"action": f"status:{target}", "applied": False, "reason": stale})
             return
+        # La tâche a pu changer depuis sa lecture (avant l'insertion de l'événement) : on juge
+        # « déjà dans ce statut » sur son état courant, pas sur la copie en mémoire.
+        session.refresh(task)
         if task.status == target:
+            if target == "review" and kwargs.get("evidence"):
+                # Déjà en review (mise par Loïc, sans preuve) : la preuve jointe compte quand même.
+                attempt("evidence", lambda: tasks.attach_evidence(
+                    session, task, kwargs["evidence"], event.actor
+                ))
+                return
             effects.append(
                 {"action": f"status:{target}", "applied": False, "reason": f"déjà en {target}"}
             )

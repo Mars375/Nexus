@@ -229,3 +229,9 @@ def test_quoted_http_credential_header_values_are_masked_whole(text):
     cleaned, found = redact(text)
     assert "Mufasa" not in cleaned and "deadbeef" not in cleaned
     assert "credential" in found
+
+
+def test_tuples_are_scanned_like_lists():
+    cleaned, found = redact_value({"metadata": ("token=hunter2", "ok")})
+    assert "hunter2" not in str(cleaned)
+    assert found == ["credential"]
