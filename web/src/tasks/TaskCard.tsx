@@ -15,6 +15,8 @@ type CardProps = {
 /** Contenu d'une carte, partagé entre le tableau et l'aperçu en cours de glisser. */
 export function TaskCardBody({ task, pendingDependencies, now, lifted }: CardProps) {
   const main = task.operation_role === 'main' && task.status === 'in_progress'
+  // Les autres opérations en cours sont marquées aussi : on compare les deux sur le tableau.
+  const auxiliary = task.operation_role === 'auxiliary' && task.status === 'in_progress'
   const overdue = isOverdue(task.due_at, now) && task.status !== 'done'
   return (
     <article
@@ -29,6 +31,7 @@ export function TaskCardBody({ task, pendingDependencies, now, lifted }: CardPro
       )}
       <h3 className="font-display text-sm leading-snug font-semibold">{task.title}</h3>
       {main && <p className="mt-0.5 text-2xs font-medium text-accent">Opération principale</p>}
+      {auxiliary && <p className="mt-0.5 text-2xs font-medium text-muted">Opération auxiliaire</p>}
       {task.status === 'blocked' && task.block_cause && (
         <p className="mt-1 text-xs text-attention">Bloqué : {task.block_cause}</p>
       )}

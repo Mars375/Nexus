@@ -111,9 +111,18 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+/** Au-delà, une requête sans réponse échoue : jamais de chargement infini (ADR-005). */
+export const REQUEST_TIMEOUT_MS = 10_000
+
+export async function request<T>(
+  path: string,
+  init?: RequestInit,
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
+): Promise<T> {
+  const timeout = AbortSignal.timeout(timeoutMs)
   const res = await fetch(path, {
     ...init,
+    signal: init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout,
     headers: init?.body ? { 'Content-Type': 'application/json', ...init.headers } : init?.headers,
   })
   if (res.ok) return res.status === 204 ? (undefined as T) : res.json()
@@ -153,16 +162,18 @@ export async function fetchHealth(
 }
 
 export const tasksApi = {
-  list: () => request<Task[]>('/api/tasks'),
+  list: (signal?: AbortSignal) => request<Task[]>('/api/tasks', { signal }),
   create: (draft: TaskDraft) => request<Task>('/api/tasks', { method: 'POST', body: json(draft) }),
   update: (id: string, changes: TaskChanges) =>
     request<Task>(`/api/tasks/${id}`, { method: 'PATCH', body: json(changes) }),
   move: (id: string, change: StatusChange) =>
     request<Task>(`/api/tasks/${id}/status`, { method: 'POST', body: json(change) }),
-  comments: (id: string) => request<Comment[]>(`/api/tasks/${id}/comments`),
+  comments: (id: string, signal?: AbortSignal) =>
+    request<Comment[]>(`/api/tasks/${id}/comments`, { signal }),
   comment: (id: string, body: string) =>
     request<Comment>(`/api/tasks/${id}/comments`, { method: 'POST', body: json({ body }) }),
-  history: (id: string) => request<HistoryEntry[]>(`/api/tasks/${id}/history`),
+  history: (id: string, signal?: AbortSignal) =>
+    request<HistoryEntry[]>(`/api/tasks/${id}/history`, { signal }),
   link: (id: string, other: string) =>
     request<void>(`/api/tasks/${id}/dependencies/${other}`, { method: 'PUT' }),
   unlink: (id: string, other: string) =>

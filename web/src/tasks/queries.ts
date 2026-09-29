@@ -25,7 +25,7 @@ export const TASKS_REFRESH_MS = 10_000
 export function useTasks() {
   return useQuery({
     queryKey: tasksKey,
-    queryFn: tasksApi.list,
+    queryFn: ({ signal }) => tasksApi.list(signal),
     refetchInterval: TASKS_REFRESH_MS,
     ...local,
   })
@@ -34,7 +34,7 @@ export function useTasks() {
 export function useComments(id: string) {
   return useQuery({
     queryKey: taskDetailKey(id, 'comments'),
-    queryFn: () => tasksApi.comments(id),
+    queryFn: ({ signal }) => tasksApi.comments(id, signal),
     refetchInterval: TASKS_REFRESH_MS,
     ...local,
   })
@@ -43,7 +43,7 @@ export function useComments(id: string) {
 export function useHistory(id: string) {
   return useQuery({
     queryKey: taskDetailKey(id, 'history'),
-    queryFn: () => tasksApi.history(id),
+    queryFn: ({ signal }) => tasksApi.history(id, signal),
     refetchInterval: TASKS_REFRESH_MS,
     ...local,
   })
