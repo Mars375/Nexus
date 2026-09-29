@@ -2,7 +2,8 @@
 set -e
 
 # 1. Artefacts de tests et bases locales : jamais commités.
-blocked=$(git diff --cached --name-only --diff-filter=AM \
+# Ajouts, copies, modifications et renommages (pour un renommage, c'est la destination).
+blocked=$(git diff --cached --name-only --diff-filter=ACMR \
   | grep -E '^web/(e2e/screenshots|test-results|playwright-report)/|\.db(-wal|-shm)?$' || true)
 if [ -n "$blocked" ]; then
   echo "Commit refusé : artefacts de tests ou base locale dans l'index :"
@@ -29,6 +30,17 @@ fi
 # 3. Lint des fichiers indexés (ruff, oxlint).
 pnpm exec lint-staged
 
-# 4. Typage et tests rapides. La suite Playwright se lance avant d'ouvrir la PR.
+# 4. Typage et tests rapides, sur la version qui sera commitée : les modifications non
+#    indexées sont mises de côté dans un patch le temps des vérifications, puis réappliquées
+#    quoi qu'il arrive. La suite Playwright se lance avant d'ouvrir la PR.
+unstaged=$(mktemp)
+git diff --binary --no-color > "$unstaged"
+if [ -s "$unstaged" ]; then
+  git checkout -- .
+  trap 'git apply --whitespace=nowarn "$unstaged" && rm -f "$unstaged" \
+        || echo "Attention : modifications non indexées conservées dans $unstaged (git apply)."' EXIT
+else
+  rm -f "$unstaged"
+fi
 pnpm typecheck
 pnpm test
