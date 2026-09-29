@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from nexus import secrets
+
 _MESSAGES = {
     "missing": "champ obligatoire",
     "string_too_short": "ne peut pas être vide",
@@ -50,12 +52,19 @@ def _message(error: dict[str, Any]) -> str:
         return template.split(" (")[0]
 
 
+def _safe_loc(loc: tuple) -> tuple:
+    # Un nom de champ inconnu est lui aussi une donnée reçue : s'il contient un secret, il est
+    # masqué avant d'être recopié dans `loc` et dans `msg` (ADR-006).
+    return tuple(
+        secrets.REDACTED if isinstance(part, str) and secrets.redact(part)[1] else part
+        for part in loc
+    )
+
+
 def french_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        {
-            "loc": list(e.get("loc", ())),
-            "msg": f"{_field(tuple(e.get('loc', ())))} : {_message(e)}",
-            "type": e.get("type"),
-        }
-        for e in errors
-    ]
+    cleaned = []
+    for e in errors:
+        loc = _safe_loc(tuple(e.get("loc", ())))
+        cleaned.append({"loc": list(loc), "msg": f"{_field(loc)} : {_message(e)}",
+                        "type": e.get("type")})
+    return cleaned

@@ -125,3 +125,33 @@ def test_any_value_under_a_credential_key_is_masked(value):
 @pytest.mark.parametrize("value", [None, "", [], {}])
 def test_empty_value_under_a_credential_key_is_left_alone(value):
     assert redact_value({"password": value}) == ({"password": value}, [])
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["clientSecret", "refreshToken", "dbPassword", "ClientSecret", "userApiKey", "sessionOtp"],
+)
+def test_camel_case_credential_keys_are_masked(key):
+    cleaned, found = redact_value({key: "hunter2", "note": "rien"})
+    assert cleaned == {key: REDACTED, "note": "rien"}
+    assert found == ["credential"]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("clientSecret=hunter2", "clientSecret=[REDACTED]"),
+        ('{"refreshToken": "abc123"}', '{"refreshToken": "[REDACTED]"}'),
+    ],
+)
+def test_camel_case_labels_in_text_are_masked(text, expected):
+    assert redact(text) == (expected, ["credential"])
+
+
+@pytest.mark.parametrize("text", ["maxTokens: 3000", '{"maxTokens": 3000}', "tokenizer: bpe"])
+def test_camel_case_words_that_are_not_credentials_are_untouched(text):
+    assert redact(text) == (text, [])
+
+
+def test_camel_case_counters_are_not_credential_keys():
+    assert redact_value({"maxTokens": 3000}) == ({"maxTokens": 3000}, [])

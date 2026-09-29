@@ -649,3 +649,14 @@ def test_working_whose_run_reads_as_redacted_is_refused(client):
     ref = task(client, next_action="x")
     res = publish(client, "working", task=ref, payload={"run_ref": "[REDACTED]"})
     assert res.json()["detail"]["code"] == "run_ref_required"
+
+
+def test_unknown_field_named_like_a_secret_is_not_echoed(client):
+    ref = task(client)
+    res = client.post("/api/events", json={
+        "id": "evt_x", "at": AT, "actor": "helios", "kind": "claimed", "subject": "s",
+        "task": ref, SECRET: "x",
+    })
+    assert res.status_code == 422
+    assert SECRET not in res.text
+    assert "champ inconnu" in res.text

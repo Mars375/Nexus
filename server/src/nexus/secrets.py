@@ -38,6 +38,11 @@ _LABEL = (
     # Codes à usage unique (SECURITY §1 : les codes 2FA sont des secrets).
     r"|otp|totp|2fa|mfa|verification[ _-]?code|one[ _-]?time[ _-]?code)"
     r"(?:[_.-][\w.-]*)?"
+    # camelCase / PascalCase (clientSecret, refreshToken, dbPassword) : la majuscule sert de
+    # séparateur, sensible à la casse pour que « maxTokens » ou « tokenizer » restent intacts.
+    r"|(?-i:[A-Za-z][A-Za-z0-9]*?"
+    r"(?:Password|Passwd|Pwd|Secret|ApiKey|AccessToken|PrivateKey|Token|Otp|Totp|Mfa)"
+    r"(?:[A-Z][A-Za-z0-9]*)?)"
     r"|mot de passe|mdp|code de vérification"
 )
 # Clé JSON qui nomme un identifiant : {"password": "…"} — sa valeur est un secret.
