@@ -1,0 +1,4 @@
+# Faux secrets des tests du scanner, écrits en clair dans un ancien commit (depuis, assemblés à
+# l'exécution). Empreintes exactes : commit, fichier, règle, ligne — rien d'autre n'est ignoré.
+0044f51702b98007ba59b6269c39c136cb2e85d3:server/tests/test_secrets.py:jwt:12
+0044f51702b98007ba59b6269c39c136cb2e85d3:server/tests/test_secrets.py:generic-api-key:45

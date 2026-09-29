@@ -2,14 +2,15 @@ import pytest
 
 from nexus.secrets import REDACTED, is_blank_reference, redact, redact_value
 
-# Valeurs factices, construites pour ressembler aux vrais formats.
+# Valeurs factices, construites pour ressembler aux vrais formats — assemblées à l'exécution
+# pour que gitleaks ne voie jamais de secret écrit en clair dans le dépôt.
 SAMPLES = {
     "api_key": "sk-proj-" + "a1B2c3D4e5F6g7H8i9J0k1L2",
     "github_token": "ghp_" + "A" * 36,
     "aws_access_key": "AKIA" + "ABCDEFGHIJKLMNOP",
     "slack_token": "xoxb-" + "1234567890-abcdefghij",
     "google_api_key": "AIza" + "B" * 35,
-    "jwt": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJlLXZhbGV1cg",
+    "jwt": ".".join(["eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiIxMjM0In0", "c2lnbmF0dXJlLXZhbGV1cg"]),
     "bearer_token": "Bearer " + "x" * 32,
     "private_key": "-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----",
 }
@@ -42,7 +43,7 @@ def test_labelled_values_are_masked_but_label_kept(text):
         ("{'token': 'abc123'}", "{'token': '[REDACTED]'}"),
         ('{"api_key":"abc 123"}', '{"api_key":"[REDACTED]"}'),
         ("secret: hunter2}", "secret: [REDACTED]}"),
-        ("AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENG", "AWS_SECRET_ACCESS_KEY=[REDACTED]"),
+        ("AWS_SECRET_ACCESS_KEY=" + "wJalrXUtnFEMIK7MDENG", "AWS_SECRET_ACCESS_KEY=[REDACTED]"),
         ("CLIENT_SECRET=abc123", "CLIENT_SECRET=[REDACTED]"),
         ('{"db.password": "x1"}', '{"db.password": "[REDACTED]"}'),
         ("otp: 123456", "otp: [REDACTED]"),

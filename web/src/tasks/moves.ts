@@ -1,0 +1,112 @@
+/*
+ * Miroir des règles serveur (server/src/nexus/tasks/rules.py), pour guider avant d'envoyer.
+ * Le serveur reste l'autorité : un refus de sa part est toujours affiché tel quel.
+ */
+import type { Status, Task } from '@/api'
+
+export const TRANSITIONS: Record<Status, Status[]> = {
+  backlog: ['todo', 'in_progress', 'dropped'],
+  todo: ['backlog', 'in_progress', 'dropped'],
+  in_progress: ['todo', 'blocked', 'review', 'done', 'dropped'],
+  blocked: ['todo', 'in_progress', 'dropped'],
+  review: ['in_progress', 'done', 'dropped'],
+  done: ['in_progress'],
+  dropped: ['backlog'],
+}
+
+/** Tâche active : elle doit toujours porter une prochaine action. */
+export const ACTIVE_STATUSES: Status[] = ['todo', 'in_progress', 'blocked', 'review']
+
+const GATED_BY_DEPENDENCIES: Status[] = ['in_progress', 'review', 'done']
+const DEPENDENCY_RESOLVED: Status[] = ['done', 'dropped']
+
+/** Si des dépendances non traitées interdisent ce passage, la raison ; sinon null. */
+export function dependencyBlock(task: Task, to: Status, all: Task[]): string | null {
+  // Rouvrir un prérequis traité laisserait ses dépendantes avancées sans prérequis (serveur :
+  // reopen_with_advanced_dependents).
+  if (DEPENDENCY_RESOLVED.includes(task.status) && !DEPENDENCY_RESOLVED.includes(to)) {
+    const advanced = all.filter(
+      (t) => t.depends_on.includes(task.id) && GATED_BY_DEPENDENCIES.includes(t.status),
+    )
+    if (advanced.length) {
+      const names = advanced.map((t) => t.title).join(', ')
+      const verbs = advanced.length > 1 ? 'en dépendent et ont' : 'en dépend et a'
+      return `Impossible de rouvrir : ${names} ${verbs} déjà avancé.`
+    }
+  }
+  if (!GATED_BY_DEPENDENCIES.includes(to)) return null
+  const pending = task.depends_on
+    .map((id) => all.find((t) => t.id === id))
+    .filter((t): t is Task => !!t && !DEPENDENCY_RESOLVED.includes(t.status))
+  return pending.length ? `En attente de : ${pending.map((t) => t.title).join(', ')}.` : null
+}
+
+/**
+ * Tâches que `task` peut accepter comme nouvelle dépendance, selon les mêmes règles que le
+ * serveur : pas elle-même, pas une dépendance existante, pas de cycle, et une tâche déjà
+ * avancée ne peut attendre qu'un prérequis déjà traité.
+ */
+export function dependencyCandidates(task: Task, all: Task[]): Task[] {
+  const byId = new Map(all.map((t) => [t.id, t]))
+  const reachesTask = (start: Task): boolean => {
+    const seen = new Set<string>()
+    const stack = [start]
+    while (stack.length) {
+      const current = stack.pop()!
+      if (current.id === task.id) return true
+      if (seen.has(current.id)) continue
+      seen.add(current.id)
+      for (const id of current.depends_on) {
+        const next = byId.get(id)
+        if (next) stack.push(next)
+      }
+    }
+    return false
+  }
+  const advanced = GATED_BY_DEPENDENCIES.includes(task.status)
+  return all.filter(
+    (t) =>
+      t.id !== task.id &&
+      !task.depends_on.includes(t.id) &&
+      (!advanced || DEPENDENCY_RESOLVED.includes(t.status)) &&
+      !reachesTask(t),
+  )
+}
+
+export function canMove(from: Status, to: Status): boolean {
+  return TRANSITIONS[from].includes(to)
+}
+
+/** Ce qu'il faut demander à Loïc avant d'envoyer le déplacement. */
+export type MoveNeeds = {
+  nextAction: boolean
+  block: boolean
+  reason: boolean
+  /** Une preuve est attendue et aucune n'est jointe : sans preuve, la tâche ira « À vérifier ». */
+  evidence: boolean
+  /** Préparée « principale » alors qu'une autre l'est déjà en cours : démarrer en auxiliaire ? */
+  mainTaken: boolean
+}
+
+export function moveNeeds(task: Task, to: Status, all: Task[] = []): MoveNeeds {
+  return {
+    mainTaken:
+      to === 'in_progress' &&
+      task.operation_role === 'main' &&
+      all.some(
+        (t) =>
+          t.id !== task.id &&
+          t.status === 'in_progress' &&
+          t.operation_role === 'main' &&
+          t.human_owner === task.human_owner,
+      ),
+    nextAction: ACTIVE_STATUSES.includes(to) && !task.next_action?.trim(),
+    block: to === 'blocked',
+    reason: to === 'dropped',
+    evidence: to === 'done' && !!task.expected_evidence?.trim() && task.evidence.length === 0,
+  }
+}
+
+export function needsPrompt(needs: MoveNeeds): boolean {
+  return needs.nextAction || needs.block || needs.reason || needs.evidence || needs.mainTaken
+}
