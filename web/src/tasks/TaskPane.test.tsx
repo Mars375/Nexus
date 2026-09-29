@@ -97,3 +97,23 @@ test('un choix de dépendance devenu invalide reste affiché, avec sa raison, et
   expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   expect(add).toBeEnabled()
 })
+
+test('un cycle apparu pendant la sélection est expliqué et bloque l’ajout', () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json([])))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const current = { ...TASK, status: 'todo' as const }
+  const other = { ...TASK, id: 'nx-task-2', title: 'Autre', status: 'todo' as const }
+  const pane = (tasks: Task[]) => (
+    <QueryClientProvider client={client}>
+      <TaskPane task={current} tasks={tasks} onClose={() => {}} />
+    </QueryClientProvider>
+  )
+  const { rerender } = render(pane([current, other]))
+  fireEvent.change(screen.getByLabelText('Tâche dont celle-ci dépend'), { target: { value: 'nx-task-2' } })
+
+  // Un agent fait dépendre « Autre » de cette tâche : l'ajout créerait un cycle.
+  rerender(pane([current, { ...other, depends_on: [current.id] }]))
+
+  expect(screen.getByRole('alert')).toHaveTextContent(/cycle/)
+  expect(screen.getByRole('button', { name: 'Ajouter' })).toBeDisabled()
+})

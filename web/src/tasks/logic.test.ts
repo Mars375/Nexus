@@ -216,3 +216,13 @@ describe('raison du refus d’une dépendance', () => {
     expect(dependencyRefusal(current, 'f', [current, finished])).toBeNull()
   })
 })
+
+test('les candidats se calculent en temps linéaire sur un grand tableau', () => {
+  const many = Array.from({ length: 5000 }, (_, i) =>
+    task({ id: `t${i}`, status: 'done', depends_on: i > 0 ? [`t${i - 1}`] : [] }),
+  )
+  const current = task({ id: 'c', status: 'todo' })
+  const start = performance.now()
+  expect(dependencyCandidates(current, [current, ...many])).toHaveLength(5000)
+  expect(performance.now() - start).toBeLessThan(500)
+})
