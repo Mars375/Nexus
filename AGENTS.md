@@ -8,6 +8,7 @@
 - Schema changes go through a new Alembic migration in `server/src/nexus/migrations/versions/`; the server applies migrations on startup.
 - The UI only talks to the FastAPI API — no browser-only APIs, so the same UI can ship inside Tauri later (ADR-017).
 - Product docs and user-facing text are in French (ADR-009); identifiers stay in English.
+- Before opening a PR, walk through `docs/agents/review-checklist.md` (secrets, validation, concurrency, invariants, provenance, UI with changing data) and note in the PR body what was checked. Plan edge cases first and write their tests before the code.
 
 ## Agent skills
 
