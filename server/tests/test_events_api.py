@@ -812,7 +812,10 @@ def test_effect_is_retried_after_a_concurrent_task_update(client, monkeypatch):
     assert (t["status"], t["next_action"]) == ("done", "relire")
 
 
-@pytest.mark.parametrize("origin", ["token=ghp_" + "S" * 36, "Hermes Adapter!", ""])
+@pytest.mark.parametrize(
+    "origin",
+    ["token=ghp_" + "S" * 36, "Hermes Adapter!", "", "sk-proj-" + "a1b2c3d4e5f6g7h8i9j0k1l2"],
+)
 def test_adapter_origin_must_be_a_plain_adapter_name(client, origin):
     from datetime import datetime
 
@@ -828,3 +831,40 @@ def test_adapter_origin_must_be_a_plain_adapter_name(client, origin):
                             origin=origin)
     assert refused.value.code == "invalid_origin"
     assert "S" * 36 not in refused.value.message
+
+
+def test_adapter_origin_is_stored_and_returned(client):
+    from datetime import datetime
+
+    from nexus.events import service
+    from nexus.events.rules import Envelope
+
+    ref = task(client)
+    with client.app.state.sessionmaker() as session:
+        event, created = service.publish(
+            session, Envelope(actor="helios", kind="claimed", subject="s", task=ref),
+            "evt_hermes", datetime.fromisoformat(AT), origin="hermes",
+        )
+        session.commit()
+        event_id = event.id
+    assert created
+    assert client.get(f"/api/events/nx-evt-{event_id}").json()["origin"] == "hermes"
+
+
+def test_effect_gives_up_after_repeated_version_conflicts(client, monkeypatch):
+    from sqlalchemy.orm.exc import StaleDataError
+
+    from nexus.events import service
+
+    ref = task(client, next_action="x")
+    publish(client, "working", task=ref, payload={"run_ref": "r1"})
+
+    def always_stale(*_args, **_kwargs):
+        raise StaleDataError("conflit simulé")
+
+    monkeypatch.setattr(service.tasks, "change_status", always_stale)
+    done = publish(client, "done", "fini", task=ref, run="r1", evidence=["commit:abc"])
+
+    assert done.status_code == 201, done.text
+    assert done.json()["effects"] == [{"action": "status:done", "applied": False,
+                                       "reason": "conflit en base : trop d'écritures concurrentes"}]

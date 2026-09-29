@@ -69,7 +69,7 @@ def publish(
             "publish() demande une session dédiée : un rollback de course annulerait les "
             "écritures en attente de l'appelant"
         )
-    if not isinstance(origin, str) or not _ORIGIN.fullmatch(origin):
+    if not isinstance(origin, str) or not _ORIGIN.fullmatch(origin) or secrets.redact(origin)[1]:
         # Stockée et renvoyée telle quelle : seul un nom d'adaptateur est accepté (ADR-006).
         raise RuleViolation("invalid_origin", "origin : nom d'adaptateur invalide")
     redacted: dict[str, list[str]] = {}
