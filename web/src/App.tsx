@@ -1,53 +1,67 @@
-import { useQuery } from '@tanstack/react-query'
-import { fetchHealth, type Health } from './api'
-import { useNow } from './useNow'
+import clsx from 'clsx'
+import { useEffect, useState } from 'react'
+import { Toaster } from 'sonner'
+import { HealthStatus } from './HealthStatus'
+import { WorkView } from './tasks/WorkView'
 
-function age(iso: string, now: number): string {
-  const seconds = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000))
-  if (seconds < 60) return `il y a ${seconds} s`
-  const minutes = Math.round(seconds / 60)
-  if (minutes < 60) return `il y a ${minutes} min`
-  return `il y a ${Math.round(minutes / 60)} h`
-}
+type View = 'maintenant' | 'travail'
 
-function provenance({ db, backup }: Health, now: number): string {
-  let text = `source : ${db.source} · mesuré ${age(db.measured_at, now)}`
-  if (backup.last_at) text += ` · dernière sauvegarde ${age(backup.last_at, now)}`
-  return text
+const VIEWS: { id: View; label: string }[] = [
+  { id: 'maintenant', label: 'Maintenant' },
+  { id: 'travail', label: 'Travail' },
+]
+
+function currentView(): View {
+  return window.location.hash === '#/maintenant' ? 'maintenant' : 'travail'
 }
 
 export default function App() {
-  const health = useQuery({
-    queryKey: ['health'],
-    queryFn: ({ signal }) => fetchHealth(signal),
-    refetchInterval: 10_000,
-    // Serveur local : toujours tenter le contrôle (pas de pause « hors ligne »),
-    // et un échec compte tout de suite — l'état passe à unknown sans attendre des reprises.
-    networkMode: 'always',
-    retry: false,
-  })
-  const now = useNow()
+  const [view, setView] = useState<View>(currentView)
 
-  let status: string
-  let detail: string | null = null
-  if (health.isPending) {
-    status = 'Vérification…'
-  } else if (health.isError) {
-    // ADR-005 : unknown, avec la date du dernier contrôle réussi s'il y en a eu un.
-    status = 'Serveur injoignable — état unknown'
-    detail = health.data
-      ? `dernier contrôle réussi — ${provenance(health.data, now)}`
-      : 'aucun contrôle réussi pour le moment'
-  } else {
-    status = health.data.db.status === 'ok' ? 'Base OK' : 'Base : état unknown'
-    detail = provenance(health.data, now)
-  }
+  useEffect(() => {
+    const onHash = () => setView(currentView())
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
 
   return (
-    <main>
-      <h1>Nexus</h1>
-      <p role="status">{status}</p>
-      {detail && <p className="provenance">{detail}</p>}
-    </main>
+    <div className="flex h-full flex-col">
+      <div className="flex min-h-0 flex-1">
+        <nav aria-label="Vues" className="flex w-44 shrink-0 flex-col gap-0.5 border-r border-line bg-surface p-2">
+          <p className="px-2.5 pt-1.5 pb-3 font-display text-base font-semibold tracking-tight">Nexus</p>
+          {VIEWS.map(({ id, label }) => (
+            <a
+              key={id}
+              href={`#/${id}`}
+              aria-current={view === id ? 'page' : undefined}
+              className={clsx(
+                'relative rounded-md px-2.5 py-1.5 text-sm transition-colors duration-100',
+                view === id ? 'bg-sunken font-medium text-ink' : 'text-muted hover:bg-sunken hover:text-ink',
+              )}
+            >
+              {view === id && (
+                <span aria-hidden className="absolute inset-y-1.5 left-0 w-[3px] rounded-r bg-accent" />
+              )}
+              {label}
+            </a>
+          ))}
+        </nav>
+        <main className="flex min-w-0 flex-1 flex-col">
+          {view === 'travail' ? (
+            <WorkView />
+          ) : (
+            <div className="p-5">
+              <h1 className="font-display text-lg font-semibold">Maintenant</h1>
+              <p className="mt-2 max-w-prose text-sm text-muted">
+                Bientôt ici : l'opération principale, les agents actifs, les blocages et ce qui
+                t'attend.
+              </p>
+            </div>
+          )}
+        </main>
+      </div>
+      <HealthStatus />
+      <Toaster position="bottom-center" offset={40} theme="system" richColors closeButton />
+    </div>
   )
 }
