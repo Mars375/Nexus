@@ -1,33 +1,141 @@
-/* Base minimale — le système de design arrive avec la vue Travail (#3). */
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Nexus — tokens. Neutres façon Mica (Windows 11), un seul accent : le cobalt de
+ * l'opération principale. L'ambre signale ce qui t'attend ou bloque ; le rouge, le retard.
+ */
 :root {
-  --bg: #fafaf9;
-  --fg: #1c1917;
-  --muted: #78716c;
-  color-scheme: light dark;
-  font-family: system-ui, 'Segoe UI', sans-serif;
-  background: var(--bg);
-  color: var(--fg);
+  --paper: #f3f4f6;
+  --surface: #ffffff;
+  --surface-sunken: #eceef1;
+  --ink: #1b1f24;
+  --muted: #5b6470;
+  --line: #d9dde3;
+  --accent: #2f5bd3;
+  --accent-soft: #e6ecfb;
+  --on-accent: #ffffff;
+  --attention: #9a5b00;
+  --attention-soft: #fdf1dc;
+  --danger: #b42318;
+  --ok: #1f7a4d;
+
+  --agent-loic: #1b1f24;
+  --agent-helios: #b7860b;
+  --agent-mnema: #7c5cc4;
+  --agent-aether: #2a7fc8;
+  --agent-artemis: #7d8797;
+  --agent-claude: #a0674b;
+  --agent-codex: #178a6b;
+  --agent-orca: #1d6f8a;
+  --agent-hermes: #6b7f2a;
+
+  color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0c0a09;
-    --fg: #f5f5f4;
-    --muted: #a8a29e;
+    --paper: #1e1f22;
+    --surface: #2a2b2f;
+    --surface-sunken: #242528;
+    --ink: #edeef0;
+    --muted: #9aa1ab;
+    --line: #3a3c42;
+    --accent: #7c9bff;
+    --accent-soft: #2a3352;
+    --on-accent: #10141f;
+    --attention: #f0b75a;
+    --attention-soft: #3a2f1d;
+    --danger: #ff7b72;
+    --ok: #5cc98e;
+
+    --agent-loic: #edeef0;
+    --agent-helios: #e6b93d;
+    --agent-mnema: #a98cf0;
+    --agent-aether: #6fb4f2;
+    --agent-artemis: #aab3c2;
+    --agent-claude: #d1977a;
+    --agent-codex: #4cc39f;
+    --agent-orca: #5bb0cb;
+    --agent-hermes: #a6bb57;
+
+    color-scheme: dark;
   }
 }
 
-body {
-  margin: 0;
+@theme inline {
+  --font-sans: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-display: 'Segoe UI Variable Display', 'Segoe UI Variable', 'Segoe UI', system-ui,
+    sans-serif;
+
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-sunken: var(--surface-sunken);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-on-accent: var(--on-accent);
+  --color-attention: var(--attention);
+  --color-attention-soft: var(--attention-soft);
+  --color-danger: var(--danger);
+  --color-ok: var(--ok);
+
+  --text-2xs: 0.75rem;
+  --text-xs: 0.8125rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.25rem;
 }
 
-main {
-  padding: 2rem 1rem;
-  max-width: 48rem;
-  margin: 0 auto;
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 0.875rem;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 }
 
-.provenance {
-  color: var(--muted);
-  font-size: 0.875rem;
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 6px)) scale(0.98);
+  }
+}
+
+@keyframes pane-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
