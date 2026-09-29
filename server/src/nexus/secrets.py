@@ -36,12 +36,15 @@ _LABEL = (
     r"(?:[\w.-]*[_.-])?"
     r"(?:password|passwd|pwd|secret|api[ _-]?key|access[ _-]?token|private[ _-]?key|token"
     # Codes à usage unique (SECURITY §1 : les codes 2FA sont des secrets).
-    r"|otp|totp|2fa|mfa|verification[ _-]?code|one[ _-]?time[ _-]?code)"
+    r"|otp|totp|2fa|mfa|verification[ _-]?code|one[ _-]?time[ _-]?code"
+    # En-têtes HTTP qui portent un identifiant, quel que soit le schéma (Basic, Digest…).
+    r"|authorization|cookie)"
     r"(?:[_.-][\w.-]*)?"
     # camelCase / PascalCase (clientSecret, refreshToken, dbPassword) : la majuscule sert de
     # séparateur, sensible à la casse pour que « maxTokens » ou « tokenizer » restent intacts.
     r"|(?-i:[A-Za-z][A-Za-z0-9]*?"
-    r"(?:Password|Passwd|Pwd|Secret|ApiKey|AccessToken|PrivateKey|Token|Otp|Totp|Mfa)"
+    r"(?:Password|Passwd|Pwd|Secret|ApiKey|AccessToken|PrivateKey|Token|Otp|Totp|Mfa"
+    r"|Authorization|Cookie)"
     r"(?:[A-Z][A-Za-z0-9]*)?)"
     r"|mot de passe|mdp|code de vérification"
 )
@@ -51,7 +54,9 @@ _CREDENTIAL_KEY = re.compile(rf"(?i){_LABEL}")
 _ASSIGNMENT = re.compile(
     rf"(?i)(?<![\w.-])({_LABEL})"
     r"([\"']?\s*[:=]\s*)"
-    r"(?:\"([^\"]*)\"|'([^']*)'|([^\s,;}\"']+))"
+    # Valeur nue : un schéma d'authentification éventuel (Basic xyz) en fait partie.
+    r"(?:\"([^\"]*)\"|'([^']*)'"
+    r"|((?:(?:basic|bearer|digest|negotiate|ntlm)\s+)?[^\s,;}\"']+))"
 )
 
 

@@ -6,9 +6,39 @@ jamais recopiée dans la réponse, seulement le champ et la raison.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, model_validator
+
 from nexus import secrets
+
+# Moitié de paire UTF-16 isolée (« \ud800 » en JSON) : le décodeur l'accepte, mais elle ne
+# s'encode pas en UTF-8 — stockée, elle ferait échouer chaque réponse qui la relit.
+_LONE_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def _has_lone_surrogate(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(_LONE_SURROGATE.search(value))
+    if isinstance(value, dict):
+        return any(_has_lone_surrogate(k) or _has_lone_surrogate(v) for k, v in value.items())
+    if isinstance(value, list):
+        return any(_has_lone_surrogate(v) for v in value)
+    return False
+
+
+class InputModel(BaseModel):
+    """Base de tout corps de requête : champ inconnu refusé, texte non encodable refusé."""
+
+    model_config = ConfigDict(extra="forbid")  # un champ inconnu n'est jamais ignoré en silence
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_lone_surrogates(cls, data: Any) -> Any:
+        if _has_lone_surrogate(data):
+            raise ValueError("texte invalide : caractère Unicode isolé (demi-paire UTF-16)")
+        return data
 
 _MESSAGES = {
     "missing": "champ obligatoire",

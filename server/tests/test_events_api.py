@@ -660,3 +660,35 @@ def test_unknown_field_named_like_a_secret_is_not_echoed(client):
     assert res.status_code == 422
     assert SECRET not in res.text
     assert "champ inconnu" in res.text
+
+
+@pytest.mark.parametrize(
+    "fragment",
+    [
+        r'"payload": {"percent": 5, "x": "\ud800"}',
+        r'"payload": {"percent": 5, "\udfff": 1}',
+        r'"body": "a\ud800b"',
+    ],
+)
+def test_lone_surrogates_are_refused_before_storage(client, fragment):
+    ref = task(client)
+    raw = (
+        f'{{"id": "evt_s", "at": "{AT}", "actor": "helios", "kind": "progress", '
+        f'"subject": "s", "task": "{ref}", {fragment}}}'
+    )
+    res = client.post("/api/events", content=raw, headers={"Content-Type": "application/json"})
+
+    assert res.status_code == 422, res.text
+    assert client.get("/api/events", params={"task": ref}).status_code == 200
+    assert client.get("/api/events", params={"task": ref}).json() == []
+
+
+def test_valid_surrogate_pair_is_an_ordinary_character(client):
+    ref = task(client)
+    raw = (
+        f'{{"id": "evt_e", "at": "{AT}", "actor": "helios", "kind": "progress", '
+        rf'"subject": "fusée \ud83d\ude80", "task": "{ref}", "payload": {{"percent": 5}}}}'
+    )
+    res = client.post("/api/events", content=raw, headers={"Content-Type": "application/json"})
+    assert res.status_code == 201, res.text
+    assert res.json()["subject"] == "fusée 🚀"

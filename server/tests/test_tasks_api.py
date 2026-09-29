@@ -551,3 +551,10 @@ def test_role_can_be_prepared_on_upcoming_task(client):
     ref = create(client, status="todo", next_action="x")["id"]
     res = client.patch(f"/api/tasks/{ref}", json={"operation_role": "auxiliary"})
     assert res.status_code == 200
+
+
+def test_lone_surrogate_in_task_text_is_refused(client):
+    raw = r'{"title": "x\ud800", "objective": "y"}'
+    res = client.post("/api/tasks", content=raw, headers={"Content-Type": "application/json"})
+    assert res.status_code == 422, res.text
+    assert client.get("/api/tasks").status_code == 200

@@ -10,7 +10,6 @@ from fastapi import APIRouter, Header, HTTPException, Query, Response, status
 from pydantic import (
     AwareDatetime,
     BaseModel,
-    ConfigDict,
     Field,
     StringConstraints,
     field_validator,
@@ -22,6 +21,7 @@ from nexus.events import service
 from nexus.events.rules import Envelope
 from nexus.models import Event
 from nexus.tasks.api import SessionDep, commit
+from nexus.validation import InputModel
 
 Kind = Literal[
     "claimed", "working", "progress", "question", "blocked", "needs_human", "handoff",
@@ -32,10 +32,9 @@ Ref = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_
 router = APIRouter(prefix="/api/events", tags=["événements"])
 
 
-class EventIn(BaseModel):
+class EventIn(InputModel):
     """Enveloppe EVENT-PROTOCOL §2."""
 
-    model_config = ConfigDict(extra="forbid")  # un champ inconnu n'est jamais ignoré
 
     v: Literal[1] = 1
     id: str = Field(min_length=1, max_length=128, description="identifiant unique chez l'acteur")

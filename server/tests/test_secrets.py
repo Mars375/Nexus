@@ -155,3 +155,24 @@ def test_camel_case_words_that_are_not_credentials_are_untouched(text):
 
 def test_camel_case_counters_are_not_credential_keys():
     assert redact_value({"maxTokens": 3000}) == ({"maxTokens": 3000}, [])
+
+
+@pytest.mark.parametrize(
+    "key", ["Authorization", "authorization", "Proxy-Authorization", "proxyAuthorization", "Cookie"]
+)
+def test_http_credential_headers_are_masked_whatever_the_format(key):
+    cleaned, found = redact_value({key: "Basic dXNlcjpwYXNz"})
+    assert cleaned == {key: REDACTED}
+    assert found == ["credential"]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Authorization: Basic dXNlcjpwYXNz", "Authorization: [REDACTED]"),
+        ("Proxy-Authorization: Digest abc123", "Proxy-Authorization: [REDACTED]"),
+        ("Cookie: session=abc123", "Cookie: [REDACTED]"),
+    ],
+)
+def test_http_credential_headers_in_text_are_masked(text, expected):
+    assert redact(text) == (expected, ["credential"])
