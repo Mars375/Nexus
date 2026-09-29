@@ -31,9 +31,11 @@ _URL_CREDENTIALS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^\s:/@]+:)([^\s@/]+)
 # En-tête HTTP d'identifiant écrit tel quel (« Authorization: Digest username="…", … »,
 # « Cookie: a=1; b=2 ») : sa valeur court jusqu'à la fin de la ligne, virgules et ; compris,
 # et continue sur les lignes repliées (qui commencent par une espace ou une tabulation).
+# Forme citée comprise (« "Authorization": "Digest username=\"…\"" ») : des guillemets
+# échappés dans la valeur l'arrêteraient sinon au premier.
 _HEADER_CREDENTIALS = re.compile(
-    r"(?im)(?<![\w.-])((?:proxy[_-]?)?authorization|(?:set[_-]?)?cookie)(\s*:\s*)(?![\"'\s])"
-    r"([^\r\n]+(?:\r?\n[ \t][^\r\n]*)*)"
+    r"(?im)(?<![\w.-])((?:proxy[_-]?)?authorization|(?:set[_-]?)?cookie)([\"']?\s*:\s*)"
+    r"(?=\S)([^\r\n]+(?:\r?\n[ \t][^\r\n]*)*)"
 )
 
 # « mot de passe : xyz », « token=abc »… : on masque la valeur, on garde l'étiquette.

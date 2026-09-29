@@ -868,3 +868,55 @@ def test_effect_gives_up_after_repeated_version_conflicts(client, monkeypatch):
     assert done.status_code == 201, done.text
     assert done.json()["effects"] == [{"action": "status:done", "applied": False,
                                        "reason": "conflit en base : trop d'écritures concurrentes"}]
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"payload": {"x": "\ud800"}},
+        {"payload": {"x": float("nan")}},
+        {"body": "a\udfffb"},
+        {"payload": {"\ud800": 1}},
+    ],
+)
+def test_adapter_payload_is_checked_like_the_api(client, fields):
+    from datetime import datetime
+
+    from nexus.events import service
+    from nexus.events.rules import Envelope
+    from nexus.tasks.rules import RuleViolation
+
+    ref = task(client)
+    envelope = Envelope(actor="helios", kind="progress", subject="s", task=ref,
+                        **({"body": "avance"} | fields))
+    with client.app.state.sessionmaker() as session:
+        with pytest.raises(RuleViolation):
+            service.publish(session, envelope, "evt_adapter", datetime.fromisoformat(AT),
+                            origin="hermes")
+    assert client.get("/api/events", params={"task": ref}).status_code == 200
+
+
+def test_same_id_from_another_origin_is_not_a_replay(client):
+    from datetime import datetime
+
+    from nexus.events import service
+    from nexus.events.rules import Envelope
+    from nexus.tasks.rules import RuleViolation
+
+    ref = task(client)
+    first = publish(client, "claimed", task=ref, id="evt_origin")
+    assert first.status_code == 201
+    with client.app.state.sessionmaker() as session:
+        with pytest.raises(RuleViolation) as refused:
+            service.publish(session, Envelope(actor="helios", kind="claimed", subject="s",
+                                              task=ref), "evt_origin",
+                            datetime.fromisoformat(AT), origin="hermes")
+    assert refused.value.code == "event_id_reused"
+
+
+@pytest.mark.parametrize("event_id", ["   ", "[REDACTED]"])
+def test_blank_or_redacted_event_id_is_refused(client, event_id):
+    ref = task(client)
+    res = publish(client, "claimed", task=ref, id=event_id)
+    assert res.status_code in (409, 422), res.text
+    assert client.get("/api/events", params={"task": ref}).json() == []

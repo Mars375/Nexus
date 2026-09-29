@@ -6,6 +6,7 @@ jamais recopiée dans la réponse, seulement le champ et la raison.
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
@@ -26,6 +27,18 @@ def _has_lone_surrogate(value: Any) -> bool:
     if isinstance(value, list):
         return any(_has_lone_surrogate(v) for v in value)
     return False
+
+
+def has_unencodable(value: Any) -> bool:
+    """Demi-paire UTF-16 ou nombre non fini, n'importe où (clés comprises) : décodé sans
+    erreur, mais impossible à renvoyer en JSON. Sert aussi hors de l'API (adaptateurs)."""
+    if isinstance(value, float):
+        return not math.isfinite(value)
+    if isinstance(value, dict):
+        return any(has_unencodable(k) or has_unencodable(v) for k, v in value.items())
+    if isinstance(value, (list, tuple)):
+        return any(has_unencodable(v) for v in value)
+    return _has_lone_surrogate(value)
 
 
 class InputModel(BaseModel):

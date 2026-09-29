@@ -25,6 +25,7 @@ from nexus.events.rules import Envelope
 from nexus.models import Event, Task
 from nexus.tasks import service as tasks
 from nexus.tasks.rules import RuleViolation
+from nexus.validation import has_unencodable
 
 log = logging.getLogger("nexus.events")
 
@@ -72,6 +73,14 @@ def publish(
     if not isinstance(origin, str) or not _ORIGIN.fullmatch(origin) or secrets.redact(origin)[1]:
         # Stockée et renvoyée telle quelle : seul un nom d'adaptateur est accepté (ADR-006).
         raise RuleViolation("invalid_origin", "origin : nom d'adaptateur invalide")
+    incoming = (envelope.subject, envelope.body, envelope.payload, envelope.evidence,
+                envelope.needs, envelope.run, actor_event_id)
+    if has_unencodable(incoming):
+        # L'API le refuse déjà (InputModel) ; un adaptateur qui appelle publish() directement
+        # ferait sinon échouer chaque lecture de l'événement.
+        raise RuleViolation(
+            "invalid_value", "valeur non encodable : demi-paire UTF-16, NaN ou Infinity"
+        )
     redacted: dict[str, list[str]] = {}
     raw_run_refs = (envelope.run, envelope.payload.get("run_ref"))
     # Tout ce qui sera stocké passe par le scanner, identifiants compris (ADR-006).
@@ -89,6 +98,10 @@ def publish(
             "secret_in_event_id", "l'identifiant de l'événement contient un secret : change-le"
         )
     actor_event_id, envelope.run = clean["id"], clean["run"]
+    if secrets.is_blank(actor_event_id):
+        # Vide ou déjà « [REDACTED] » : ce serait la même clé d'idempotence pour tout le monde.
+        raise RuleViolation("event_id_required", "id : identifiant lisible requis")
+    actor_event_id = actor_event_id.strip()
     if (envelope.run, envelope.payload.get("run_ref")) != raw_run_refs:
         # Même raison que pour l'identifiant : "run token=alpha" et "run token=beta" deviendraient
         # le même run une fois masqués, et les clôtures ne pourraient plus les distinguer.
@@ -103,7 +116,8 @@ def publish(
         select(Event).where(Event.actor == envelope.actor, Event.actor_event_id == actor_event_id)
     )
     if existing is not None:
-        if _same(existing, envelope, task) and _same_instant(existing.at, at):
+        if (_same(existing, envelope, task) and _same_instant(existing.at, at)
+                and existing.origin == origin):
             return existing, False
         raise RuleViolation(
             "event_id_reused",
@@ -126,7 +140,7 @@ def publish(
                 session.flush()
                 break
             except StaleDataError:
-                winner = _winner_of_race(session, envelope, actor_event_id, at, task)
+                winner = _winner_of_race(session, envelope, actor_event_id, at, task, origin)
                 if winner is not None:
                     return winner, False  # renvoi identique : relecture
                 task = _task(session, envelope.task)
@@ -150,7 +164,7 @@ def publish(
     try:
         session.flush()
     except IntegrityError as exc:  # course avec un renvoi simultané du même identifiant
-        winner = _winner_of_race(session, envelope, actor_event_id, at, task)
+        winner = _winner_of_race(session, envelope, actor_event_id, at, task, origin)
         if winner is not None:
             return winner, False
         raise RuleViolation("event_id_reused", "identifiant d'événement déjà utilisé") from exc
@@ -166,14 +180,20 @@ def publish(
 
 
 def _winner_of_race(
-    session: Session, e: Envelope, actor_event_id: str, at: datetime, task: Task | None
+    session: Session,
+    e: Envelope,
+    actor_event_id: str,
+    at: datetime,
+    task: Task | None,
+    origin: str,
 ) -> Event | None:
     """Après un conflit d'écriture : l'événement gagnant, s'il est identique à celui-ci."""
     session.rollback()
     winner = session.scalar(
         select(Event).where(Event.actor == e.actor, Event.actor_event_id == actor_event_id)
     )
-    if winner is not None and _same(winner, e, task) and _same_instant(winner.at, at):
+    if (winner is not None and _same(winner, e, task) and _same_instant(winner.at, at)
+            and winner.origin == origin):
         return winner
     return None
 

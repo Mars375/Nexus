@@ -216,3 +216,16 @@ def test_folded_http_credential_header_is_masked_across_continuation_lines():
     cleaned, found = redact(text)
     assert cleaned == "Authorization: [REDACTED]\nsuite"
     assert "deadbeef" not in cleaned and "credential" in found
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'Authorization: "Digest username=\\"Mufasa\\", realm=\\"r\\", response=\\"deadbeef\\""',
+        '{"Authorization": "Digest username=\\"Mufasa\\", response=\\"deadbeef\\""}',
+    ],
+)
+def test_quoted_http_credential_header_values_are_masked_whole(text):
+    cleaned, found = redact(text)
+    assert "Mufasa" not in cleaned and "deadbeef" not in cleaned
+    assert "credential" in found
