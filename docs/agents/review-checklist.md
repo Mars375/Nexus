@@ -11,9 +11,9 @@ How to use it:
 
 ## 1. Secrets (ADR-006 — nothing secret is ever stored, logged or echoed)
 
-- [ ] Every value that reaches storage goes through `nexus.secrets` first: text fields, lists, **dict keys** and **values under credential-named keys** (`{"password": …}`, lists and objects included), identifiers (`id`, `run`), references.
+- [ ] Every value that reaches storage goes through `nexus.secrets` first: text fields, lists, **dict keys** and **values under credential-named keys** (`{"password": …}`, lists and objects included; every naming style: `CLIENT_SECRET`, `client-secret`, `clientSecret`, `ClientSecret`), identifiers (`id`, `run`), references.
 - [ ] Nothing received is echoed back in a response: validation errors (422), not-found messages (404), refusals (409), headers (`X-Nexus-Actor`). Use generic messages or known-safe values only.
-- [ ] Validation that happens *before* redaction (Pydantic) never returns the raw input (`RequestValidationError` handler strips `input`).
+- [ ] Validation that happens *before* redaction (Pydantic) never returns the raw input (`RequestValidationError` handler strips `input`) **nor a raw field name**: an unknown key can itself be a secret, so every part of `loc` goes through the scanner before it reaches `loc` or `msg`.
 - [ ] Any field used to compare or look things up (event `id`, `run`, `payload.run_ref`, future references) that contains a secret is refused, not masked: two masked values (`run token=alpha`, `run token=beta`) would compare equal.
 - [ ] A value reduced to `[REDACTED]` (plus its label, e.g. `password=[REDACTED]`) counts as **empty** wherever a readable value is required (`secrets.is_blank`).
 - [ ] Teaching the scanner a new secret *format* (a token shape it does not recognise yet) is tracked in issue #15 and does not block a PR — Loïc's decision. This never excuses a new data path: anything the PR stores, logs or echoes still goes through `nexus.secrets`.
