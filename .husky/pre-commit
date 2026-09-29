@@ -1,0 +1,66 @@
+# Nexus — contrôles avant chaque commit (voir docs/agents/review-checklist.md).
+set -e
+
+# 1. Artefacts de tests et bases locales : jamais commités.
+# Ajouts, copies, modifications et renommages (pour un renommage, c'est la destination).
+blocked=$(git diff --cached --name-only --diff-filter=ACMR \
+  | grep -E '^web/(e2e/screenshots|test-results|playwright-report)/|\.db(-wal|-shm)?$' || true)
+if [ -n "$blocked" ]; then
+  echo "Commit refusé : artefacts de tests ou base locale dans l'index :"
+  echo "$blocked"
+  echo "Retire-les avec : git restore --staged <fichier>"
+  exit 1
+fi
+
+GITLEAKS=$(command -v gitleaks || true)
+if [ -z "$GITLEAKS" ] && [ -n "$LOCALAPPDATA" ]; then
+  lad=$(cygpath -u "$LOCALAPPDATA" 2>/dev/null || echo "$LOCALAPPDATA")
+  for candidate in "$lad"/Microsoft/WinGet/Links/gitleaks.exe \
+                   "$lad"/Microsoft/WinGet/Packages/Gitleaks.Gitleaks_*/gitleaks.exe; do
+    if [ -x "$candidate" ]; then GITLEAKS="$candidate"; break; fi
+  done
+fi
+if [ -z "$GITLEAKS" ]; then
+  echo "Commit refusé : gitleaks introuvable. Installe-le (Windows : winget install Gitleaks.Gitleaks)."
+  exit 1
+fi
+
+# 2. Toutes les vérifications portent sur la version qui sera commitée : les modifications non
+#    indexées (patch) et les fichiers non suivis (archive) sont mis de côté, puis restaurés quoi
+#    qu'il arrive. Cela vaut aussi pour la configuration de gitleaks (.gitleaks.toml,
+#    .gitleaksignore) : une exception non indexée ne peut pas laisser passer un secret indexé.
+aside=$(mktemp -d)
+git diff --binary --no-color > "$aside/unstaged.patch"
+git ls-files --others --exclude-standard -z > "$aside/untracked.list"
+restore() {
+  ok=1
+  if [ -s "$aside/untracked.tar" ]; then
+    tar -xf "$aside/untracked.tar" || ok=0
+  fi
+  if [ -s "$aside/unstaged.patch" ]; then
+    git apply --whitespace=nowarn "$aside/unstaged.patch" || ok=0
+  fi
+  if [ $ok = 1 ]; then
+    rm -rf "$aside"
+  else
+    echo "Attention : travail non indexé conservé dans $aside (unstaged.patch, untracked.tar)."
+  fi
+}
+trap restore EXIT
+if [ -s "$aside/untracked.list" ]; then
+  tar --null -T "$aside/untracked.list" -cf "$aside/untracked.tar"
+  xargs -0 rm -f -- < "$aside/untracked.list"
+fi
+if [ -s "$aside/unstaged.patch" ]; then
+  git checkout -- .
+fi
+
+# 3. Secrets : gitleaks sur ce qui est indexé (ADR-006).
+"$GITLEAKS" git --pre-commit --staged --redact --no-banner --config .gitleaks.toml
+
+# 4. Lint des fichiers indexés (ruff, oxlint).
+pnpm exec lint-staged
+
+# 5. Typage et tests rapides. La suite Playwright se lance avant d'ouvrir la PR.
+pnpm typecheck
+pnpm test

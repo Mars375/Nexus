@@ -1,0 +1,6 @@
+# Scan de secrets (gitleaks) — lancé à chaque commit par .husky/pre-commit.
+# Règles par défaut de gitleaks, sans exception par chemin : dans les tests, les faux secrets
+# sont assemblés à l'exécution ("ghp_" + "A" * 36) pour ne jamais être écrits en clair.
+
+[extend]
+useDefault = true

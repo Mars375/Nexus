@@ -1,0 +1,4 @@
+{
+  "server/**/*.py": "uv run --directory server ruff check",
+  "web/src/**/*.{ts,tsx}": "pnpm --dir web exec oxlint"
+}
