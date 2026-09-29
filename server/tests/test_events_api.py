@@ -877,6 +877,7 @@ def test_effect_gives_up_after_repeated_version_conflicts(client, monkeypatch):
         {"payload": {"x": float("nan")}},
         {"body": "a\udfffb"},
         {"payload": {"\ud800": 1}},
+        {"payload": {"x": ("\ud800",)}},
     ],
 )
 def test_adapter_payload_is_checked_like_the_api(client, fields):
@@ -974,3 +975,29 @@ def test_already_in_target_status_is_judged_on_the_current_state(client, monkeyp
     }).json()
 
     assert codex["effects"][0]["reason"] != "déjà en blocked"
+
+
+def test_unreadable_evidence_on_a_task_already_in_review_is_refused(client):
+    ref = task(client, status="todo", next_action="x", expected_evidence="le commit")
+    client.post(f"/api/tasks/{ref}/status", json={"status": "in_progress"})
+    client.post(f"/api/tasks/{ref}/status", json={"status": "review"})
+
+    res = publish(client, "review", "preuve", task=ref, evidence=["commit: token=hunter2"])
+
+    # Une preuve illisible est refusée dès la validation de l'événement, avant tout effet.
+    assert res.json()["detail"]["code"] == "evidence_required"
+    assert "hunter2" not in res.text
+    assert client.get(f"/api/tasks/{ref}").json()["evidence"] == []
+
+
+def test_attach_evidence_refuses_references_without_identifier(client):
+    from nexus.models import Task
+    from nexus.tasks import service as tasks
+    from nexus.tasks.rules import RuleViolation
+
+    ref = task(client)
+    with client.app.state.sessionmaker() as session:
+        row = session.get(Task, int(ref.removeprefix("nx-task-")))
+        with pytest.raises(RuleViolation) as refused:
+            tasks.attach_evidence(session, row, ["commit: [REDACTED]"], "helios")
+    assert refused.value.code == "evidence_required"
