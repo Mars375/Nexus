@@ -89,6 +89,7 @@ def publish(
             f"{envelope.actor} : un événement ne se réécrit pas, publie une correction",
         )
     _refuse_noise(session, envelope, task, actor_event_id)
+    serialized_from = None  # date de modification avant le verrou, si le verrou a joué
     if kind == "working":
         # Ouverture de run sérialisée : toucher la tâche fait jouer son verrou de version. Si une
         # autre écriture passe entre-temps, on relit et on revérifie la règle au lieu de refuser :
@@ -97,6 +98,7 @@ def publish(
             _refuse_second_active_run(session, envelope, task)
             if task is None:
                 break
+            serialized_from = task.updated_at
             task.updated_at = now()
             try:
                 session.flush()
@@ -134,6 +136,10 @@ def publish(
     # écritures, un fait identique publié en parallèle sous un autre identifiant est vu ici.
     _refuse_noise(session, envelope, task, actor_event_id, exclude_id=event.id)
     event.effects = _apply_effects(session, event, envelope, task) if task else []
+    if serialized_from is not None and not any(e["applied"] for e in event.effects):
+        # Le verrou n'a servi qu'à sérialiser : sans changement réel, la tâche ne doit pas
+        # paraître récemment modifiée.
+        task.updated_at = serialized_from
     return event, True
 
 

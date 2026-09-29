@@ -588,3 +588,15 @@ def test_same_id_with_microseconds_apart_far_from_epoch_is_refused(client):
 
     other = client.post("/api/events", json=base | {"at": "5000-06-01T00:00:00.000002+00:00"})
     assert other.json()["detail"]["code"] == "event_id_reused"
+
+
+def test_refused_working_does_not_make_the_task_look_recently_modified(client):
+    prereq = task(client, title="Prérequis", status="todo", next_action="x")
+    ref = task(client, status="todo", next_action="x")
+    assert client.put(f"/api/tasks/{ref}/dependencies/{prereq}").status_code == 204
+    before = client.get(f"/api/tasks/{ref}").json()["updated_at"]
+
+    working = publish(client, "working", task=ref, payload={"run_ref": "r1"}).json()
+
+    assert working["effects"][0]["applied"] is False  # prérequis non traité
+    assert client.get(f"/api/tasks/{ref}").json()["updated_at"] == before
