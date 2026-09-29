@@ -202,14 +202,30 @@ def test_secret_only_cause_or_evidence_does_not_count(client):
     assert done["kind"] == "review"
 
 
-def test_secret_in_event_id_is_refused_and_run_is_masked(client):
+def test_secret_in_event_id_is_refused(client):
     ref = task(client, next_action="x")
     refused = publish(client, "claimed", task=ref, id=f"evt {SECRET}")
     assert refused.json()["detail"]["code"] == "secret_in_event_id"
     assert SECRET not in refused.text
 
-    event = publish(client, "working", task=ref, run=SECRET, payload={"run_ref": "r1"}).json()
-    assert SECRET not in client.get(f"/api/events/{event['id']}").text
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"run": SECRET},
+        {"payload": {"run_ref": SECRET}},
+        # Masquées, ces deux références deviendraient la même : "run token=[REDACTED]".
+        {"run": "run token=alpha"},
+        {"payload": {"run_ref": "run token=beta"}},
+    ],
+)
+def test_run_reference_containing_a_secret_is_refused(client, fields):
+    ref = task(client, next_action="x")
+    res = publish(client, "working", task=ref, **fields)
+
+    assert res.json()["detail"]["code"] == "secret_in_run_ref"
+    assert SECRET not in res.text and "alpha" not in res.text and "beta" not in res.text
+    assert client.get("/api/events", params={"task": ref}).json() == []
 
 
 def test_non_string_run_ref_is_refused_not_500(client):

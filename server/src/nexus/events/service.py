@@ -58,6 +58,7 @@ def publish(
 ) -> tuple[Event, bool]:
     """Enregistre l'événement ; renvoie (événement, créé). Un renvoi identique est une relecture."""
     redacted: dict[str, list[str]] = {}
+    raw_run_refs = (envelope.run, envelope.payload.get("run_ref"))
     # Tout ce qui sera stocké passe par le scanner, identifiants compris (ADR-006).
     clean = secrets.redact_fields(
         {"subject": envelope.subject, "body": envelope.body, "payload": envelope.payload,
@@ -70,9 +71,15 @@ def publish(
         # Masqué, l'identifiant perdrait son unicité (deux secrets → même « [REDACTED] ») :
         # on le refuse plutôt que de confondre deux événements.
         raise RuleViolation(
-            "secret_in_event_id", "l'identifiant de l'événement contient un secret : changes-le"
+            "secret_in_event_id", "l'identifiant de l'événement contient un secret : change-le"
         )
     actor_event_id, envelope.run = clean["id"], clean["run"]
+    if (envelope.run, envelope.payload.get("run_ref")) != raw_run_refs:
+        # Même raison que pour l'identifiant : "run token=alpha" et "run token=beta" deviendraient
+        # le même run une fois masqués, et les clôtures ne pourraient plus les distinguer.
+        raise RuleViolation(
+            "secret_in_run_ref", "la référence du run contient un secret : change-la"
+        )
 
     kind = rules.validate(envelope)
     task = _task(session, envelope.task)
