@@ -31,16 +31,33 @@ fi
 pnpm exec lint-staged
 
 # 4. Typage et tests rapides, sur la version qui sera commitée : les modifications non
-#    indexées sont mises de côté dans un patch le temps des vérifications, puis réappliquées
-#    quoi qu'il arrive. La suite Playwright se lance avant d'ouvrir la PR.
-unstaged=$(mktemp)
-git diff --binary --no-color > "$unstaged"
-if [ -s "$unstaged" ]; then
+#    indexées (patch) et les fichiers non suivis (archive) sont mis de côté le temps des
+#    vérifications, puis restaurés quoi qu'il arrive. La suite Playwright se lance avant
+#    d'ouvrir la PR.
+aside=$(mktemp -d)
+git diff --binary --no-color > "$aside/unstaged.patch"
+git ls-files --others --exclude-standard -z > "$aside/untracked.list"
+restore() {
+  ok=1
+  if [ -s "$aside/untracked.tar" ]; then
+    tar -xf "$aside/untracked.tar" || ok=0
+  fi
+  if [ -s "$aside/unstaged.patch" ]; then
+    git apply --whitespace=nowarn "$aside/unstaged.patch" || ok=0
+  fi
+  if [ $ok = 1 ]; then
+    rm -rf "$aside"
+  else
+    echo "Attention : travail non indexé conservé dans $aside (unstaged.patch, untracked.tar)."
+  fi
+}
+trap restore EXIT
+if [ -s "$aside/untracked.list" ]; then
+  tar --null -T "$aside/untracked.list" -cf "$aside/untracked.tar"
+  xargs -0 rm -f -- < "$aside/untracked.list"
+fi
+if [ -s "$aside/unstaged.patch" ]; then
   git checkout -- .
-  trap 'git apply --whitespace=nowarn "$unstaged" && rm -f "$unstaged" \
-        || echo "Attention : modifications non indexées conservées dans $unstaged (git apply)."' EXIT
-else
-  rm -f "$unstaged"
 fi
 pnpm typecheck
 pnpm test
