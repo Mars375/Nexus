@@ -1,11 +1,6 @@
 # Scan de secrets (gitleaks) — lancé à chaque commit par .husky/pre-commit.
-# Règles par défaut de gitleaks, plus une seule exception documentée ci-dessous.
+# Règles par défaut de gitleaks, sans exception par chemin : dans les tests, les faux secrets
+# sont assemblés à l'exécution ("ghp_" + "A" * 36) pour ne jamais être écrits en clair.
 
 [extend]
 useDefault = true
-
-[[allowlists]]
-description = "Faux secrets des tests du scanner nexus.secrets, écrits pour imiter les vrais formats"
-paths = ['''server/tests/test_secrets\.py''']
-# Ailleurs dans les tests, construire les faux secrets à l'exécution ("ghp_" + "A" * 36)
-# pour qu'ils ne soient jamais écrits en clair dans le dépôt.

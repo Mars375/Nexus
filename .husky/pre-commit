@@ -12,7 +12,6 @@ if [ -n "$blocked" ]; then
   exit 1
 fi
 
-# 2. Secrets : gitleaks sur ce qui est indexé (ADR-006).
 GITLEAKS=$(command -v gitleaks || true)
 if [ -z "$GITLEAKS" ] && [ -n "$LOCALAPPDATA" ]; then
   lad=$(cygpath -u "$LOCALAPPDATA" 2>/dev/null || echo "$LOCALAPPDATA")
@@ -25,27 +24,11 @@ if [ -z "$GITLEAKS" ]; then
   echo "Commit refusé : gitleaks introuvable. Installe-le (Windows : winget install Gitleaks.Gitleaks)."
   exit 1
 fi
-# La configuration lue est celle de l'index : une exception non indexée ne doit pas laisser
-# passer un secret qui, lui, sera commité.
-config="$(git rev-parse --git-dir)/gitleaks-staged.toml"
-if ! git show :.gitleaks.toml > "$config" 2>/dev/null; then
-  rm -f "$config"
-  echo "Commit refusé : .gitleaks.toml doit être dans l'index."
-  exit 1
-fi
-if ! "$GITLEAKS" git --pre-commit --staged --redact --no-banner --config "$config"; then
-  rm -f "$config"
-  exit 1
-fi
-rm -f "$config"
 
-# 3. Lint des fichiers indexés (ruff, oxlint).
-pnpm exec lint-staged
-
-# 4. Typage et tests rapides, sur la version qui sera commitée : les modifications non
-#    indexées (patch) et les fichiers non suivis (archive) sont mis de côté le temps des
-#    vérifications, puis restaurés quoi qu'il arrive. La suite Playwright se lance avant
-#    d'ouvrir la PR.
+# 2. Toutes les vérifications portent sur la version qui sera commitée : les modifications non
+#    indexées (patch) et les fichiers non suivis (archive) sont mis de côté, puis restaurés quoi
+#    qu'il arrive. Cela vaut aussi pour la configuration de gitleaks (.gitleaks.toml,
+#    .gitleaksignore) : une exception non indexée ne peut pas laisser passer un secret indexé.
 aside=$(mktemp -d)
 git diff --binary --no-color > "$aside/unstaged.patch"
 git ls-files --others --exclude-standard -z > "$aside/untracked.list"
@@ -71,5 +54,13 @@ fi
 if [ -s "$aside/unstaged.patch" ]; then
   git checkout -- .
 fi
+
+# 3. Secrets : gitleaks sur ce qui est indexé (ADR-006).
+"$GITLEAKS" git --pre-commit --staged --redact --no-banner --config .gitleaks.toml
+
+# 4. Lint des fichiers indexés (ruff, oxlint).
+pnpm exec lint-staged
+
+# 5. Typage et tests rapides. La suite Playwright se lance avant d'ouvrir la PR.
 pnpm typecheck
 pnpm test
