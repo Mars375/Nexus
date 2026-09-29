@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import type { Task } from '@/api'
 import { applyFilters, NO_FILTER } from './filters'
-import { canMove, dependencyBlock, moveNeeds, needsPrompt } from './moves'
+import { canMove, dependencyBlock, dependencyCandidates, moveNeeds, needsPrompt } from './moves'
 import { compareTasks } from './vocabulary'
 
 const NOW = new Date('2026-09-28T12:00:00+02:00').getTime()
@@ -142,5 +142,28 @@ describe('opération principale', () => {
   test('sans autre principale en cours, rien à demander', () => {
     expect(moveNeeds(prepared, 'in_progress', [prepared]).mainTaken).toBe(false)
     expect(moveNeeds({ ...prepared, operation_role: null }, 'in_progress', [running]).mainTaken).toBe(false)
+  })
+})
+
+describe('candidats de dépendance', () => {
+  test("une tâche avancée ne peut dépendre que de tâches traitées", () => {
+    const current = task({ id: 'c', status: 'in_progress' })
+    const pending = task({ id: 'p', status: 'todo' })
+    const finished = task({ id: 'f', status: 'done' })
+    expect(dependencyCandidates(current, [current, pending, finished]).map((t) => t.id)).toEqual(['f'])
+  })
+
+  test('les candidats qui créeraient un cycle sont exclus', () => {
+    const a = task({ id: 'a', status: 'todo' })
+    const b = task({ id: 'b', status: 'todo', depends_on: ['a'] })
+    const c = task({ id: 'c', status: 'todo', depends_on: ['b'] })
+    const other = task({ id: 'o', status: 'todo' })
+    expect(dependencyCandidates(a, [a, b, c, other]).map((t) => t.id)).toEqual(['o'])
+  })
+
+  test('les dépendances existantes ne sont pas reproposées', () => {
+    const a = task({ id: 'a', status: 'todo', depends_on: ['o'] })
+    const other = task({ id: 'o', status: 'todo' })
+    expect(dependencyCandidates(a, [a, other])).toEqual([])
   })
 })

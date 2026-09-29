@@ -41,6 +41,38 @@ export function dependencyBlock(task: Task, to: Status, all: Task[]): string | n
   return pending.length ? `En attente de : ${pending.map((t) => t.title).join(', ')}.` : null
 }
 
+/**
+ * Tâches que `task` peut accepter comme nouvelle dépendance, selon les mêmes règles que le
+ * serveur : pas elle-même, pas une dépendance existante, pas de cycle, et une tâche déjà
+ * avancée ne peut attendre qu'un prérequis déjà traité.
+ */
+export function dependencyCandidates(task: Task, all: Task[]): Task[] {
+  const byId = new Map(all.map((t) => [t.id, t]))
+  const reachesTask = (start: Task): boolean => {
+    const seen = new Set<string>()
+    const stack = [start]
+    while (stack.length) {
+      const current = stack.pop()!
+      if (current.id === task.id) return true
+      if (seen.has(current.id)) continue
+      seen.add(current.id)
+      for (const id of current.depends_on) {
+        const next = byId.get(id)
+        if (next) stack.push(next)
+      }
+    }
+    return false
+  }
+  const advanced = GATED_BY_DEPENDENCIES.includes(task.status)
+  return all.filter(
+    (t) =>
+      t.id !== task.id &&
+      !task.depends_on.includes(t.id) &&
+      (!advanced || DEPENDENCY_RESOLVED.includes(t.status)) &&
+      !reachesTask(t),
+  )
+}
+
 export function canMove(from: Status, to: Status): boolean {
   return TRANSITIONS[from].includes(to)
 }

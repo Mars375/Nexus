@@ -5,7 +5,14 @@ import type { Actor, HistoryEntry, Priority, Status, Task, TaskChanges } from '@
 import { formatDateTime, isoToLocalInput, localInputToIso } from '@/format'
 import { AgentMark, Button, Field, inputClass } from '@/ui'
 import { MoveDialog } from './MoveDialog'
-import { ACTIVE_STATUSES, dependencyBlock, moveNeeds, needsPrompt, TRANSITIONS } from './moves'
+import {
+  ACTIVE_STATUSES,
+  dependencyBlock,
+  dependencyCandidates,
+  moveNeeds,
+  needsPrompt,
+  TRANSITIONS,
+} from './moves'
 import {
   useAddComment,
   useComments,
@@ -313,7 +320,9 @@ function Dependencies({ task, tasks }: { task: Task; tasks: Task[] }) {
   const link = useLink(task.id)
   const [choice, setChoice] = useState('')
   const byId = new Map(tasks.map((t) => [t.id, t]))
-  const candidates = tasks.filter((t) => t.id !== task.id && !task.depends_on.includes(t.id))
+  const candidates = dependencyCandidates(task, tasks)
+  // La liste peut rétrécir pendant qu'un choix est en attente (statut changé ailleurs).
+  const selected = candidates.some((t) => t.id === choice) ? choice : ''
 
   return (
     <Section title="Dépend de">
@@ -339,16 +348,16 @@ function Dependencies({ task, tasks }: { task: Task; tasks: Task[] }) {
       )}
       {candidates.length > 0 && (
         <div className="mt-3 flex gap-2">
-          <select className={inputClass} value={choice} onChange={(e) => setChoice(e.target.value)} aria-label="Tâche dont celle-ci dépend">
+          <select className={inputClass} value={selected} onChange={(e) => setChoice(e.target.value)} aria-label="Tâche dont celle-ci dépend">
             <option value="">Ajouter une dépendance…</option>
             {candidates.map((t) => (
               <option key={t.id} value={t.id}>{t.title}</option>
             ))}
           </select>
           <Button
-            disabled={!choice}
+            disabled={!selected}
             onClick={() => {
-              link.mutate({ other: choice })
+              link.mutate({ other: selected })
               setChoice('')
             }}
           >
