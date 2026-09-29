@@ -60,10 +60,14 @@ export function compareTasks(
   if (main) return main
   const priority = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]
   if (priority) return priority
-  if (a.due_at !== b.due_at) {
-    if (!a.due_at) return 1
-    if (!b.due_at) return -1
-    return a.due_at < b.due_at ? -1 : 1
+  // Instants, pas texte : deux dates de la même heure murale peuvent porter des décalages
+  // différents (heure d'hiver).
+  const dueA = a.due_at ? Date.parse(a.due_at) : null
+  const dueB = b.due_at ? Date.parse(b.due_at) : null
+  if (dueA !== dueB) {
+    if (dueA === null) return 1
+    if (dueB === null) return -1
+    return dueA - dueB
   }
-  return a.updated_at < b.updated_at ? 1 : -1
+  return Date.parse(b.updated_at) - Date.parse(a.updated_at)
 }

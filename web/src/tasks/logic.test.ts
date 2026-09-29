@@ -167,3 +167,18 @@ describe('candidats de dépendance', () => {
     expect(dependencyCandidates(a, [a, other])).toEqual([])
   })
 })
+
+describe('ordre des échéances', () => {
+  test("compare les instants, pas le texte, à l'heure d'hiver", () => {
+    // 02:15+01:00 (01:15 UTC) tombe après 02:30+02:00 (00:30 UTC) : même heure murale répétée.
+    const later = task({ id: 'later', due_at: '2026-10-25T02:15:00+01:00' })
+    const earlier = task({ id: 'earlier', due_at: '2026-10-25T02:30:00+02:00' })
+    expect([later, earlier].sort(compareTasks).map((t) => t.id)).toEqual(['earlier', 'later'])
+  })
+
+  test('à échéance égale, la plus récemment modifiée en premier, quel que soit le fuseau', () => {
+    const recent = task({ id: 'recent', updated_at: '2026-10-25T02:15:00+01:00' })
+    const old = task({ id: 'old', updated_at: '2026-10-25T02:30:00+02:00' })
+    expect([old, recent].sort(compareTasks).map((t) => t.id)).toEqual(['recent', 'old'])
+  })
+})
