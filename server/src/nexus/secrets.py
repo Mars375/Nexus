@@ -28,20 +28,45 @@ _FULL: list[tuple[str, re.Pattern[str]]] = [
 # Mot de passe dans une URL de connexion : postgresql://alice:hunter2@hôte/base.
 _URL_CREDENTIALS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^\s:/@]+:)([^\s@/]+)(@)")
 
+# En-tête HTTP d'identifiant écrit tel quel (« Authorization: Digest username="…", … »,
+# « Cookie: a=1; b=2 ») : sa valeur court jusqu'à la fin de la ligne, virgules et ; compris,
+# et continue sur les lignes repliées (qui commencent par une espace ou une tabulation).
+# Forme citée comprise (« "Authorization": "Digest username=\"…\"" ») : des guillemets
+# échappés dans la valeur l'arrêteraient sinon au premier.
+_HEADER_CREDENTIALS = re.compile(
+    r"(?im)(?<![\w.-])((?:proxy[_-]?)?authorization|(?:set[_-]?)?cookie)([\"']?\s*:\s*)"
+    r"(?=\S)([^\r\n]+(?:\r?\n[ \t][^\r\n]*)*)"
+)
+
 # « mot de passe : xyz », « token=abc »… : on masque la valeur, on garde l'étiquette.
 # Couvre aussi la forme JSON/YAML collée ({"password": "hunter2"}, 'token': 'abc') et les
 # variables d'environnement préfixées (AWS_SECRET_ACCESS_KEY=…, CLIENT_SECRET=…). Préfixe
 # et suffixe doivent être séparés par _ . ou - : « tokens: 3000 » n'est pas un secret.
-_ASSIGNMENT = re.compile(
-    r"(?i)(?<![\w.-])("
+_LABEL = (
     r"(?:[\w.-]*[_.-])?"
     r"(?:password|passwd|pwd|secret|api[ _-]?key|access[ _-]?token|private[ _-]?key|token"
     # Codes à usage unique (SECURITY §1 : les codes 2FA sont des secrets).
-    r"|otp|totp|2fa|mfa|verification[ _-]?code|one[ _-]?time[ _-]?code)"
+    r"|otp|totp|2fa|mfa|verification[ _-]?code|one[ _-]?time[ _-]?code"
+    # En-têtes HTTP qui portent un identifiant, quel que soit le schéma (Basic, Digest…).
+    r"|authorization|cookie)"
     r"(?:[_.-][\w.-]*)?"
-    r"|mot de passe|mdp|code de vérification)"
+    # camelCase / PascalCase (clientSecret, refreshToken, dbPassword) : la majuscule sert de
+    # séparateur, sensible à la casse pour que « maxTokens » ou « tokenizer » restent intacts.
+    r"|(?-i:[A-Za-z][A-Za-z0-9]*?"
+    r"(?:Password|Passwd|Pwd|Secret|ApiKey|AccessToken|PrivateKey|Token|Otp|Totp|Mfa"
+    r"|Authorization|Cookie)"
+    r"(?:[A-Z][A-Za-z0-9]*)?)"
+    r"|mot de passe|mdp|code de vérification"
+)
+# Clé JSON qui nomme un identifiant : {"password": "…"} — sa valeur est un secret.
+_CREDENTIAL_KEY = re.compile(rf"(?i){_LABEL}")
+
+_ASSIGNMENT = re.compile(
+    rf"(?i)(?<![\w.-])({_LABEL})"
     r"([\"']?\s*[:=]\s*)"
-    r"(?:\"([^\"]*)\"|'([^']*)'|([^\s,;}\"']+))"
+    # Valeur nue : un schéma d'authentification éventuel (Basic xyz) en fait partie.
+    r"(?:\"([^\"]*)\"|'([^']*)'"
+    r"|((?:(?:basic|bearer|digest|negotiate|ntlm)\s+)?[^\s,;}\"']+))"
 )
 
 
@@ -68,7 +93,14 @@ def redact(text: str) -> tuple[str, list[str]]:
         found.append("url_credentials")
         return f"{match.group(1)}{REDACTED}{match.group(3)}"
 
+    def mask_header(match: re.Match[str]) -> str:
+        if match.group(3).strip() == REDACTED:
+            return match.group(0)
+        found.append("credential")
+        return f"{match.group(1)}{match.group(2)}{REDACTED}"
+
     text = _URL_CREDENTIALS.sub(mask_url, text)
+    text = _HEADER_CREDENTIALS.sub(mask_header, text)
     text = _ASSIGNMENT.sub(mask_value, text)
     return text, sorted(set(found))
 
@@ -85,8 +117,21 @@ def is_blank(text: str | None) -> bool:
     return not re.search(r"\w", _REDACTED_SPAN.sub("", text))
 
 
+def is_blank_reference(text: str | None) -> bool:
+    """Une preuve doit garder un identifiant : « commit: token=[REDACTED] » n'a plus que
+    son étiquette, elle ne prouve rien."""
+    if is_blank(text):
+        return True
+    rest = _REDACTED_SPAN.sub("", text)
+    rest = re.sub(r"^\s*[\w.-]+\s*:", "", rest, count=1)  # étiquette : commit:, url:, https:
+    # Étiquettes restées vides ailleurs (« … url: ») : elles ne portent aucun identifiant.
+    rest = re.sub(r"[\w.-]+\s*[:=](?=\s|$)", "", rest)
+    return not re.search(r"\w", rest)
+
+
 def redact_value(value: Any) -> tuple[Any, list[str]]:
-    """Comme `redact`, sur une chaîne, une liste ou un dict (clés conservées)."""
+    """Comme `redact`, sur une chaîne, une liste ou un dict — clés comprises : un secret
+    collé comme nom de propriété JSON serait sinon stocké tel quel."""
     found: set[str] = set()
 
     def walk(v: Any) -> Any:
@@ -94,11 +139,26 @@ def redact_value(value: Any) -> tuple[Any, list[str]]:
             cleaned, kinds = redact(v)
             found.update(kinds)
             return cleaned
-        if isinstance(v, list):
+        if isinstance(v, (list, tuple)):  # un tuple part en JSON comme une liste
             return [walk(x) for x in v]
         if isinstance(v, dict):
-            return {k: walk(x) for k, x in v.items()}
+            return {
+                (walk(k) if isinstance(k, str) else k): mask_if_credential(k, x)
+                for k, x in v.items()
+            }
         return v
+
+    def mask_if_credential(key: Any, value: Any) -> Any:
+        # Sous une clé d'identifiant, toute valeur non vide est un secret — liste ou objet
+        # compris ({"password": ["…"]}, {"api_key": {"value": "…"}}).
+        if isinstance(value, str):
+            empty = not value.strip() or value == REDACTED
+        else:
+            empty = value is None or value == [] or value == {}
+        if isinstance(key, str) and _CREDENTIAL_KEY.fullmatch(key.strip()) and not empty:
+            found.add("credential")
+            return REDACTED
+        return walk(value)
 
     return walk(value), sorted(found)
 

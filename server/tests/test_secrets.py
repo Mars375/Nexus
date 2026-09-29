@@ -1,6 +1,6 @@
 import pytest
 
-from nexus.secrets import REDACTED, redact, redact_value
+from nexus.secrets import REDACTED, is_blank_reference, redact, redact_value
 
 # Valeurs factices, construites pour ressembler aux vrais formats — assemblées à l'exécution
 # pour que gitleaks ne voie jamais de secret écrit en clair dans le dépôt.
@@ -106,3 +106,134 @@ def test_is_blank_ignores_redactions_and_their_labels(text, blank):
     from nexus.secrets import is_blank
 
     assert is_blank(text) is blank
+
+
+def test_values_under_credential_named_keys_are_masked():
+    cleaned, found = redact_value({"password": "hunter2", "tokens": 3000, "note": "rien"})
+
+    assert cleaned == {"password": REDACTED, "tokens": 3000, "note": "rien"}
+    assert found == ["credential"]
+
+
+@pytest.mark.parametrize("value", [["hunter2"], {"value": "abc"}, True, 1234])
+def test_any_value_under_a_credential_key_is_masked(value):
+    cleaned, found = redact_value({"password": value, "note": "rien"})
+
+    assert cleaned == {"password": REDACTED, "note": "rien"}
+    assert found == ["credential"]
+
+
+@pytest.mark.parametrize("value", [None, "", [], {}])
+def test_empty_value_under_a_credential_key_is_left_alone(value):
+    assert redact_value({"password": value}) == ({"password": value}, [])
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["clientSecret", "refreshToken", "dbPassword", "ClientSecret", "userApiKey", "sessionOtp"],
+)
+def test_camel_case_credential_keys_are_masked(key):
+    cleaned, found = redact_value({key: "hunter2", "note": "rien"})
+    assert cleaned == {key: REDACTED, "note": "rien"}
+    assert found == ["credential"]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("clientSecret=hunter2", "clientSecret=[REDACTED]"),
+        ('{"refreshToken": "abc123"}', '{"refreshToken": "[REDACTED]"}'),
+    ],
+)
+def test_camel_case_labels_in_text_are_masked(text, expected):
+    assert redact(text) == (expected, ["credential"])
+
+
+@pytest.mark.parametrize("text", ["maxTokens: 3000", '{"maxTokens": 3000}', "tokenizer: bpe"])
+def test_camel_case_words_that_are_not_credentials_are_untouched(text):
+    assert redact(text) == (text, [])
+
+
+def test_camel_case_counters_are_not_credential_keys():
+    assert redact_value({"maxTokens": 3000}) == ({"maxTokens": 3000}, [])
+
+
+@pytest.mark.parametrize(
+    "key", ["Authorization", "authorization", "Proxy-Authorization", "proxyAuthorization", "Cookie"]
+)
+def test_http_credential_headers_are_masked_whatever_the_format(key):
+    cleaned, found = redact_value({key: "Basic dXNlcjpwYXNz"})
+    assert cleaned == {key: REDACTED}
+    assert found == ["credential"]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Authorization: Basic dXNlcjpwYXNz", "Authorization: [REDACTED]"),
+        ("Proxy-Authorization: Digest abc123", "Proxy-Authorization: [REDACTED]"),
+        ("Cookie: session=abc123", "Cookie: [REDACTED]"),
+    ],
+)
+def test_http_credential_headers_in_text_are_masked(text, expected):
+    assert redact(text) == (expected, ["credential"])
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            'Authorization: Digest username="Mufasa", realm="test", response="deadbeef"',
+            "Authorization: [REDACTED]",
+        ),
+        ("Cookie: session=abc123; theme=dark; csrf=xyz", "Cookie: [REDACTED]"),
+        ("avant\nSet-Cookie: id=a3fWa; Secure\naprès", "avant\nSet-Cookie: [REDACTED]\naprès"),
+    ],
+)
+def test_multi_part_http_credentials_are_masked_whole(text, expected):
+    cleaned, found = redact(text)
+    assert cleaned == expected
+    assert "credential" in found
+
+
+@pytest.mark.parametrize(
+    ("ref", "blank"),
+    [
+        ("commit: token=[REDACTED]", True),
+        ("commit:[REDACTED]", True),
+        ("url: [REDACTED]", True),
+        ("commit: token=[REDACTED] url:", True),
+        ("commit: [REDACTED] note: [REDACTED] url:", True),
+        ("commit:a1b2c3d token=[REDACTED]", False),
+        ("commit:a1b2c3d", False),
+        ("https://github.com/Mars375/Nexus/pull/9", False),
+    ],
+)
+def test_reference_needs_an_identifier_after_redaction(ref, blank):
+    assert is_blank_reference(ref) is blank
+
+
+def test_folded_http_credential_header_is_masked_across_continuation_lines():
+    text = 'Authorization: Digest username="u",\n realm="r",\n\tresponse="deadbeef"\nsuite'
+    cleaned, found = redact(text)
+    assert cleaned == "Authorization: [REDACTED]\nsuite"
+    assert "deadbeef" not in cleaned and "credential" in found
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'Authorization: "Digest username=\\"Mufasa\\", realm=\\"r\\", response=\\"deadbeef\\""',
+        '{"Authorization": "Digest username=\\"Mufasa\\", response=\\"deadbeef\\""}',
+    ],
+)
+def test_quoted_http_credential_header_values_are_masked_whole(text):
+    cleaned, found = redact(text)
+    assert "Mufasa" not in cleaned and "deadbeef" not in cleaned
+    assert "credential" in found
+
+
+def test_tuples_are_scanned_like_lists():
+    cleaned, found = redact_value({"metadata": ("token=hunter2", "ok")})
+    assert "hunter2" not in str(cleaned)
+    assert found == ["credential"]
