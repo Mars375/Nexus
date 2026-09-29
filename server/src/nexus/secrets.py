@@ -28,6 +28,12 @@ _FULL: list[tuple[str, re.Pattern[str]]] = [
 # Mot de passe dans une URL de connexion : postgresql://alice:hunter2@hôte/base.
 _URL_CREDENTIALS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^\s:/@]+:)([^\s@/]+)(@)")
 
+# En-tête HTTP d'identifiant écrit tel quel (« Authorization: Digest username="…", … »,
+# « Cookie: a=1; b=2 ») : sa valeur court jusqu'à la fin de la ligne, virgules et ; compris.
+_HEADER_CREDENTIALS = re.compile(
+    r"(?im)(?<![\w.-])((?:proxy[_-]?)?authorization|(?:set[_-]?)?cookie)(\s*:\s*)(?![\"'\s])([^\r\n]+)"
+)
+
 # « mot de passe : xyz », « token=abc »… : on masque la valeur, on garde l'étiquette.
 # Couvre aussi la forme JSON/YAML collée ({"password": "hunter2"}, 'token': 'abc') et les
 # variables d'environnement préfixées (AWS_SECRET_ACCESS_KEY=…, CLIENT_SECRET=…). Préfixe
@@ -83,7 +89,14 @@ def redact(text: str) -> tuple[str, list[str]]:
         found.append("url_credentials")
         return f"{match.group(1)}{REDACTED}{match.group(3)}"
 
+    def mask_header(match: re.Match[str]) -> str:
+        if match.group(3).strip() == REDACTED:
+            return match.group(0)
+        found.append("credential")
+        return f"{match.group(1)}{match.group(2)}{REDACTED}"
+
     text = _URL_CREDENTIALS.sub(mask_url, text)
+    text = _HEADER_CREDENTIALS.sub(mask_header, text)
     text = _ASSIGNMENT.sub(mask_value, text)
     return text, sorted(set(found))
 
@@ -98,6 +111,16 @@ def is_blank(text: str | None) -> bool:
     if not text:
         return True
     return not re.search(r"\w", _REDACTED_SPAN.sub("", text))
+
+
+def is_blank_reference(text: str | None) -> bool:
+    """Une preuve doit garder un identifiant : « commit: token=[REDACTED] » n'a plus que
+    son étiquette, elle ne prouve rien."""
+    if is_blank(text):
+        return True
+    rest = _REDACTED_SPAN.sub("", text)
+    rest = re.sub(r"^\s*[\w.-]+\s*:", "", rest, count=1)  # étiquette : commit:, url:, https:
+    return not re.search(r"\w", rest)
 
 
 def redact_value(value: Any) -> tuple[Any, list[str]]:

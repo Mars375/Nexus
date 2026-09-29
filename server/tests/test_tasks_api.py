@@ -558,3 +558,15 @@ def test_lone_surrogate_in_task_text_is_refused(client):
     res = client.post("/api/tasks", content=raw, headers={"Content-Type": "application/json"})
     assert res.status_code == 422, res.text
     assert client.get("/api/tasks").status_code == 200
+
+
+def test_evidence_reduced_to_a_label_is_not_proof(client):
+    ref = create(client, status="todo", next_action="x", expected_evidence="le commit")["id"]
+    move(client, ref, "in_progress")
+
+    res = move(client, ref, "done", evidence=["commit: token=hunter2"])
+
+    # Preuve ou review : sans identifiant, ce n'est pas une preuve, la tâche attend une relecture.
+    assert res.status_code == 200, res.text
+    assert "hunter2" not in res.text
+    assert (res.json()["status"], res.json()["evidence"]) == ("review", [])

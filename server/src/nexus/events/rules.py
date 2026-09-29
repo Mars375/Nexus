@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from nexus.actors import ACTORS, HUMANS
-from nexus.secrets import is_blank
+from nexus.secrets import is_blank, is_blank_reference
 from nexus.tasks.rules import RuleViolation
 
 KINDS = (
@@ -60,7 +60,7 @@ def _instant(value: Any, name: str) -> datetime:
 
 def proofs(e: Envelope) -> list[str]:
     """Preuves utilisables : une preuve vide ou masquée (secret collé) ne prouve rien."""
-    return [ref for ref in e.evidence if not is_blank(ref)]
+    return [ref for ref in e.evidence if not is_blank_reference(ref)]
 
 
 def cause_of(e: Envelope) -> str | None:

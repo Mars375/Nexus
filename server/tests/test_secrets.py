@@ -1,6 +1,6 @@
 import pytest
 
-from nexus.secrets import REDACTED, redact, redact_value
+from nexus.secrets import REDACTED, is_blank_reference, redact, redact_value
 
 # Valeurs factices, construites pour ressembler aux vrais formats.
 SAMPLES = {
@@ -176,3 +176,35 @@ def test_http_credential_headers_are_masked_whatever_the_format(key):
 )
 def test_http_credential_headers_in_text_are_masked(text, expected):
     assert redact(text) == (expected, ["credential"])
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            'Authorization: Digest username="Mufasa", realm="test", response="deadbeef"',
+            "Authorization: [REDACTED]",
+        ),
+        ("Cookie: session=abc123; theme=dark; csrf=xyz", "Cookie: [REDACTED]"),
+        ("avant\nSet-Cookie: id=a3fWa; Secure\naprès", "avant\nSet-Cookie: [REDACTED]\naprès"),
+    ],
+)
+def test_multi_part_http_credentials_are_masked_whole(text, expected):
+    cleaned, found = redact(text)
+    assert cleaned == expected
+    assert "credential" in found
+
+
+@pytest.mark.parametrize(
+    ("ref", "blank"),
+    [
+        ("commit: token=[REDACTED]", True),
+        ("commit:[REDACTED]", True),
+        ("url: [REDACTED]", True),
+        ("commit:a1b2c3d token=[REDACTED]", False),
+        ("commit:a1b2c3d", False),
+        ("https://github.com/Mars375/Nexus/pull/9", False),
+    ],
+)
+def test_reference_needs_an_identifier_after_redaction(ref, blank):
+    assert is_blank_reference(ref) is blank

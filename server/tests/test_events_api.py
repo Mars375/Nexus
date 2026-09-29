@@ -718,3 +718,14 @@ def test_runless_closers_without_any_run_keep_applying(client):
     done = publish(client, "done", "validé", task=ref, evidence=["commit:a"]).json()
 
     assert done["effects"] == [{"action": "status:done", "applied": True}]
+
+
+def test_done_whose_evidence_is_only_a_redacted_label_goes_to_review(client):
+    ref = task(client, next_action="x")
+    publish(client, "working", task=ref, payload={"run_ref": "r1"})
+
+    event = publish(client, "done", "fini", task=ref, run="r1",
+                    evidence=["commit: token=hunter2"]).json()
+
+    assert event["kind"] == "review"
+    assert client.get(f"/api/tasks/{ref}").json()["status"] == "review"
