@@ -25,7 +25,19 @@ if [ -z "$GITLEAKS" ]; then
   echo "Commit refusé : gitleaks introuvable. Installe-le (Windows : winget install Gitleaks.Gitleaks)."
   exit 1
 fi
-"$GITLEAKS" git --pre-commit --staged --redact --no-banner --config .gitleaks.toml
+# La configuration lue est celle de l'index : une exception non indexée ne doit pas laisser
+# passer un secret qui, lui, sera commité.
+config="$(git rev-parse --git-dir)/gitleaks-staged.toml"
+if ! git show :.gitleaks.toml > "$config" 2>/dev/null; then
+  rm -f "$config"
+  echo "Commit refusé : .gitleaks.toml doit être dans l'index."
+  exit 1
+fi
+if ! "$GITLEAKS" git --pre-commit --staged --redact --no-banner --config "$config"; then
+  rm -f "$config"
+  exit 1
+fi
+rm -f "$config"
 
 # 3. Lint des fichiers indexés (ruff, oxlint).
 pnpm exec lint-staged
