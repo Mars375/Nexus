@@ -15,7 +15,7 @@ How to use it:
 - [ ] Validation that happens *before* redaction (Pydantic) never returns the raw input (`RequestValidationError` handler strips `input`).
 - [ ] An identifier that contains a secret is refused, not masked (masking breaks uniqueness).
 - [ ] A value reduced to `[REDACTED]` (plus its label, e.g. `password=[REDACTED]`) counts as **empty** wherever a readable value is required (`secrets.is_blank`).
-- [ ] New secret *formats* the scanner misses go to issue #15, not into the PR.
+- [ ] Teaching the scanner a new secret *format* (a token shape it does not recognise yet) is tracked in issue #15 and does not block a PR — Loïc's decision. This never excuses a new data path: anything the PR stores, logs or echoes still goes through `nexus.secrets`.
 
 ## 2. Validation
 
