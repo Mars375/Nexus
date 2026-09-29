@@ -29,6 +29,9 @@ from nexus.tasks.rules import RuleViolation
 log = logging.getLogger("nexus.events")
 
 RUN_OPEN_ATTEMPTS = 3
+EFFECT_ATTEMPTS = 3
+# Nom d'adaptateur (api, hermes, codex…) : jamais une valeur libre, qui pourrait porter un secret.
+_ORIGIN = re.compile(r"[a-z][a-z0-9-]{0,31}")
 
 # Anti-bruit (EVENT-PROTOCOL §7) : le même fait republié dans cette fenêtre est refusé.
 NOISE_WINDOW = timedelta(minutes=10)
@@ -66,6 +69,9 @@ def publish(
             "publish() demande une session dédiée : un rollback de course annulerait les "
             "écritures en attente de l'appelant"
         )
+    if not isinstance(origin, str) or not _ORIGIN.fullmatch(origin):
+        # Stockée et renvoyée telle quelle : seul un nom d'adaptateur est accepté (ADR-006).
+        raise RuleViolation("invalid_origin", "origin : nom d'adaptateur invalide")
     redacted: dict[str, list[str]] = {}
     raw_run_refs = (envelope.run, envelope.payload.get("run_ref"))
     # Tout ce qui sera stocké passe par le scanner, identifiants compris (ADR-006).
@@ -338,16 +344,26 @@ def _apply_effects(session: Session, event: Event, e: Envelope, task: Task) -> l
     effects: list[dict] = []
 
     def attempt(action: str, fn) -> None:
-        savepoint = session.begin_nested()
-        try:
-            fn()
-            savepoint.commit()
-            effects.append({"action": action, "applied": True})
-        except (RuleViolation, IntegrityError, StaleDataError) as exc:
-            savepoint.rollback()
-            session.refresh(task)
-            message = exc.message if isinstance(exc, RuleViolation) else "conflit en base"
-            effects.append({"action": action, "applied": False, "reason": message})
+        # Un conflit de version (la tâche a changé depuis sa lecture) n'est pas un refus : on
+        # relit la tâche et on retente, les règles jugeant alors son état à jour.
+        for _ in range(EFFECT_ATTEMPTS):
+            savepoint = session.begin_nested()
+            try:
+                fn()
+                savepoint.commit()
+                effects.append({"action": action, "applied": True})
+                return
+            except StaleDataError:
+                savepoint.rollback()
+                session.refresh(task)
+            except (RuleViolation, IntegrityError) as exc:
+                savepoint.rollback()
+                session.refresh(task)
+                message = exc.message if isinstance(exc, RuleViolation) else "conflit en base"
+                effects.append({"action": action, "applied": False, "reason": message})
+                return
+        effects.append({"action": action, "applied": False,
+                        "reason": "conflit en base : trop d'écritures concurrentes"})
 
     def move(target: str, **kwargs: Any) -> None:
         stale = _stale_run(session, event, task)

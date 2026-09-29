@@ -785,3 +785,46 @@ def test_publish_refuses_a_session_with_pending_writes(client):
         with pytest.raises(RuntimeError, match="session dédiée"):
             service.publish(session, Envelope(actor="helios", kind="claimed", subject="s",
                                               task=ref), "evt_pending", datetime.fromisoformat(AT))
+
+
+def test_effect_is_retried_after_a_concurrent_task_update(client, monkeypatch):
+    from nexus.events import service
+    from nexus.models import Task
+
+    ref = task(client, next_action="x")
+    publish(client, "working", task=ref, payload={"run_ref": "r1"})
+    make = client.app.state.sessionmaker
+    original = service._refuse_noise
+
+    def racing(session, envelope, task_row, actor_event_id, exclude_id=None):
+        if exclude_id is None:  # avant l'insertion : Loïc modifie la tâche entre-temps
+            monkeypatch.setattr(service, "_refuse_noise", original)
+            with make() as other:
+                other.get(Task, int(ref.removeprefix("nx-task-"))).next_action = "relire"
+                other.commit()
+        original(session, envelope, task_row, actor_event_id, exclude_id=exclude_id)
+
+    monkeypatch.setattr(service, "_refuse_noise", racing)
+    done = publish(client, "done", "fini", task=ref, run="r1", evidence=["commit:abc"]).json()
+
+    assert done["effects"] == [{"action": "status:done", "applied": True}]
+    t = client.get(f"/api/tasks/{ref}").json()
+    assert (t["status"], t["next_action"]) == ("done", "relire")
+
+
+@pytest.mark.parametrize("origin", ["token=ghp_" + "S" * 36, "Hermes Adapter!", ""])
+def test_adapter_origin_must_be_a_plain_adapter_name(client, origin):
+    from datetime import datetime
+
+    from nexus.events import service
+    from nexus.events.rules import Envelope
+    from nexus.tasks.rules import RuleViolation
+
+    ref = task(client)
+    with client.app.state.sessionmaker() as session:
+        with pytest.raises(RuleViolation) as refused:
+            service.publish(session, Envelope(actor="helios", kind="claimed", subject="s",
+                                              task=ref), "evt_o", datetime.fromisoformat(AT),
+                            origin=origin)
+    assert refused.value.code == "invalid_origin"
+    assert "S" * 36 not in refused.value.message
