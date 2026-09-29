@@ -30,10 +30,10 @@ How to use it:
 ## 3. Concurrency and idempotency
 
 - [ ] Every read-then-write rule is safe under two simultaneous requests: a database constraint (unique/partial index) or the optimistic lock (`Task.version`), plus a test that simulates the race (see `test_*_race*` / `test_concurrent_*`).
-- [ ] After a write conflict, re-read and re-check the rule instead of refusing blindly (another actor may legitimately succeed at the same time).
+- [ ] When a lock only serializes a rule check (e.g. opening a run), a write conflict means re-read and re-check the rule instead of refusing blindly — another actor may legitimately succeed at the same time. Never replay an edit against the new state: a losing `PATCH` stays a 409 so the client reconciles, otherwise it silently overwrites the winning edit.
 - [ ] Idempotent endpoints: an identical resend returns the original (200), even when it races the first request — on **every** conflict path (unique constraint, version conflict, anti-noise check).
 - [ ] Idempotency fingerprints use canonical JSON (`sort_keys`) and include every field that makes two requests different (timestamps, run references).
-- [ ] Late or out-of-order messages (e.g. `done(r1)` after `working(r2)`) are recorded but do not mutate current state.
+- [ ] Late or out-of-order messages (e.g. `done(r1)` after `working(r2)`, or a closer naming no run while one is active) are recorded but do not mutate current state.
 
 ## 4. State invariants
 
