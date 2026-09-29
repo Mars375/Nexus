@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from nexus.actors import ACTORS, HUMANS
-from nexus.secrets import is_blank, is_blank_reference, redact
+from nexus.secrets import is_blank, is_blank_reference
 from nexus.tasks.rules import RuleViolation
 
 KINDS = (
@@ -71,10 +71,10 @@ def validate(e: Envelope) -> str:
     """Vérifie l'événement et renvoie son type effectif (un `done` sans preuve devient `review`)."""
     if e.actor not in ACTORS:
         # L'API le garantit déjà ; un adaptateur qui appelle publish() directement, non.
-        raise RuleViolation("unknown_actor", f"acteur inconnu : {redact(e.actor)[0]}")
+        raise RuleViolation("unknown_actor", "actor : acteur inconnu")
     if e.kind not in KINDS:
-        # Valeur reçue passée au scanner : un adaptateur peut appeler publish() sans l'API.
-        raise RuleViolation("unknown_kind", f"type d'événement inconnu : {redact(e.kind)[0]}")
+        # La valeur reçue n'est jamais recopiée (elle pourrait être un secret) : on nomme le champ.
+        raise RuleViolation("unknown_kind", "kind : type d'événement inconnu")
     if is_blank(e.subject):
         raise RuleViolation("subject_required", "l'événement doit avoir un sujet lisible")
     if e.kind in TASK_REQUIRED and not e.task:
@@ -94,8 +94,7 @@ def validate(e: Envelope) -> str:
             raise RuleViolation(f"invalid_{name}", f"payload.{name} doit être un texte")
     unknown_needs = sorted(set(e.needs) - ACTORS)
     if unknown_needs:
-        shown = [redact(n)[0] for n in unknown_needs]
-        raise RuleViolation("unknown_recipient", f"destinataires inconnus : {shown}")
+        raise RuleViolation("unknown_recipient", "needs : destinataire inconnu")
 
     match e.kind:
         case "working":

@@ -47,7 +47,7 @@ class RuleViolation(Exception):
 
 def check_transition(current: str, target: str) -> None:
     if target not in STATUSES:
-        raise RuleViolation("unknown_status", f"statut inconnu : {target}")
+        raise RuleViolation("unknown_status", "status : statut inconnu")
     if target == current:
         raise RuleViolation("same_status", f"la tâche est déjà en {target}")
     if target not in TRANSITIONS[current]:

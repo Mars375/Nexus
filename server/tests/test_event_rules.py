@@ -102,3 +102,16 @@ def test_unknown_actor_from_an_adapter_is_refused():
     with pytest.raises(RuleViolation) as refused:
         validate(envelope)
     assert refused.value.code == "unknown_actor"
+
+
+@pytest.mark.parametrize(
+    "fields", [{"actor": "haxor"}, {"kind": "teleported"}, {"kind": "question", "needs": ["haxor"]}]
+)
+def test_refusals_name_the_field_without_echoing_the_value(fields):
+    envelope = Envelope(
+        **({"actor": "helios", "kind": "claimed", "subject": "s", "task": "nx-task-1"} | fields)
+    )
+    with pytest.raises(RuleViolation) as refused:
+        validate(envelope)
+    message = refused.value.message
+    assert "haxor" not in message and "teleported" not in message

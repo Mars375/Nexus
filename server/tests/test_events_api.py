@@ -755,3 +755,17 @@ def test_http_api_refuses_unknown_actor_kind_or_recipient_with_422(client, field
     res = client.post("/api/events", json=body)
     assert res.status_code == 422, res.text
     assert client.get("/api/events", params={"task": ref}).json() == []
+
+
+def test_same_id_in_the_repeated_autumn_hour_compares_instants(client):
+    ref = task(client)
+    base = {"id": "evt_dst", "actor": "helios", "kind": "claimed", "subject": "s", "task": ref}
+    # 02:30+02:00 (00:30 UTC) puis 02:15+01:00 (01:15 UTC) : même heure murale, instants différents.
+    first = client.post("/api/events", json=base | {"at": "2026-10-25T02:30:00+02:00"})
+    assert first.status_code == 201, first.text
+
+    other = client.post("/api/events", json=base | {"at": "2026-10-25T02:15:00+01:00"})
+    assert other.json()["detail"]["code"] == "event_id_reused"
+
+    same_instant = client.post("/api/events", json=base | {"at": "2026-10-25T00:30:00+00:00"})
+    assert same_instant.status_code == 200  # même instant écrit en UTC : relecture

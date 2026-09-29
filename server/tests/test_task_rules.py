@@ -98,3 +98,9 @@ def test_second_explicit_main_is_refused():
         rules.resolve_role("main", other_main_in_progress=True)
     assert exc.value.code == "main_operation_taken"
     assert rules.resolve_role("auxiliary", other_main_in_progress=False) == "auxiliary"
+
+
+def test_unknown_status_refusal_does_not_echo_the_value():
+    with pytest.raises(RuleViolation) as refused:
+        rules.check_transition("todo", "ghp_" + "S" * 36)
+    assert "S" * 36 not in refused.value.message
