@@ -7,7 +7,6 @@ l'ajouter ici, et un paramètre de chemin inconnu fait échouer le test au lieu 
 from datetime import datetime
 
 import pytest
-from fastapi.routing import APIRoute
 
 AT = "2026-09-29T09:05:00+02:00"
 
@@ -18,7 +17,7 @@ def fill_path(path: str, values: dict[str, str]) -> str:
     if missing:
         raise AssertionError(
             f"paramètre de chemin sans valeur de test : {missing} dans {path} — "
-            "ajoute-le à PATH_VALUES dans test_provenance_contract.py"
+            "ajoute sa valeur au dict renvoyé par seed() dans test_provenance_contract.py"
         )
     return path.format(**values)
 
@@ -46,20 +45,33 @@ def check_entity(entity) -> None:
 
 
 def seed(client) -> dict[str, str]:
-    task = client.post("/api/tasks", json={"title": "Pont", "objective": "Lire"}).json()["id"]
-    client.post(f"/api/tasks/{task}/comments", json={"body": "noté"})
-    event = client.post("/api/events", json={
+    res = client.post("/api/tasks", json={"title": "Pont", "objective": "Lire"})
+    assert res.status_code == 201, (
+        f"POST /api/tasks → {res.status_code} {res.text}"
+    )
+    task = res.json()["id"]
+    res = client.post(f"/api/tasks/{task}/comments", json={"body": "noté"})
+    assert res.status_code == 201, (
+        f"POST /api/tasks/{{task}}/comments → {res.status_code} {res.text}"
+    )
+    res = client.post("/api/events", json={
         "id": "evt_contract", "at": AT, "actor": "helios", "kind": "claimed",
         "subject": "je prends", "task": task,
-    }).json()["id"]
+    })
+    assert res.status_code == 201, (
+        f"POST /api/events → {res.status_code} {res.text}"
+    )
+    event = res.json()["id"]
     return {"task_ref": task, "event_ref": event}
 
 
 def api_get_routes(app) -> list[str]:
+    # Sur FastAPI 0.141, les routeurs inclus avec app.include_router() ne sont pas aplatis
+    # dans app.routes (restent des objets _IncludedRouter) : on énumère app.openapi()["paths"].
+    paths = app.openapi().get("paths", {})
     return sorted(
-        route.path for route in app.routes
-        if isinstance(route, APIRoute) and "GET" in route.methods
-        and route.path.startswith("/api/")
+        path for path in paths
+        if path.startswith("/api/") and "get" in paths[path]
     )
 
 
@@ -71,8 +83,18 @@ def test_every_api_get_route_returns_entities_with_provenance(client):
         res = client.get(fill_path(path, values))
         assert res.status_code == 200, f"{path} → {res.status_code} {res.text}"
         found = entities(res.json())
+        if isinstance(res.json(), list):
+            assert found, f"{path} : aucune entité à vérifier"
         for entity in found:
             check_entity(entity)
+
+
+def test_the_walker_sees_every_router(client):
+    # Régression contre FastAPI 0.141 : app.routes ne contient pas les routeurs inclus aplatis.
+    routes = api_get_routes(client.app)
+    assert "/api/tasks" in routes, "routeur tasks oublié"
+    assert "/api/tasks/{task_ref}/history" in routes, "routeur tasks.history oublié"
+    assert "/api/events/{event_ref}" in routes, "routeur events oublié"
 
 
 def test_the_checker_catches_a_missing_measured_at():
@@ -88,7 +110,7 @@ def test_the_checker_ignores_nested_data_of_an_entity():
 
 
 def test_an_unknown_path_parameter_fails_loudly():
-    with pytest.raises(AssertionError, match="PATH_VALUES"):
+    with pytest.raises(AssertionError, match="seed"):
         fill_path("/api/things/{thing_ref}", {"task_ref": "nx-task-1"})
 
 
