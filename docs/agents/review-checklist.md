@@ -11,7 +11,7 @@ How to use it:
 
 ## 1. Secrets (ADR-006 — nothing secret is ever stored, logged or echoed)
 
-- [ ] Every value that reaches storage goes through `nexus.secrets` first: text fields, lists, **dict keys** and **values under credential-named keys** (`{"password": …}`, lists and objects included; every naming style: `CLIENT_SECRET`, `client-secret`, `clientSecret`, `ClientSecret`), identifiers (`id`, `run`), references.
+- [ ] Every value that reaches storage goes through `nexus.secrets` first: text fields, lists, **dict keys** and **values under credential-named keys** (`{"password": …}`, lists and objects included; every naming style: `CLIENT_SECRET`, `client-secret`, `clientSecret`, `ClientSecret`; HTTP credential headers too: `Authorization`, `Proxy-Authorization`, `Cookie`, whatever the scheme), identifiers (`id`, `run`), references.
 - [ ] Nothing received is echoed back in a response: validation errors (422), not-found messages (404), refusals (409), headers (`X-Nexus-Actor`). Use generic messages or known-safe values only.
 - [ ] Validation that happens *before* redaction (Pydantic) never returns the raw input (`RequestValidationError` handler strips `input`) **nor a raw field name**: an unknown key can itself be a secret, so every part of `loc` goes through the scanner before it reaches `loc` or `msg`.
 - [ ] Any field used to compare or look things up (event `id`, `run`, `payload.run_ref`, future references) that contains a secret is refused, not masked: two masked values (`run token=alpha`, `run token=beta`) would compare equal.
@@ -23,6 +23,7 @@ How to use it:
 - [ ] Input models forbid unknown fields (`extra="forbid"`): a misspelled field is a 422, never silently ignored.
 - [ ] Required text is stripped before length checks (`"   "` is empty).
 - [ ] Numbers: `bool` is rejected where a number is expected (`True` is an `int` in Python); `NaN`/`Infinity` are rejected before storage.
+- [ ] Every request body inherits `InputModel` (`nexus.validation`): unknown fields and lone UTF-16 surrogates (`"\ud800"`, keys included) are refused with a 422 — decoded fine, they cannot be encoded back and would break every later read.
 - [ ] Types inside free-form JSON (`payload`) are checked before they reach a typed column (e.g. `run_ref` must be a string).
 - [ ] References are parsed strictly (ASCII digits, bounded length): `²` or 5 000 digits give a 404, not a 500.
 - [ ] Two fields that describe the same thing (`run` vs `payload.run_ref`) must agree, or the request is refused.
@@ -32,7 +33,7 @@ How to use it:
 
 - [ ] Every read-then-write rule is safe under two simultaneous requests: a database constraint (unique/partial index) or the optimistic lock (`Task.version`), plus a test that simulates the race (see `test_*_race*` / `test_concurrent_*`).
 - [ ] When a lock only serializes a rule check (e.g. opening a run), a write conflict means re-read and re-check the rule instead of refusing blindly — another actor may legitimately succeed at the same time. Never replay an edit against the new state: a losing `PATCH` stays a 409 so the client reconciles, otherwise it silently overwrites the winning edit.
-- [ ] Idempotent endpoints: an identical resend returns the original (200), even when it races the first request — on **every** conflict path (unique constraint, version conflict, anti-noise check).
+- [ ] Endpoints keyed by a client identifier or fingerprint (e.g. events and their `id`): an identical resend returns the original (200), even when it races the first request — on **every** conflict path (unique constraint, version conflict, anti-noise check). Other idempotent operations keep their own documented contract (a repeated dependency `PUT` is a 204, a repeated `DELETE` a 404).
 - [ ] Idempotency fingerprints use canonical JSON (`sort_keys`) and include every field that makes two requests different (timestamps, run references).
 - [ ] Late or out-of-order messages (e.g. `done(r1)` after `working(r2)`, or a closer naming no run while one is active) are recorded but do not mutate current state.
 - [ ] A rule that depends on an optional identifier handles its absence explicitly (what does a `done` without `run` mean while a run is open?), and related rules share one definition (e.g. a single `_active_run` for opening runs and applying effects).
@@ -61,7 +62,7 @@ How to use it:
 - [ ] A failed background refresh keeps the last known data visible, marked as stale.
 - [ ] Every request has a timeout and forwards the query's abort signal: a server that accepts the connection but never answers must end in an error state, not an endless spinner.
 - [ ] Every state that matters on the board is visible on the card itself (e.g. both `main` and `auxiliary` operations), not only in the detail pane.
-- [ ] Pickers and menus only offer choices the server would accept (e.g. dependency candidates: no cycles, only resolved prerequisites for an advanced task); a choice that becomes invalid while held is dropped.
+- [ ] Pickers and menus only offer choices the server would accept (e.g. dependency candidates: no cycles, only resolved prerequisites for an advanced task); a choice that becomes invalid while held is kept visible, marked invalid with the reason, and blocks submission until the user changes it — never silently dropped (it is part of the draft).
 - [ ] User-facing French is proofread: imperative (`change-le`, not `changes-le`), articles (`Chargement…`, not `Chargement les commentaires…`).
 - [ ] After a mutation, every affected query (detail, comments, history) is refreshed.
 - [ ] Keyboard: every action reachable without a mouse (Enter opens, Space drags); inputs mirror server limits (`maxLength`).
