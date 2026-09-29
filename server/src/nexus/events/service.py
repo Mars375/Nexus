@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select, true
@@ -81,7 +81,7 @@ def publish(
         select(Event).where(Event.actor == envelope.actor, Event.actor_event_id == actor_event_id)
     )
     if existing is not None:
-        if _same(existing, envelope, task) and existing.at.timestamp() == at.timestamp():
+        if _same(existing, envelope, task) and _same_instant(existing.at, at):
             return existing, False
         raise RuleViolation(
             "event_id_reused",
@@ -145,9 +145,15 @@ def _winner_of_race(
     winner = session.scalar(
         select(Event).where(Event.actor == e.actor, Event.actor_event_id == actor_event_id)
     )
-    if winner is not None and _same(winner, e, task) and winner.at.timestamp() == at.timestamp():
+    if winner is not None and _same(winner, e, task) and _same_instant(winner.at, at):
         return winner
     return None
+
+
+def _same_instant(a: datetime, b: datetime) -> bool:
+    # Ramenées en UTC, les deux dates se comparent champ à champ, à la microseconde près ;
+    # ni float (précision perdue loin de 1970) ni comparaison inter-fuseaux (PEP 495, fold).
+    return a.astimezone(UTC) == b.astimezone(UTC)
 
 
 def get_event(session: Session, ref: str) -> Event:
@@ -217,33 +223,38 @@ def _same(existing: Event, e: Envelope, task: Task | None) -> bool:
 RUN_CLOSERS = frozenset({"done", "review", "failed", "handoff", "blocked"})
 
 
+def _active_run(
+    session: Session, actor: str, task: Task, before_id: int | None = None
+) -> tuple[bool, str | None]:
+    """Le run de l'agent sur la tâche : (encore ouvert ?, référence du dernier `working`).
+
+    Une clôture ne ferme que le run qu'elle nomme : une clôture sans run ne ferme qu'un run
+    sans référence, et une clôture tardive d'un ancien run ne libère pas le run actif.
+    """
+    query = select(Event).where(Event.actor == actor, Event.task_id == task.id)
+    if before_id is not None:
+        query = query.where(Event.id < before_id)
+    closed: set[str | None] = set()
+    # Du plus récent au plus ancien : seules les clôtures postérieures au dernier working jouent.
+    for previous in session.scalars(query.order_by(Event.id.desc())):
+        if previous.kind in RUN_CLOSERS:
+            closed.add(previous.run_ref)
+        elif previous.kind == "working":
+            return previous.run_ref not in closed, previous.run_ref
+    return False, None
+
+
 def _refuse_second_active_run(session: Session, e: Envelope, task: Task | None) -> None:
     """Un seul run actif par agent et par tâche (EVENT-PROTOCOL §4)."""
     if task is None:
         return
-    history = session.scalars(
-        select(Event)
-        .where(Event.actor == e.actor, Event.task_id == task.id)
-        .order_by(Event.id.desc())
-    )
-    # Du plus récent au plus ancien : les clôtures vues avant le dernier working ne comptent
-    # que si elles visent ce run (ou n'en nomment aucun) — une clôture tardive d'un ancien
-    # run ne libère pas le run actif.
-    closed_runs: list[str | None] = []
-    for previous in history:
-        if previous.kind in RUN_CLOSERS:
-            closed_runs.append(previous.run_ref)
-            continue
-        if previous.kind == "working":
-            if None in closed_runs or previous.run_ref in closed_runs:
-                return
-            if previous.run_ref != _run_ref(e):
-                raise RuleViolation(
-                    "run_already_active",
-                    f"{e.actor} a déjà un run actif sur {task.ref} : termine-le (done, review, "
-                    "failed, handoff ou blocked) avant d'en ouvrir un autre",
-                )
-            return
+    active, run_ref = _active_run(session, e.actor, task)
+    if active and run_ref != _run_ref(e):
+        raise RuleViolation(
+            "run_already_active",
+            f"{e.actor} a déjà un run actif sur {task.ref} : termine-le (done, review, "
+            "failed, handoff ou blocked, en nommant son run) avant d'en ouvrir un autre",
+        )
 
 
 def _refuse_noise(
@@ -273,25 +284,24 @@ def _refuse_noise(
 
 
 def _stale_run(session: Session, event: Event, task: Task) -> str | None:
-    """Si l'événement vise un autre run que le run actif de l'agent, la raison de l'ignorer.
+    """Si l'événement ne vise pas le run actif de l'agent, la raison de l'ignorer.
 
-    Ex. : `done(r1)` arrivé après `working(r2)` ne clôt pas la tâche pendant que r2 tourne.
+    Ex. : `done(r1)` arrivé après `working(r2)` ne clôt pas la tâche pendant que r2 tourne ;
+    un `done` sans run non plus, puisque rien ne dit qu'il ne vient pas de r1.
     """
-    if event.kind == "working" or event.run_ref is None:
+    if event.kind == "working":
         return None
-    last_working = session.scalar(
-        select(Event)
-        .where(
-            Event.actor == event.actor, Event.task_id == task.id, Event.kind == "working",
-            Event.id < event.id,
+    active, run_ref = _active_run(session, event.actor, task, before_id=event.id)
+    if not active or event.run_ref == run_ref:
+        return None
+    if event.run_ref is None:
+        return (
+            f"ne nomme aucun run, alors que le run actif de {event.actor} est {run_ref} : "
+            "précise le run concerné"
         )
-        .order_by(Event.id.desc())
-    )
-    if last_working is None or last_working.run_ref in (None, event.run_ref):
-        return None
     return (
         f"concerne le run {event.run_ref}, alors que le run actif de {event.actor} "
-        f"est {last_working.run_ref}"
+        f"est {run_ref}"
     )
 
 

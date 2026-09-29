@@ -64,7 +64,8 @@ def main(argv: list[str] | None = None) -> int:
             payload={"run_ref": run_ref})
     publish(args.base, args.actor, args.task, "progress", "À mi-chemin", payload={"percent": 50})
     evidence = [args.evidence] if args.evidence else []
-    publish(args.base, args.actor, args.task, "done", "Terminé", evidence=evidence)
+    # Chaque clôture nomme son run : sans lui, Nexus ne peut pas savoir quel run elle termine.
+    publish(args.base, args.actor, args.task, "done", "Terminé", evidence=evidence, run=run_ref)
     return 0
 
 

@@ -32,7 +32,8 @@ def test_claimed_progress_done_with_read_back(client):
     progress = publish(client, "progress", "40 %", task=ref, payload={"percent": 40})
     assert progress.status_code == 201
 
-    done = publish(client, "done", "Livré", task=ref, evidence=["commit:a1b2c3d"])
+    done = publish(client, "done", "Livré", task=ref, evidence=["commit:a1b2c3d"],
+                   run="session:abc")
     event = done.json()
     assert event["kind"] == "done"
     assert event["effects"] == [{"action": "status:done", "applied": True}]
@@ -51,7 +52,7 @@ def test_done_without_evidence_is_stored_as_review(client):
     ref = task(client, next_action="x")
     publish(client, "working", task=ref, payload={"run_ref": "r"})
 
-    event = publish(client, "done", "Fini ?", task=ref).json()
+    event = publish(client, "done", "Fini ?", task=ref, run="r").json()
 
     assert event["kind"] == "review"
     assert event["requested_kind"] == "done"
@@ -63,7 +64,7 @@ def test_blocked_moves_the_task_with_its_cause(client):
     publish(client, "working", task=ref, payload={"run_ref": "r"})
 
     publish(client, "blocked", "SSH Artémis injoignable", task=ref, body="Timeout Tailscale",
-            payload={"follow_up_at": "2026-09-29T09:00:00+02:00"}, needs=["loic"])
+            payload={"follow_up_at": "2026-09-29T09:00:00+02:00"}, needs=["loic"], run="r")
 
     t = client.get(f"/api/tasks/{ref}").json()
     assert t["status"] == "blocked"
@@ -242,7 +243,7 @@ def test_only_one_active_run_per_agent_and_task(client):
     })
     assert other.status_code == 201
 
-    publish(client, "blocked", task=ref, body="attente", payload={"plan": "p"})
+    publish(client, "blocked", task=ref, body="attente", payload={"plan": "p"}, run="r1")
     assert publish(client, "working", "Reprise", task=ref,
                    payload={"run_ref": "r2"}).status_code == 201
 
@@ -522,9 +523,68 @@ def test_partially_redacted_evidence_is_kept_as_proof_on_the_task(client):
     ref = task(client, next_action="x", expected_evidence="commit")
     publish(client, "working", task=ref, payload={"run_ref": "r1"})
 
-    done = publish(client, "done", "fini", task=ref, evidence=[f"commit:abc token={SECRET}"]).json()
+    done = publish(client, "done", "fini", task=ref, evidence=[f"commit:abc token={SECRET}"],
+                   run="r1").json()
 
     assert done["effects"] == [{"action": "status:done", "applied": True}]
     t = client.get(f"/api/tasks/{ref}").json()
     assert t["status"] == "done"
     assert t["evidence"] == ["commit:abc token=[REDACTED]"]
+
+
+@pytest.mark.parametrize(
+    ("kind", "fields"),
+    [
+        ("done", {"evidence": ["commit:r1"]}),
+        ("review", {"evidence": ["commit:r1"]}),
+        ("blocked", {"body": "attente", "payload": {"plan": "p"}}),
+        ("handoff", {"needs": ["aether"], "payload": {"next_action": "reprendre"}}),
+    ],
+)
+def test_runless_closer_does_not_touch_a_task_with_an_active_run(client, kind, fields):
+    ref = task(client, next_action="x")
+    publish(client, "working", "r1", task=ref, payload={"run_ref": "r1"})
+    publish(client, "blocked", "pause r1", task=ref, body="attente",
+            payload={"plan": "p", "run_ref": "r1"})
+    publish(client, "working", "r2", task=ref, payload={"run_ref": "r2"})
+    before = client.get(f"/api/tasks/{ref}").json()
+
+    late = publish(client, kind, "sans run", task=ref, **fields)
+
+    assert late.status_code == 201, late.text  # le fait est enregistré…
+    effect = late.json()["effects"][0]
+    assert effect["applied"] is False  # … sans modifier la tâche
+    assert "r2" in effect["reason"]
+    after = client.get(f"/api/tasks/{ref}").json()
+    assert (after["status"], after["lead_agent"], after["evidence"]) == (
+        before["status"], before["lead_agent"], before["evidence"]
+    )
+
+
+def test_runless_closer_does_not_free_the_active_run(client):
+    ref = task(client, next_action="x")
+    publish(client, "working", "r1", task=ref, payload={"run_ref": "r1"})
+    publish(client, "failed", "sans run", task=ref, body="timeout")
+
+    res = publish(client, "working", "r2", task=ref, payload={"run_ref": "r2"})
+    assert res.json()["detail"]["code"] == "run_already_active"
+
+
+def test_closer_without_any_open_run_still_applies(client):
+    ref = task(client, status="todo", next_action="x")
+    client.post(f"/api/tasks/{ref}/status", json={"status": "in_progress"})  # par Loïc
+
+    blocked = publish(client, "blocked", "bloqué d'emblée", task=ref, body="attente",
+                      payload={"plan": "p"}).json()
+
+    assert blocked["effects"] == [{"action": "status:blocked", "applied": True}]
+
+
+def test_same_id_with_microseconds_apart_far_from_epoch_is_refused(client):
+    ref = task(client)
+    base = {"id": "evt_far", "actor": "helios", "kind": "claimed", "subject": "s", "task": ref}
+    first = client.post("/api/events", json=base | {"at": "5000-06-01T00:00:00.000001+00:00"})
+    assert first.status_code == 201, first.text
+
+    other = client.post("/api/events", json=base | {"at": "5000-06-01T00:00:00.000002+00:00"})
+    assert other.json()["detail"]["code"] == "event_id_reused"
