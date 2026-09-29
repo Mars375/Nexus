@@ -209,3 +209,10 @@ def test_multi_part_http_credentials_are_masked_whole(text, expected):
 )
 def test_reference_needs_an_identifier_after_redaction(ref, blank):
     assert is_blank_reference(ref) is blank
+
+
+def test_folded_http_credential_header_is_masked_across_continuation_lines():
+    text = 'Authorization: Digest username="u",\n realm="r",\n\tresponse="deadbeef"\nsuite'
+    cleaned, found = redact(text)
+    assert cleaned == "Authorization: [REDACTED]\nsuite"
+    assert "deadbeef" not in cleaned and "credential" in found

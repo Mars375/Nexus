@@ -78,3 +78,20 @@ def test_unreadable_subject_is_refused(subject):
 @pytest.mark.parametrize("percent", [True, False])
 def test_boolean_percent_is_refused(percent):
     assert refused(env("progress", payload={"percent": percent})) == "invalid_percent"
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"kind": "ghp_" + "S" * 36},
+        {"kind": "question", "needs": ["loic", "ghp_" + "S" * 36]},
+    ],
+)
+def test_refusals_never_echo_a_secret_received_by_an_adapter(fields):
+    # Un adaptateur peut appeler publish() sans passer par le modèle Pydantic de l'API.
+    envelope = Envelope(
+        actor="helios", subject="s", task="nx-task-1", **({"kind": "claimed"} | fields)
+    )
+    with pytest.raises(RuleViolation) as refused:
+        validate(envelope)
+    assert "S" * 36 not in refused.value.message

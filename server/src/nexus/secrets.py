@@ -29,9 +29,11 @@ _FULL: list[tuple[str, re.Pattern[str]]] = [
 _URL_CREDENTIALS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^\s:/@]+:)([^\s@/]+)(@)")
 
 # En-tête HTTP d'identifiant écrit tel quel (« Authorization: Digest username="…", … »,
-# « Cookie: a=1; b=2 ») : sa valeur court jusqu'à la fin de la ligne, virgules et ; compris.
+# « Cookie: a=1; b=2 ») : sa valeur court jusqu'à la fin de la ligne, virgules et ; compris,
+# et continue sur les lignes repliées (qui commencent par une espace ou une tabulation).
 _HEADER_CREDENTIALS = re.compile(
-    r"(?im)(?<![\w.-])((?:proxy[_-]?)?authorization|(?:set[_-]?)?cookie)(\s*:\s*)(?![\"'\s])([^\r\n]+)"
+    r"(?im)(?<![\w.-])((?:proxy[_-]?)?authorization|(?:set[_-]?)?cookie)(\s*:\s*)(?![\"'\s])"
+    r"([^\r\n]+(?:\r?\n[ \t][^\r\n]*)*)"
 )
 
 # « mot de passe : xyz », « token=abc »… : on masque la valeur, on garde l'étiquette.

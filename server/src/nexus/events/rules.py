@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from nexus.actors import ACTORS, HUMANS
-from nexus.secrets import is_blank, is_blank_reference
+from nexus.secrets import is_blank, is_blank_reference, redact
 from nexus.tasks.rules import RuleViolation
 
 KINDS = (
@@ -70,7 +70,8 @@ def cause_of(e: Envelope) -> str | None:
 def validate(e: Envelope) -> str:
     """Vérifie l'événement et renvoie son type effectif (un `done` sans preuve devient `review`)."""
     if e.kind not in KINDS:
-        raise RuleViolation("unknown_kind", f"type d'événement inconnu : {e.kind}")
+        # Valeur reçue passée au scanner : un adaptateur peut appeler publish() sans l'API.
+        raise RuleViolation("unknown_kind", f"type d'événement inconnu : {redact(e.kind)[0]}")
     if is_blank(e.subject):
         raise RuleViolation("subject_required", "l'événement doit avoir un sujet lisible")
     if e.kind in TASK_REQUIRED and not e.task:
@@ -90,7 +91,8 @@ def validate(e: Envelope) -> str:
             raise RuleViolation(f"invalid_{name}", f"payload.{name} doit être un texte")
     unknown_needs = sorted(set(e.needs) - ACTORS)
     if unknown_needs:
-        raise RuleViolation("unknown_recipient", f"destinataires inconnus : {unknown_needs}")
+        shown = [redact(n)[0] for n in unknown_needs]
+        raise RuleViolation("unknown_recipient", f"destinataires inconnus : {shown}")
 
     match e.kind:
         case "working":
