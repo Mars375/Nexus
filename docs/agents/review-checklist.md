@@ -11,11 +11,11 @@ How to use it:
 
 ## 1. Secrets (ADR-006 — nothing secret is ever stored, logged or echoed)
 
-- [ ] Every value that reaches storage goes through `nexus.secrets` first: text fields, lists, **dict keys** and **values under credential-named keys** (`{"password": …}`, lists and objects included; every naming style: `CLIENT_SECRET`, `client-secret`, `clientSecret`, `ClientSecret`; HTTP credential headers too: `Authorization`, `Proxy-Authorization`, `Cookie`, whatever the scheme), identifiers (`id`, `run`), references.
+- [ ] Every value that reaches storage goes through `nexus.secrets` first: text fields, lists, **dict keys** and **values under credential-named keys** (`{"password": …}`, lists and objects included; every naming style: `CLIENT_SECRET`, `client-secret`, `clientSecret`, `ClientSecret`; HTTP credential headers too: `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, whatever the scheme, masked **whole** — multi-part values such as `Digest username="…", response="…"` or `a=1; b=2` must not leak past the first comma or space), identifiers (`id`, `run`), references.
 - [ ] Nothing received is echoed back in a response: validation errors (422), not-found messages (404), refusals (409), headers (`X-Nexus-Actor`). Use generic messages or known-safe values only.
 - [ ] Validation that happens *before* redaction (Pydantic) never returns the raw input (`RequestValidationError` handler strips `input`) **nor a raw field name**: an unknown key can itself be a secret, so every part of `loc` goes through the scanner before it reaches `loc` or `msg`.
 - [ ] Any field used to compare or look things up (event `id`, `run`, `payload.run_ref`, future references) that contains a secret is refused, not masked: two masked values (`run token=alpha`, `run token=beta`) would compare equal.
-- [ ] A value reduced to `[REDACTED]` (plus its label, e.g. `password=[REDACTED]`) counts as **empty** wherever a readable value is required (`secrets.is_blank`).
+- [ ] A value reduced to `[REDACTED]` (plus its label, e.g. `password=[REDACTED]`) counts as **empty** wherever a readable value is required (`secrets.is_blank`). A **reference** (evidence) must still carry an identifier once redacted spans and its label are removed (`secrets.is_blank_reference`): `commit: token=[REDACTED]` proves nothing.
 - [ ] Teaching the scanner a new secret *format* (a token shape it does not recognise yet) is tracked in issue #15 and does not block a PR — Loïc's decision. This never excuses a new data path: anything the PR stores, logs or echoes still goes through `nexus.secrets`.
 
 ## 2. Validation
@@ -38,7 +38,8 @@ How to use it:
 - [ ] Late or out-of-order messages (e.g. `done(r1)` after `working(r2)`, or a closer naming no run while one is active) are recorded but do not mutate current state.
 - [ ] A rule that depends on an optional identifier handles its absence explicitly (what does a `done` without `run` mean while a run is open?), and related rules share one definition (e.g. a single `_active_run` for opening runs and applying effects).
 - [ ] A lock taken only to serialize leaves no user-visible trace: a refused or no-op effect must not bump `updated_at` (lists are sorted by it).
-- [ ] Closing is permanent: once a run reference is closed, a late or replayed opener (`working(r1)` after `done(r1)`) is recorded without effect and never becomes the active run again.
+- [ ] Closing is permanent: once a run reference is closed, a late or replayed opener (`working(r1)` after `done(r1)`) **or a second closer** (`done(r1)` after `handoff(r1)`) is recorded without effect and never becomes the active run again.
+- [ ] Race handlers rely on SQLite's legacy transaction mode (implicit `BEGIN` only before the first write, so a lookup holds no snapshot): if that ever changes (explicit `BEGIN`, `autocommit=False`), conflict paths must also catch `OperationalError` (`SQLITE_BUSY_SNAPSHOT`), not only `IntegrityError`.
 
 ## 4. State invariants
 
