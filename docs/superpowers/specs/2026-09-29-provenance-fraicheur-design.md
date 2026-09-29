@@ -38,7 +38,7 @@ Toute donnée affichée dit d'où elle vient et quand elle a été mesurée ; un
 ### Composant `Provenance` (`web/src/Provenance.tsx`)
 
 - Props : `source`, `measuredAt`, `kind`, `url?`.
-- Rendu : `nexus.db · mesuré il y a 32 s` ; `· ouvrir` en lien (nouvel onglet, `rel="noreferrer"`) si `url` est présente.
+- Rendu : `source : nexus.db · mesuré il y a 32 s` (formulation déjà utilisée par la barre de santé) ; `· ouvrir` en lien (nouvel onglet, `rel="noreferrer"`) si `url` est présente.
 - Périmée : texte coloré « attention » et mot explicite « périmée » (la couleur seule ne suffit pas) ; `title` donne l'heure exacte de mesure.
 - Accessible : texte lisible par un lecteur d'écran, pas d'animation sans changement réel (motion : seul le passage à « périmée » est un changement d'état).
 
