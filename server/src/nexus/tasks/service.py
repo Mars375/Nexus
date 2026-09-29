@@ -211,14 +211,15 @@ def change_status(
         task.drop_reason = None
 
     final = target
-    if target == "done":
-        # Une preuve vide ou masquée (secret collé) ne prouve rien.
-        refs = [
-            e.strip() for e in evidence or []
-            if e and e.strip() and secrets.REDACTED not in e
-        ]
+    if target in ("done", "review"):
+        # Une preuve vide ou réduite à un secret masqué ne prouve rien ; une preuve dont il
+        # reste une référence lisible (« commit:abc token=[REDACTED] ») compte. Même règle
+        # que les événements (secrets.is_blank_reference : il doit rester un identifiant).
+        # Jointe à une mise en review, elle reste sur la tâche : Loïc peut ensuite la clore.
+        refs = [e.strip() for e in evidence or [] if not secrets.is_blank_reference(e)]
         if refs:
             task.evidence = list(dict.fromkeys([*task.evidence, *refs]))
+    if target == "done":
         final = rules.resolve_done(task.expected_evidence, task.evidence)
         if final == current:  # déjà en review, toujours sans preuve
             raise RuleViolation(
@@ -301,6 +302,19 @@ def add_dependency(session: Session, task: Task, other: Task, actor: str) -> Non
     session.add(TaskDependency(task_id=task.id, depends_on_id=other.id))
     task.updated_at = now()
     _record(session, task, actor, "linked", {"depends_on": [None, other.ref]})
+
+
+def attach_evidence(session: Session, task: Task, evidence: list[str], actor: str) -> None:
+    """Joint des preuves sans changer de statut (ex. review déjà en cours, sans preuve)."""
+    refs = [e.strip() for e in evidence if not secrets.is_blank_reference(e)]
+    merged = list(dict.fromkeys([*task.evidence, *refs]))
+    if not refs:
+        raise RuleViolation("evidence_required", "evidence : aucune preuve lisible")
+    if merged == task.evidence:
+        raise RuleViolation("evidence_unchanged", "evidence : déjà jointe à la tâche")
+    before, task.evidence = task.evidence, merged
+    task.updated_at = now()
+    _record(session, task, actor, "updated", {"evidence": [before, merged]})
 
 
 def remove_dependency(session: Session, task: Task, other: Task, actor: str) -> None:

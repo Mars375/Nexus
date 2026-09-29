@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Annotated, Literal, Self
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, model_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -16,6 +16,7 @@ from nexus.clock import now
 from nexus.models import Task, TaskComment, TaskHistory
 from nexus.tasks import service
 from nexus.tasks.rules import RuleViolation
+from nexus.validation import InputModel
 
 Status =Literal["backlog", "todo", "in_progress", "blocked", "review", "done", "dropped"]
 Priority = Literal["low", "normal", "high", "critical"]
@@ -80,8 +81,7 @@ def commit(session: Session) -> None:
 # --- Schémas ------------------------------------------------------------------------------
 
 
-class TaskCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid")  # un champ inconnu n'est jamais ignoré en silence
+class TaskCreate(InputModel):
 
     title: Title
     objective: Text
@@ -104,8 +104,7 @@ NOT_NULLABLE = frozenset(
 )
 
 
-class TaskUpdate(BaseModel):
-    model_config = ConfigDict(extra="forbid")  # un champ inconnu n'est jamais ignoré en silence
+class TaskUpdate(InputModel):
 
     title: Title | None = None
     objective: Text | None = None
@@ -129,8 +128,7 @@ class TaskUpdate(BaseModel):
         return self
 
 
-class StatusChange(BaseModel):
-    model_config = ConfigDict(extra="forbid")  # un champ inconnu n'est jamais ignoré en silence
+class StatusChange(InputModel):
 
     status: Status
     reason: str | None = None
@@ -142,8 +140,7 @@ class StatusChange(BaseModel):
     role: Role | None = None
 
 
-class CommentIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")  # un champ inconnu n'est jamais ignoré en silence
+class CommentIn(InputModel):
 
     body: str = Field(min_length=1)
 

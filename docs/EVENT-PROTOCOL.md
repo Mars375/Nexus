@@ -123,9 +123,29 @@ Terminé avec preuve :
 ## 6. Transport
 
 - **API locale Nexus (Phase 1) :** un agent publie par `POST /api/events` ; Nexus valide (champs requis, anti-patterns §7, scan de secrets) puis écrit dans `nexus.db`. C'est le chemin des agents lancés ailleurs (ADR-015 b).
-- **Adaptateurs d'exécution (Phase 2) :** pour un travail confié, l'adaptateur traduit les événements natifs en événements Nexus (`source` = nom de l'adaptateur). Ex. Hermes : `claimed` → `claimed`, `blocked` → `blocked`, `review_requested` → `review`, `completed` → `done` (preuves reprises du `metadata` de complétion).
+- **Adaptateurs d'exécution (Phase 2) :** pour un travail confié, l'adaptateur traduit les événements natifs en événements Nexus (`origin` = nom de l'adaptateur). Ex. Hermes : `claimed` → `claimed`, `blocked` → `blocked`, `review_requested` → `review`, `completed` → `done` (preuves reprises du `metadata` de complétion).
 - **Read-back :** l'émetteur relit l'événement (`GET /api/events/<id>`) et confirme sa visibilité ; tant que ce n'est pas confirmé, il reste `unknown` côté émetteur.
 - **Diffusion :** l'UI reçoit les nouveaux événements par WebSocket ; les alertes urgentes (`needs_human`, `blocked` critique) partent aussi sur Telegram.
+
+## 6 bis. Effets sur la tâche (implémentés en Phase 1)
+
+Un événement valide est **toujours enregistré** (c'est un fait déclaré). Ses effets sur la tâche passent par les règles des tâches ; un effet refusé est consigné dans `effects` avec sa raison, sans faire échouer la publication.
+
+| Kind | Effet sur la tâche |
+|---|---|
+| `claimed` | l'émetteur devient agent principal |
+| `working` | passage en `in_progress` (ouvre le run) |
+| `blocked` | passage en `blocked` avec cause, plan, relance |
+| `review` | passage en `review`, avec les preuves jointes (Loïc peut ensuite clore sans les redemander) |
+| `done` | passage en `done` avec les preuves (sans preuve : l'événement est stocké en `review`) |
+| `handoff` | le destinataire devient agent principal ; la prochaine action est mise à jour |
+| `progress`, `question`, `needs_human`, `failed`, `unknown` | aucun changement d'état : visibles dans l'historique et les vues |
+
+Une clôture (`done`, `review`, `blocked`, `handoff`, `failed`) doit nommer son run (`run` ou `payload.run_ref`). Si elle vise un autre run que le run actif de l'agent (ex. `done(r1)` arrivé après `working(r2)`) ou n'en nomme aucun alors qu'un run est actif, elle est enregistrée mais ne modifie pas la tâche et ne ferme pas le run actif. Une référence de run close l'est pour de bon : un `working` tardif ou rejoué de ce run est enregistré sans rouvrir la tâche, et une seconde clôture de ce run (`done(r1)` après `handoff(r1)`) est enregistrée sans effet ; pour reprendre, on ouvre un nouveau run. Un seul run actif par agent et par tâche ; un `handoff` nomme **un seul** destinataire.
+
+Autres garanties : un renvoi du même `id` par le même acteur est une relecture (pas de doublon) ; un même `id` réutilisé pour un autre contenu est refusé ; le même fait republié dans les 10 minutes est refusé comme bruit ; les secrets sont masqués avant écriture ; un identifiant d'événement ou une référence de run qui contient un secret est refusé (masqué, il ne serait plus unique).
+
+Exemple exécutable : `uv run python -m nexus.demo_agent --task nx-task-1 --actor helios --evidence commit:…` (`server/src/nexus/demo_agent.py`).
 
 ## 7. Anti-patterns (refusés)
 

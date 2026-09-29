@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy import JSON, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.db import AwareDateTime, Base
@@ -100,3 +100,38 @@ class TaskHistory(Base):
     at: Mapped[datetime] = mapped_column(AwareDateTime)
     action: Mapped[str] = mapped_column(String(32))
     changes: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class Event(Base):
+    """Fait publié par un acteur (EVENT-PROTOCOL) ; immuable une fois écrit."""
+
+    __tablename__ = "events"
+    __table_args__ = (
+        # Un même identifiant d'acteur ne crée jamais deux événements (renvoi = relecture).
+        UniqueConstraint("actor", "actor_event_id", name="uq_events_actor_event_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    actor: Mapped[str] = mapped_column(String(32), index=True)
+    actor_event_id: Mapped[str] = mapped_column(String(128))
+    at: Mapped[datetime] = mapped_column(AwareDateTime)
+    received_at: Mapped[datetime] = mapped_column(AwareDateTime)
+    task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="SET NULL"), index=True
+    )
+    run_ref: Mapped[str | None] = mapped_column(String(128))
+    kind: Mapped[str] = mapped_column(String(16), index=True)
+    requested_kind: Mapped[str | None] = mapped_column(String(16))
+    subject: Mapped[str] = mapped_column(Text)
+    body: Mapped[str | None] = mapped_column(Text)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    evidence: Mapped[list[str]] = mapped_column(JSON, default=list)
+    needs: Mapped[list[str]] = mapped_column(JSON, default=list)
+    redacted: Mapped[list[str]] = mapped_column(JSON, default=list)
+    # D'où vient l'événement : « api » (agent direct) ou le nom d'un adaptateur (hermes…).
+    origin: Mapped[str] = mapped_column(String(32))
+    effects: Mapped[list[dict]] = mapped_column(JSON, default=list)
+
+    @property
+    def ref(self) -> str:
+        return f"nx-evt-{self.id}"

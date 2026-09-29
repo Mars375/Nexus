@@ -97,7 +97,7 @@ Fait structuré publié par un acteur (voir [EVENT-PROTOCOL.md](EVENT-PROTOCOL.m
 | `payload` | données spécifiques au kind |
 | `evidence` | refs |
 | `needs` | destinataires attendus (question/needs_human/handoff) |
-| `source` | `api` (agent direct) ou adaptateur (`hermes`, `codex`…) |
+| `origin` | `api` (agent direct) ou adaptateur (`hermes`, `codex`…). Distinct de la provenance `source` (où la donnée a été lue), portée par toute réponse |
 
 ### 2.7 Conversation — native ou externe
 
