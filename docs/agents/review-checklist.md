@@ -1,19 +1,20 @@
 # Pre-PR review checklist
 
-Run this checklist **before opening a pull request**. The Codex review bot should confirm the work, not discover these issues: every item below comes from a real finding on PRs #9–#14 (September 2026), where each missed case cost a review round.
+Run this checklist **before opening a pull request**. The Codex review bot should confirm the work, not discover these issues: every item below comes from a real finding on PRs #9–#19 (September 2026), where each missed case cost a review round.
 
 How to use it:
 
 1. While planning, list which sections apply to the change and write the edge cases down (in the plan or the PR body).
 2. Write the tests for those cases first (TDD), then the code.
 3. Before opening the PR, walk through every applicable box and note in the PR body what was checked and what does not apply.
+4. After every bot round: search the whole codebase for the same pattern and fix every instance, not only the flagged line; then add the lesson to this checklist so the next PR does not repeat it.
 
 ## 1. Secrets (ADR-006 — nothing secret is ever stored, logged or echoed)
 
 - [ ] Every value that reaches storage goes through `nexus.secrets` first: text fields, lists, **dict keys** and **values under credential-named keys** (`{"password": …}`, lists and objects included), identifiers (`id`, `run`), references.
 - [ ] Nothing received is echoed back in a response: validation errors (422), not-found messages (404), refusals (409), headers (`X-Nexus-Actor`). Use generic messages or known-safe values only.
 - [ ] Validation that happens *before* redaction (Pydantic) never returns the raw input (`RequestValidationError` handler strips `input`).
-- [ ] An identifier that contains a secret is refused, not masked (masking breaks uniqueness).
+- [ ] Any field used to compare or look things up (event `id`, `run`, `payload.run_ref`, future references) that contains a secret is refused, not masked: two masked values (`run token=alpha`, `run token=beta`) would compare equal.
 - [ ] A value reduced to `[REDACTED]` (plus its label, e.g. `password=[REDACTED]`) counts as **empty** wherever a readable value is required (`secrets.is_blank`).
 - [ ] Teaching the scanner a new secret *format* (a token shape it does not recognise yet) is tracked in issue #15 and does not block a PR — Loïc's decision. This never excuses a new data path: anything the PR stores, logs or echoes still goes through `nexus.secrets`.
 
@@ -34,6 +35,8 @@ How to use it:
 - [ ] Idempotent endpoints: an identical resend returns the original (200), even when it races the first request — on **every** conflict path (unique constraint, version conflict, anti-noise check).
 - [ ] Idempotency fingerprints use canonical JSON (`sort_keys`) and include every field that makes two requests different (timestamps, run references).
 - [ ] Late or out-of-order messages (e.g. `done(r1)` after `working(r2)`, or a closer naming no run while one is active) are recorded but do not mutate current state.
+- [ ] A rule that depends on an optional identifier handles its absence explicitly (what does a `done` without `run` mean while a run is open?), and related rules share one definition (e.g. a single `_active_run` for opening runs and applying effects).
+- [ ] A lock taken only to serialize leaves no user-visible trace: a refused or no-op effect must not bump `updated_at` (lists are sorted by it).
 
 ## 4. State invariants
 
@@ -53,12 +56,29 @@ How to use it:
 
 - [ ] The form enforces the same rules as the server before enabling Save (title, objective, next action, block follow-up, evidence on done tasks, dependencies); the reason is shown next to the button.
 - [ ] Polling or refresh never discards an unsaved draft; only fields the user edited are sent; external changes are signalled.
+- [ ] Every query renders its loading, error and stale states — detail sections and sub-resources (comments, history) too, not only the main list. A blank section is never an acceptable failure state.
 - [ ] A failed background refresh keeps the last known data visible, marked as stale.
+- [ ] Pickers and menus only offer choices the server would accept (e.g. dependency candidates: no cycles, only resolved prerequisites for an advanced task); a choice that becomes invalid while held is dropped.
+- [ ] User-facing French is proofread: imperative (`change-le`, not `changes-le`), articles (`Chargement…`, not `Chargement les commentaires…`).
 - [ ] After a mutation, every affected query (detail, comments, history) is refreshed.
 - [ ] Keyboard: every action reachable without a mouse (Enter opens, Space drags); inputs mirror server limits (`maxLength`).
 - [ ] End-to-end tests cover the scenario where an agent changes the data while the user is looking at it.
 
-## 7. Before opening the PR
+## 7. Dates and times
+
+- [ ] Compare instants, never text or floats. Server: normalise aware datetimes to UTC and compare them (`.timestamp()` loses microseconds far from 1970; comparing across time zones trips over PEP 495 `fold`). Web: compare `Date.parse(...)` values, never ISO strings (two dates in the repeated autumn hour carry different offsets).
+- [ ] Tests include the Europe/Paris fall-back hour (`2026-10-25T02:15:00+01:00` is after `02:30:00+02:00`) and a far-future date with microseconds.
+
+## 8. Tooling and repository hygiene
+
+- [ ] Hooks check exactly what will be committed: unstaged changes **and untracked files** are set aside first, and tool configuration is the indexed one (gitleaks always reads the scanned directory's `.gitleaksignore`). Prove each hook rule with a scenario that fails first, then passes.
+- [ ] Secret-scanner exceptions are exact fingerprints (commit, file, rule, line), never a whole path; fake secrets in tests are assembled at runtime (`"ghp_" + "A" * 36`).
+- [ ] Adding an ignore rule also untracks files it already matches (`git ls-files -ci --exclude-standard` must print nothing).
+- [ ] Scripts edited with `sed`/`perl` are re-read (`cat -A`): an escaping mistake silently turned a hook check into a no-op.
+- [ ] Docs and README only name commands that exist on that branch; a dependency on another PR is stated and resolved by merge order, then a rebase.
+- [ ] Instructions in docs are reviewed like a spec: they must not read as permission for the wrong behaviour (e.g. "re-check after a conflict" must not mean "replay the losing edit").
+
+## 9. Before opening the PR
 
 - [ ] `pnpm test`, `pnpm lint`, `pnpm --dir web build`, and the Playwright suite pass locally.
 - [ ] Migrations tested on an existing database, not only a fresh one.
