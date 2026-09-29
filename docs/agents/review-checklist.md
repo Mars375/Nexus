@@ -37,6 +37,7 @@ How to use it:
 - [ ] Late or out-of-order messages (e.g. `done(r1)` after `working(r2)`, or a closer naming no run while one is active) are recorded but do not mutate current state.
 - [ ] A rule that depends on an optional identifier handles its absence explicitly (what does a `done` without `run` mean while a run is open?), and related rules share one definition (e.g. a single `_active_run` for opening runs and applying effects).
 - [ ] A lock taken only to serialize leaves no user-visible trace: a refused or no-op effect must not bump `updated_at` (lists are sorted by it).
+- [ ] Closing is permanent: once a run reference is closed, a late or replayed opener (`working(r1)` after `done(r1)`) is recorded without effect and never becomes the active run again.
 
 ## 4. State invariants
 
@@ -48,7 +49,7 @@ How to use it:
 ## 5. Provenance and honesty (ADR-005)
 
 - [ ] Every API response item carries `source` and `measured_at`; comments, history and sub-resources included.
-- [ ] `source` (where the data was read) is never confused with an origin field (`origin`: `api` or adapter name).
+- [ ] Three notions are never mixed: a response's `source` + `measured_at` say where and when the item was read (`nexus.db`); `Task.origin` says where the task came from (message, mail, decision); `Event.origin` names the channel that published the event (`api` or an adapter such as `hermes`) — `DATA-MODEL.md` calls it `Event.source` until #13 renames it.
 - [ ] Unknown or unreadable external data becomes `unknown` with a reason — never a guessed state (e.g. a non-boolean `Online` field).
 - [ ] Anything slow or external has a timeout and a startup fallback that does not block the API (serve an `unknown` snapshot first).
 
@@ -58,6 +59,8 @@ How to use it:
 - [ ] Polling or refresh never discards an unsaved draft; only fields the user edited are sent; external changes are signalled.
 - [ ] Every query renders its loading, error and stale states — detail sections and sub-resources (comments, history) too, not only the main list. A blank section is never an acceptable failure state.
 - [ ] A failed background refresh keeps the last known data visible, marked as stale.
+- [ ] Every request has a timeout and forwards the query's abort signal: a server that accepts the connection but never answers must end in an error state, not an endless spinner.
+- [ ] Every state that matters on the board is visible on the card itself (e.g. both `main` and `auxiliary` operations), not only in the detail pane.
 - [ ] Pickers and menus only offer choices the server would accept (e.g. dependency candidates: no cycles, only resolved prerequisites for an advanced task); a choice that becomes invalid while held is dropped.
 - [ ] User-facing French is proofread: imperative (`change-le`, not `changes-le`), articles (`Chargement…`, not `Chargement les commentaires…`).
 - [ ] After a mutation, every affected query (detail, comments, history) is refreshed.
