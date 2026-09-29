@@ -136,7 +136,7 @@ Un événement valide est **toujours enregistré** (c'est un fait déclaré). Se
 | `claimed` | l'émetteur devient agent principal |
 | `working` | passage en `in_progress` (ouvre le run) |
 | `blocked` | passage en `blocked` avec cause, plan, relance |
-| `review` | passage en `review` |
+| `review` | passage en `review`, avec les preuves jointes (Loïc peut ensuite clore sans les redemander) |
 | `done` | passage en `done` avec les preuves (sans preuve : l'événement est stocké en `review`) |
 | `handoff` | le destinataire devient agent principal ; la prochaine action est mise à jour |
 | `progress`, `question`, `needs_human`, `failed`, `unknown` | aucun changement d'état : visibles dans l'historique et les vues |

@@ -372,7 +372,7 @@ def _apply_effects(session: Session, event: Event, e: Envelope, task: Task) -> l
                 follow_up_at=datetime.fromisoformat(follow_up) if follow_up else None,
             )
         case "review":
-            move("review")
+            move("review", evidence=event.evidence)
         case "done":
             move("done", evidence=event.evidence)
         case "handoff":

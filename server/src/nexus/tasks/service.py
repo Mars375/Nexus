@@ -211,13 +211,15 @@ def change_status(
         task.drop_reason = None
 
     final = target
-    if target == "done":
+    if target in ("done", "review"):
         # Une preuve vide ou réduite à un secret masqué ne prouve rien ; une preuve dont il
         # reste une référence lisible (« commit:abc token=[REDACTED] ») compte. Même règle
         # que les événements (secrets.is_blank_reference : il doit rester un identifiant).
+        # Jointe à une mise en review, elle reste sur la tâche : Loïc peut ensuite la clore.
         refs = [e.strip() for e in evidence or [] if not secrets.is_blank_reference(e)]
         if refs:
             task.evidence = list(dict.fromkeys([*task.evidence, *refs]))
+    if target == "done":
         final = rules.resolve_done(task.expected_evidence, task.evidence)
         if final == current:  # déjà en review, toujours sans preuve
             raise RuleViolation(

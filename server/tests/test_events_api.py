@@ -729,3 +729,17 @@ def test_done_whose_evidence_is_only_a_redacted_label_goes_to_review(client):
 
     assert event["kind"] == "review"
     assert client.get(f"/api/tasks/{ref}").json()["status"] == "review"
+
+
+def test_review_evidence_is_attached_so_loic_can_close_the_task(client):
+    ref = task(client, next_action="x", expected_evidence="le commit")
+    publish(client, "working", task=ref, payload={"run_ref": "r1"})
+
+    review = publish(client, "review", "à relire", task=ref, run="r1",
+                     evidence=["commit:a1b2c3d"]).json()
+
+    assert review["effects"] == [{"action": "status:review", "applied": True}]
+    assert client.get(f"/api/tasks/{ref}").json()["evidence"] == ["commit:a1b2c3d"]
+    # Loïc valide : la preuve de l'agent suffit, la tâche se clôt.
+    closed = client.post(f"/api/tasks/{ref}/status", json={"status": "done"}).json()
+    assert closed["status"] == "done"
