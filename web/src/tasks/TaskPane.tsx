@@ -369,6 +369,24 @@ function Dependencies({ task, tasks }: { task: Task; tasks: Task[] }) {
   )
 }
 
+/** Chargement, échec ou données non à jour d'une section de détail (ADR-005 : jamais de vide muet). */
+function LoadState({ query, what, label }: {
+  query: { isPending: boolean; isError: boolean; data: unknown }
+  what: string
+  label: string
+}) {
+  if (query.isPending) return <p className="text-xs text-muted">Chargement…</p>
+  if (query.isError && !query.data)
+    return <p className="text-xs text-danger">Impossible de lire {what} : le serveur Nexus ne répond pas.</p>
+  if (query.isError)
+    return (
+      <p role="status" className="mb-2 text-xs text-attention">
+        {label} non à jour : le dernier rafraîchissement a échoué.
+      </p>
+    )
+  return null
+}
+
 function Comments({ id }: { id: string }) {
   const comments = useComments(id)
   const add = useAddComment(id)
@@ -382,6 +400,7 @@ function Comments({ id }: { id: string }) {
 
   return (
     <Section title="Commentaires">
+      <LoadState query={comments} what="les commentaires" label="Commentaires" />
       <ul className="grid gap-3">
         {comments.data?.map((c) => (
           <li key={c.id} className="text-xs">
@@ -441,6 +460,7 @@ function History({ id }: { id: string }) {
   const history = useHistory(id)
   return (
     <Section title="Historique">
+      <LoadState query={history} what="l’historique" label="Historique" />
       <ol className="grid gap-1.5 text-xs">
         {history.data
           ?.slice()
