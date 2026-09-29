@@ -38,7 +38,8 @@ How to use it:
 - [ ] Late or out-of-order messages (e.g. `done(r1)` after `working(r2)`, or a closer naming no run while one is active) are recorded but do not mutate current state.
 - [ ] A rule that depends on an optional identifier handles its absence explicitly (what does a `done` without `run` mean while a run is open?), and related rules share one definition (e.g. a single `_active_run` for opening runs and applying effects).
 - [ ] A lock taken only to serialize leaves no user-visible trace: a refused or no-op effect must not bump `updated_at` (lists are sorted by it).
-- [ ] Closing is permanent: once a run reference is closed, a late or replayed opener (`working(r1)` after `done(r1)`) is recorded without effect and never becomes the active run again.
+- [ ] Closing is permanent: once a run reference is closed, a late or replayed opener (`working(r1)` after `done(r1)`) **or a second closer** (`done(r1)` after `handoff(r1)`) is recorded without effect and never becomes the active run again.
+- [ ] Race handlers rely on SQLite's legacy transaction mode (implicit `BEGIN` only before the first write, so a lookup holds no snapshot): if that ever changes (explicit `BEGIN`, `autocommit=False`), conflict paths must also catch `OperationalError` (`SQLITE_BUSY_SNAPSHOT`), not only `IntegrityError`.
 
 ## 4. State invariants
 

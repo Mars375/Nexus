@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { Task } from '@/api'
 import { TaskPane } from './TaskPane'
@@ -66,4 +66,34 @@ test('un rafraîchissement raté garde les détails connus, signalés comme non 
   expect(await screen.findByText('Premier jet')).toBeInTheDocument()
   expect(await screen.findByText(/Commentaires non à jour/)).toBeInTheDocument()
   expect(await screen.findByText(/Historique non à jour/)).toBeInTheDocument()
+})
+
+test('un choix de dépendance devenu invalide reste affiché, avec sa raison, et bloque l’ajout', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json([])))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const current = { ...TASK, status: 'in_progress' as const }
+  const prereq = { ...TASK, id: 'nx-task-2', title: 'Prérequis', status: 'done' as const }
+  const other = { ...TASK, id: 'nx-task-3', title: 'Autre', status: 'dropped' as const }
+  const pane = (tasks: Task[]) => (
+    <QueryClientProvider client={client}>
+      <TaskPane task={current} tasks={tasks} onClose={() => {}} />
+    </QueryClientProvider>
+  )
+  const { rerender } = render(pane([current, prereq, other]))
+  const picker = screen.getByLabelText('Tâche dont celle-ci dépend') as HTMLSelectElement
+  const add = screen.getByRole('button', { name: 'Ajouter' })
+
+  fireEvent.change(picker, { target: { value: 'nx-task-2' } })
+  expect(add).toBeEnabled()
+
+  // Un agent rouvre le prérequis pendant que Loïc hésite.
+  rerender(pane([current, { ...prereq, status: 'todo' }, other]))
+
+  expect(picker.value).toBe('nx-task-2')
+  expect(screen.getByRole('alert')).toHaveTextContent(/pas encore traitée/)
+  expect(add).toBeDisabled()
+
+  fireEvent.change(picker, { target: { value: 'nx-task-3' } })
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  expect(add).toBeEnabled()
 })

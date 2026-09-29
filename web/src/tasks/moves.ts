@@ -42,35 +42,36 @@ export function dependencyBlock(task: Task, to: Status, all: Task[]): string | n
 }
 
 /**
- * Tâches que `task` peut accepter comme nouvelle dépendance, selon les mêmes règles que le
- * serveur : pas elle-même, pas une dépendance existante, pas de cycle, et une tâche déjà
- * avancée ne peut attendre qu'un prérequis déjà traité.
+ * Pourquoi `task` ne peut pas dépendre de `otherId`, selon les mêmes règles que le serveur ;
+ * null si c'est possible. Sert à filtrer les candidats et à expliquer un choix devenu invalide.
  */
-export function dependencyCandidates(task: Task, all: Task[]): Task[] {
+export function dependencyRefusal(task: Task, otherId: string, all: Task[]): string | null {
   const byId = new Map(all.map((t) => [t.id, t]))
-  const reachesTask = (start: Task): boolean => {
-    const seen = new Set<string>()
-    const stack = [start]
-    while (stack.length) {
-      const current = stack.pop()!
-      if (current.id === task.id) return true
-      if (seen.has(current.id)) continue
-      seen.add(current.id)
-      for (const id of current.depends_on) {
-        const next = byId.get(id)
-        if (next) stack.push(next)
-      }
-    }
-    return false
+  const other = byId.get(otherId)
+  if (!other) return 'Cette tâche n’existe plus.'
+  if (other.id === task.id) return 'Une tâche ne peut pas dépendre d’elle-même.'
+  if (task.depends_on.includes(other.id)) return 'Cette dépendance est déjà posée.'
+  if (GATED_BY_DEPENDENCIES.includes(task.status) && !DEPENDENCY_RESOLVED.includes(other.status)) {
+    return `« ${other.title} » n’est pas encore traitée : une tâche déjà avancée ne peut plus l’attendre.`
   }
-  const advanced = GATED_BY_DEPENDENCIES.includes(task.status)
-  return all.filter(
-    (t) =>
-      t.id !== task.id &&
-      !task.depends_on.includes(t.id) &&
-      (!advanced || DEPENDENCY_RESOLVED.includes(t.status)) &&
-      !reachesTask(t),
-  )
+  const seen = new Set<string>()
+  const stack = [other]
+  while (stack.length) {
+    const current = stack.pop()!
+    if (current.id === task.id) return `« ${other.title} » dépend déjà de cette tâche : cycle refusé.`
+    if (seen.has(current.id)) continue
+    seen.add(current.id)
+    for (const id of current.depends_on) {
+      const next = byId.get(id)
+      if (next) stack.push(next)
+    }
+  }
+  return null
+}
+
+/** Tâches que `task` peut accepter comme nouvelle dépendance. */
+export function dependencyCandidates(task: Task, all: Task[]): Task[] {
+  return all.filter((t) => dependencyRefusal(task, t.id, all) === null)
 }
 
 export function canMove(from: Status, to: Status): boolean {

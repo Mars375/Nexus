@@ -1,7 +1,14 @@
 import { describe, expect, test } from 'vitest'
 import type { Task } from '@/api'
 import { applyFilters, NO_FILTER } from './filters'
-import { canMove, dependencyBlock, dependencyCandidates, moveNeeds, needsPrompt } from './moves'
+import {
+  canMove,
+  dependencyBlock,
+  dependencyCandidates,
+  dependencyRefusal,
+  moveNeeds,
+  needsPrompt,
+} from './moves'
 import { compareTasks } from './vocabulary'
 
 const NOW = new Date('2026-09-28T12:00:00+02:00').getTime()
@@ -180,5 +187,32 @@ describe('ordre des échéances', () => {
     const recent = task({ id: 'recent', updated_at: '2026-10-25T02:15:00+01:00' })
     const old = task({ id: 'old', updated_at: '2026-10-25T02:30:00+02:00' })
     expect([old, recent].sort(compareTasks).map((t) => t.id)).toEqual(['recent', 'old'])
+  })
+})
+
+describe('raison du refus d’une dépendance', () => {
+  const current = task({ id: 'c', status: 'in_progress' })
+
+  test('une tâche non traitée ne peut pas devenir prérequis d’une tâche avancée', () => {
+    const pending = task({ id: 'p', status: 'todo' })
+    expect(dependencyRefusal(current, 'p', [current, pending])).toMatch(/pas encore traitée/)
+  })
+
+  test('un cycle est signalé', () => {
+    const a = task({ id: 'a', status: 'todo' })
+    const b = task({ id: 'b', status: 'todo', depends_on: ['a'] })
+    expect(dependencyRefusal(a, 'b', [a, b])).toMatch(/cycle/)
+  })
+
+  test('une dépendance déjà posée ou une tâche disparue est signalée', () => {
+    const linked = task({ id: 'l', status: 'done' })
+    const withLink = task({ id: 'c', status: 'in_progress', depends_on: ['l'] })
+    expect(dependencyRefusal(withLink, 'l', [withLink, linked])).toMatch(/déjà/)
+    expect(dependencyRefusal(current, 'gone', [current])).toMatch(/n’existe plus/)
+  })
+
+  test('un candidat valide n’a pas de raison de refus', () => {
+    const finished = task({ id: 'f', status: 'done' })
+    expect(dependencyRefusal(current, 'f', [current, finished])).toBeNull()
   })
 })
