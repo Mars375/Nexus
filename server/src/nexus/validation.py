@@ -30,15 +30,23 @@ def _has_lone_surrogate(value: Any) -> bool:
 
 
 def has_unencodable(value: Any) -> bool:
-    """Demi-paire UTF-16 ou nombre non fini, n'importe où (clés comprises) : décodé sans
-    erreur, mais impossible à renvoyer en JSON. Sert aussi hors de l'API (adaptateurs)."""
+    """Tout ce qui ne se stocke ni ne se renvoie en JSON strict, n'importe où (clés comprises) :
+    demi-paire UTF-16, nombre non fini, ou type hors JSON (ensemble, octets, date…). L'API le
+    garantit par ses modèles ; sert aussi aux adaptateurs qui appellent le service directement."""
+    if value is None or isinstance(value, (bool, int)):
+        return False
     if isinstance(value, float):
         return not math.isfinite(value)
+    if isinstance(value, str):
+        return _has_lone_surrogate(value)
     if isinstance(value, dict):
-        return any(has_unencodable(k) or has_unencodable(v) for k, v in value.items())
+        return any(
+            not isinstance(k, str) or has_unencodable(k) or has_unencodable(v)
+            for k, v in value.items()
+        )
     if isinstance(value, (list, tuple)):
         return any(has_unencodable(v) for v in value)
-    return _has_lone_surrogate(value)
+    return True
 
 
 class InputModel(BaseModel):

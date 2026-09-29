@@ -1025,3 +1025,39 @@ def test_claim_is_judged_on_the_current_lead_agent(client, monkeypatch):
 
     assert again["effects"] == [{"action": "lead_agent", "applied": True}]
     assert client.get(f"/api/tasks/{ref}").json()["lead_agent"] == "helios"
+
+
+def test_reused_id_refusal_does_not_echo_the_identifier(client):
+    ref = task(client)
+    publish(client, "claimed", task=ref, id="evt_mon-identifiant-perso")
+    res = publish(client, "claimed", "autre contenu", task=ref, id="evt_mon-identifiant-perso")
+    assert res.json()["detail"]["code"] == "event_id_reused"
+    assert "mon-identifiant-perso" not in res.text
+
+
+@pytest.mark.parametrize(
+    "payload", [{"tags": {"a", "b"}}, {"blob": b"\x00"}, {"quand": datetime(2026, 9, 29)}]
+)
+def test_adapter_payload_must_be_plain_json(client, payload):
+    from nexus.events import service
+    from nexus.events.rules import Envelope
+    from nexus.tasks.rules import RuleViolation
+
+    ref = task(client)
+    with client.app.state.sessionmaker() as session:
+        with pytest.raises(RuleViolation) as refused:
+            service.publish(session, Envelope(actor="helios", kind="progress", subject="s",
+                                              task=ref, body="b", payload=payload),
+                            "evt_json", datetime.fromisoformat(AT), origin="hermes")
+    assert refused.value.code == "invalid_value"
+
+
+def test_evidence_already_attached_is_reported_as_no_change(client):
+    ref = task(client, status="todo", next_action="x", expected_evidence="le commit")
+    client.post(f"/api/tasks/{ref}/status", json={"status": "in_progress"})
+    client.post(f"/api/tasks/{ref}/status", json={"status": "review"})
+    publish(client, "review", "preuve", task=ref, evidence=["commit:a1b2c3d"])
+
+    again = publish(client, "review", "même preuve", task=ref, evidence=["commit:a1b2c3d"]).json()
+
+    assert again["effects"][0]["applied"] is False

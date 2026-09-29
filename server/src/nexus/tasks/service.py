@@ -311,7 +311,7 @@ def attach_evidence(session: Session, task: Task, evidence: list[str], actor: st
     if not refs:
         raise RuleViolation("evidence_required", "evidence : aucune preuve lisible")
     if merged == task.evidence:
-        return
+        raise RuleViolation("evidence_unchanged", "evidence : déjà jointe à la tâche")
     before, task.evidence = task.evidence, merged
     task.updated_at = now()
     _record(session, task, actor, "updated", {"evidence": [before, merged]})

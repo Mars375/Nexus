@@ -124,8 +124,9 @@ def publish(
             return existing, False
         raise RuleViolation(
             "event_id_reused",
-            f"l'identifiant {actor_event_id} a déjà servi pour un autre événement de "
-            f"{envelope.actor} : un événement ne se réécrit pas, publie une correction",
+            # L'identifiant reçu n'est pas recopié : ce pourrait être un secret non reconnu.
+            f"id : déjà utilisé par {envelope.actor} pour un autre événement ; un événement "
+            "ne se réécrit pas, publie une correction",
         )
     _refuse_noise(session, envelope, task, actor_event_id)
     serialized_from = None  # date de modification avant le verrou, si le verrou a joué
