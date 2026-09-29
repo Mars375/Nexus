@@ -769,3 +769,19 @@ def test_same_id_in_the_repeated_autumn_hour_compares_instants(client):
 
     same_instant = client.post("/api/events", json=base | {"at": "2026-10-25T00:30:00+00:00"})
     assert same_instant.status_code == 200  # même instant écrit en UTC : relecture
+
+
+def test_publish_refuses_a_session_with_pending_writes(client):
+    from datetime import datetime
+
+    from nexus.events import service
+    from nexus.events.rules import Envelope
+    from nexus.models import Task
+
+    ref = task(client)
+    with client.app.state.sessionmaker() as session:
+        session.get(Task, int(ref.removeprefix("nx-task-"))).title = "modifiée, pas encore écrite"
+        # Une course résolue par rollback annulerait cette écriture sans rien dire : refus net.
+        with pytest.raises(RuntimeError, match="session dédiée"):
+            service.publish(session, Envelope(actor="helios", kind="claimed", subject="s",
+                                              task=ref), "evt_pending", datetime.fromisoformat(AT))

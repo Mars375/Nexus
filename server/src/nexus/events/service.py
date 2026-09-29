@@ -56,7 +56,16 @@ def publish(
     at: datetime,
     origin: str = "api",
 ) -> tuple[Event, bool]:
-    """Enregistre l'événement ; renvoie (événement, créé). Un renvoi identique est une relecture."""
+    """Enregistre l'événement ; renvoie (événement, créé). Un renvoi identique est une relecture.
+
+    Prend la main sur la transaction : une course se résout par un rollback. L'appelant fournit
+    donc une session dédiée, sans écriture en attente, et valide (commit) après l'appel.
+    """
+    if session.new or session.dirty or session.deleted:
+        raise RuntimeError(
+            "publish() demande une session dédiée : un rollback de course annulerait les "
+            "écritures en attente de l'appelant"
+        )
     redacted: dict[str, list[str]] = {}
     raw_run_refs = (envelope.run, envelope.payload.get("run_ref"))
     # Tout ce qui sera stocké passe par le scanner, identifiants compris (ADR-006).
