@@ -692,3 +692,29 @@ def test_valid_surrogate_pair_is_an_ordinary_character(client):
     res = client.post("/api/events", content=raw, headers={"Content-Type": "application/json"})
     assert res.status_code == 201, res.text
     assert res.json()["subject"] == "fusée 🚀"
+
+
+def test_late_closer_of_an_already_closed_run_is_ignored(client):
+    ref = task(client, next_action="x")
+    publish(client, "working", "r1", task=ref, payload={"run_ref": "r1"})
+    publish(client, "handoff", "relais", task=ref, needs=["aether"],
+            payload={"next_action": "reprendre"}, run="r1")
+
+    late = publish(client, "done", "fin tardive", task=ref, evidence=["commit:r1"], run="r1")
+
+    assert late.status_code == 201, late.text
+    effect = late.json()["effects"][0]
+    assert effect["applied"] is False
+    assert "r1" in effect["reason"] and "clos" in effect["reason"]
+    t = client.get(f"/api/tasks/{ref}").json()
+    assert (t["status"], t["lead_agent"]) == ("in_progress", "aether")
+
+
+def test_runless_closers_without_any_run_keep_applying(client):
+    ref = task(client, status="todo", next_action="x")
+    client.post(f"/api/tasks/{ref}/status", json={"status": "in_progress"})
+    publish(client, "review", "à relire", task=ref, evidence=["commit:a"])
+
+    done = publish(client, "done", "validé", task=ref, evidence=["commit:a"]).json()
+
+    assert done["effects"] == [{"action": "status:done", "applied": True}]

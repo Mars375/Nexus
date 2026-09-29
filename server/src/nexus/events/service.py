@@ -308,6 +308,10 @@ def _stale_run(session: Session, event: Event, task: Task) -> str | None:
             return f"le run {event.run_ref} de {event.actor} est déjà clos : ouvre un nouveau run"
         return None
     if active is None or event.run_ref == active:
+        # Pas d'autre run en cours : une clôture tardive d'un run déjà clos (done(r1) après
+        # handoff(r1)) ne rejoue pas pour autant son effet.
+        if event.run_ref is not None and event.run_ref in closed:
+            return f"le run {event.run_ref} de {event.actor} est déjà clos : ouvre un nouveau run"
         return None
     if event.run_ref is None:
         return (
