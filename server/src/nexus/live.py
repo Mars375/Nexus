@@ -176,8 +176,8 @@ async def live_updates(websocket: WebSocket) -> None:
     done, pending = await asyncio.wait({sender, watcher}, return_when=asyncio.FIRST_COMPLETED)
     for task in pending:
         task.cancel()
-        with suppress(asyncio.CancelledError, WebSocketDisconnect, RuntimeError):
+        with suppress(asyncio.CancelledError, WebSocketDisconnect):
             await task
     for task in done:
-        with suppress(WebSocketDisconnect, RuntimeError):
+        with suppress(WebSocketDisconnect):
             task.result()  # une fermeture côté client pendant un envoi n'est pas une erreur

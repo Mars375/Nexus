@@ -174,9 +174,24 @@ def test_a_cursor_ahead_of_the_base_announces_a_reset(client):
 
 
 def test_a_foreign_origin_is_refused(client):
-    with pytest.raises(WebSocketDisconnect):
+    with pytest.raises(WebSocketDisconnect) as closed:
         with client.websocket_connect("/api/ws", headers={"origin": "https://evil.example"}):
             pass
+    assert closed.value.code == 1008
+
+
+def test_a_configured_origin_is_accepted(tmp_path):
+    from conftest import tailscale_json
+    from fastapi.testclient import TestClient
+
+    from nexus.app import create_app
+
+    settings = Settings(
+        data_dir=tmp_path / "data", allowed_origins=frozenset({"tauri://localhost"})
+    )
+    with TestClient(create_app(settings, nodes_runner=tailscale_json)) as client:
+        with client.websocket_connect("/api/ws", headers={"origin": "tauri://localhost"}) as ws:
+            assert ws.receive_json()["type"] == "hello"
 
 
 def test_a_loopback_origin_is_accepted(client):
@@ -188,6 +203,7 @@ def test_an_invalid_cursor_is_refused_without_echo(client):
     with pytest.raises(WebSocketDisconnect) as closed:
         with client.websocket_connect("/api/ws?history_after=ghp_trace&events_after=0"):
             pass
+    assert closed.value.code == 1008
     assert "ghp_trace" not in str(closed.value.reason or "")
 
 
