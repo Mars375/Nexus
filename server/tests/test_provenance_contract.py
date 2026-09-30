@@ -29,7 +29,12 @@ def entities(body) -> list:
     if isinstance(body, dict) and "source" in body:
         return [body]
     if isinstance(body, dict):
-        children = [v for v in body.values() if isinstance(v, dict)]
+        children = []
+        for value in body.values():
+            if isinstance(value, dict):
+                children.append(value)
+            elif isinstance(value, list):
+                children.extend(value)
         return children or [body]
     return [body]
 
@@ -100,6 +105,17 @@ def test_the_walker_sees_every_router(client):
 def test_the_checker_catches_a_missing_measured_at():
     with pytest.raises(AssertionError):
         for entity in entities({"version": "1", "backup": {"source": "x"}}):
+            check_entity(entity)
+
+
+def test_the_checker_checks_lists_inside_a_composite():
+    with pytest.raises(AssertionError):
+        for entity in entities({"version": "1", "items": [{"source": "x"}]}):
+            check_entity(entity)
+    # avec un sous-objet valide à côté : l'ancienne règle ignorait la liste en silence
+    body = {"db": {"source": "x", "measured_at": AT}, "items": [{"source": "x"}]}
+    with pytest.raises(AssertionError):
+        for entity in entities(body):
             check_entity(entity)
 
 

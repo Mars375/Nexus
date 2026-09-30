@@ -17,7 +17,7 @@ Toute donnée affichée dit d'où elle vient et quand elle a été mesurée ; un
 - Une **entité affichable** porte `source` (texte non vide) et `measured_at` (ISO-8601 avec fuseau). Règle exacte, appliquée à la réponse JSON d'une route `GET` :
   - réponse **liste** : chaque élément est une entité ;
   - réponse **objet** qui porte lui-même `source` : c'est une entité (ses objets imbriqués — `payload`, `effects` d'un événement — ne sont pas vérifiés : ce sont des données, pas des éléments affichés) ;
-  - réponse **objet composé** sans `source` propre (ex. `/api/health`) : chacun de ses sous-objets directs est une entité (`db`, `backup`).
+  - réponse **objet composé** sans `source` propre (ex. `/api/health`) : chacun de ses sous-objets directs et chaque élément de ses sous-listes est une entité (`db`, `backup`).
 - `source_url` est facultatif ; quand il est présent, c'est une URL `https://` (jamais une valeur libre).
 - **Test générique** (`server/tests/test_provenance_contract.py`) : il parcourt les routes `GET` sous `/api/` déclarées dans l'application FastAPI (les fichiers statiques et la documentation automatique ne sont pas concernés), prépare une donnée de chaque sorte (une tâche avec commentaire et historique, un événement), remplit les paramètres de chemin par une table connue (`task_ref`, `event_ref`) et vérifie la règle ci-dessus. **Un paramètre de chemin absent de la table fait échouer le test** avec un message qui dit quoi ajouter : une nouvelle route ne peut pas échapper au contrat en silence.
 - Correction attendue : le bloc `backup` de `/api/health` reçoit un `measured_at` (instant de la lecture des sauvegardes).

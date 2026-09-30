@@ -24,6 +24,8 @@
 
 ### Task 1: Contrat de provenance de l'API (test générique) et `measured_at` de la sauvegarde
 
+> Superseded during execution: path values come from the dict returned by `seed()`; `PATH_VALUES` does not exist.
+
 **Files:**
 - Create: `server/tests/test_provenance_contract.py`
 - Modify: `server/src/nexus/app.py` (route `/api/health`, vers la ligne 130)
@@ -662,6 +664,8 @@ In §3 Concurrency, add:
 ```
 
 In §5 Provenance, add:
+
+> Superseded during execution: path values come from the dict returned by `seed()`; `PATH_VALUES` does not exist.
 
 ```markdown
 - [ ] `server/tests/test_provenance_contract.py` walks every `GET /api/…` route: a new route with a new path parameter must add it to `PATH_VALUES`, and its entities must carry `source` + `measured_at`.
