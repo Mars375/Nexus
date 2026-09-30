@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +14,14 @@ def _default_data_dir() -> Path:
     if local_app_data:
         return Path(local_app_data) / "Nexus"
     return Path.home() / ".nexus"
+
+
+_ORIGIN = re.compile(r"[a-z][a-z0-9+.-]*://(\[[0-9a-f:.]+\]|[a-z0-9._-]+)(:[0-9]{1,5})?")
+
+
+def _is_plain_origin(origin: str) -> bool:
+    """Une origine sûre : schéma://hôte[:port] exactement (jamais `null`, chemin, identifiants)."""
+    return _ORIGIN.fullmatch(origin) is not None
 
 
 @dataclass(frozen=True)
@@ -42,6 +51,14 @@ class Settings:
                 "NEXUS_NODES_REFRESH_SECONDS doit être un nombre fini > 0 "
                 f"(reçu : {self.nodes_refresh_seconds})"
             )
+
+        for origin in self.allowed_origins:
+            if not _is_plain_origin(origin):
+                # Jamais la valeur reçue dans le message (ADR-006).
+                raise ValueError(
+                    "NEXUS_ALLOWED_ORIGINS : chaque origine doit avoir la forme "
+                    "schéma://hôte[:port], sans chemin, sans identifiants et sans requête"
+                )
 
     @property
     def db_path(self) -> Path:

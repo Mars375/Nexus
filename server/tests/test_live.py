@@ -66,6 +66,22 @@ def test_events_carry_kind_and_references_but_no_free_text(client):
     assert PRIVATE not in str(messages)
 
 
+def test_an_event_without_task_carries_a_null_task(client):
+    with db(client) as s:
+        start = current_cursor(s)
+    res = client.post("/api/events", json={
+        "id": "evt_notask", "at": AT, "actor": "helios", "kind": "question",
+        "subject": "sans tâche", "body": "Une question générale ?", "needs": ["helios"],
+    })
+    assert res.status_code == 201, res.text
+    with db(client) as s:
+        messages, end = changes_since(s, start)
+    assert messages == [{
+        "type": "event", "event": res.json()["id"], "task": None, "kind": "question",
+        "cursor": end.as_dict(),
+    }]
+
+
 def test_only_the_last_message_of_a_batch_advances_the_cursor(client):
     with db(client) as s:
         start = current_cursor(s)
@@ -101,6 +117,10 @@ def test_a_valid_cursor_is_kept():
 
 def test_a_cursor_ahead_of_the_base_is_reset():
     assert start_cursor("9", "0", Cursor(5, 7)) == (Cursor(5, 7), True)
+
+
+def test_only_the_events_component_ahead_resets_to_now():
+    assert start_cursor("0", "9", Cursor(5, 7)) == (Cursor(5, 7), True)
 
 
 @pytest.mark.parametrize(
