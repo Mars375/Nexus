@@ -243,6 +243,26 @@ describe('connectLive', () => {
     expect(h.sockets).toHaveLength(3) // attente 1000 ms pour tentative 2 (pas reset sur onopen)
   })
 
+  test('un premier message valide remet les essais à zéro pour la coupure suivante', () => {
+    const h = harness()
+    h.open()
+    h.drop() // essai 1
+    expect(h.states.at(-1)).toEqual({ status: 'reconnecting', attempt: 1 })
+    vi.advanceTimersByTime(500)
+    expect(h.sockets).toHaveLength(2)
+
+    h.open()
+    h.send(HELLO) // la connexion parle : le compteur repart de zéro
+    expect(h.states.at(-1)).toEqual({ status: 'connected' })
+
+    h.drop() // nouvelle coupure, indépendante de la première
+    expect(h.states.at(-1)).toEqual({ status: 'reconnecting', attempt: 1 })
+    vi.advanceTimersByTime(499)
+    expect(h.sockets).toHaveLength(2)
+    vi.advanceTimersByTime(1)
+    expect(h.sockets).toHaveLength(3)
+  })
+
   test('stop en attente de reconnexion ne crée pas de socket et n\'émet pas unknown', () => {
     const h = harness()
     h.up()
