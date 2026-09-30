@@ -1,0 +1,166 @@
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import {
+  connectLive,
+  liveUrl,
+  reconnectDelay,
+  SILENCE_MS,
+  UNKNOWN_AFTER_MS,
+  type LiveMessage,
+  type LiveSocket,
+  type LiveState,
+} from './live'
+
+type Fake = LiveSocket & { url: string; closed: boolean }
+
+function harness() {
+  const sockets: Fake[] = []
+  const states: LiveState[] = []
+  const messages: LiveMessage[] = []
+  const stop = connectLive({
+    open: (url) => {
+      const socket: Fake = {
+        url,
+        closed: false,
+        onopen: null,
+        onmessage: null,
+        onclose: null,
+        close() {
+          this.closed = true
+        },
+      }
+      sockets.push(socket)
+      return socket
+    },
+    onMessage: (m) => messages.push(m),
+    onState: (s) => states.push(s),
+    random: () => 0.5, // aléa neutre : attente exacte
+  })
+  const last = () => sockets[sockets.length - 1]
+  const open = () => last().onopen?.(new Event('open'))
+  const send = (data: unknown) =>
+    last().onmessage?.({ data: typeof data === 'string' ? data : JSON.stringify(data) } as MessageEvent)
+  const drop = () => last().onclose?.({} as CloseEvent)
+  return { sockets, states, messages, stop, last, open, send, drop }
+}
+
+const HELLO = { type: 'hello', cursor: { history: 3, events: 4 }, reset: false }
+
+beforeEach(() => vi.useFakeTimers())
+afterEach(() => vi.useRealTimers())
+
+describe('reconnectDelay', () => {
+  test('double à chaque essai à partir de 0,5 s', () => {
+    expect([1, 2, 3].map((n) => reconnectDelay(n, () => 0.5))).toEqual([500, 1000, 2000])
+  })
+  test('plafonne à 10 s', () => {
+    expect(reconnectDelay(12, () => 0.5)).toBe(10_000)
+  })
+  test('ajoute un aléa de ±20 %', () => {
+    expect(reconnectDelay(1, () => 0)).toBe(400)
+    expect(reconnectDelay(1, () => 1)).toBe(600)
+  })
+})
+
+describe('liveUrl', () => {
+  test('sans curseur, part de maintenant', () => {
+    expect(liveUrl(null, { protocol: 'http:', host: 'localhost:5173' })).toBe('ws://localhost:5173/api/ws')
+  })
+  test('avec curseur, demande le rattrapage ; https donne wss', () => {
+    expect(liveUrl({ history: 3, events: 4 }, { protocol: 'https:', host: 'nexus.local' })).toBe(
+      'wss://nexus.local/api/ws?history_after=3&events_after=4',
+    )
+  })
+})
+
+describe('connectLive', () => {
+  test('connexion : connecting puis connected', () => {
+    const h = harness()
+    expect(h.states).toEqual([{ status: 'connecting' }])
+    h.open()
+    expect(h.states.at(-1)).toEqual({ status: 'connected' })
+  })
+
+  test('transmet les messages et ignore un message illisible', () => {
+    const h = harness()
+    h.open()
+    h.send(HELLO)
+    h.send('pas du json')
+    expect(h.messages).toEqual([HELLO])
+  })
+
+  test('après une coupure, attend puis se reconnecte avec le dernier curseur', () => {
+    const h = harness()
+    h.open()
+    h.send(HELLO)
+    h.drop()
+    expect(h.states.at(-1)).toEqual({ status: 'reconnecting', attempt: 1 })
+    vi.advanceTimersByTime(499)
+    expect(h.sockets).toHaveLength(1)
+    vi.advanceTimersByTime(1)
+    expect(h.sockets).toHaveLength(2)
+    expect(h.last().url).toContain('history_after=3&events_after=4')
+  })
+
+  test('passe à unknown après 30 s sans connexion', () => {
+    const h = harness()
+    h.open()
+    h.drop()
+    vi.advanceTimersByTime(UNKNOWN_AFTER_MS - 1)
+    expect(h.states.at(-1)?.status).not.toBe('unknown')
+    vi.advanceTimersByTime(1)
+    expect(h.states.at(-1)?.status).toBe('unknown')
+  })
+
+  test('unknown tient pendant les essais suivants', () => {
+    const h = harness()
+    h.open()
+    h.drop()
+    vi.advanceTimersByTime(UNKNOWN_AFTER_MS)
+    h.drop() // un nouvel essai échoue
+    expect(h.states.at(-1)?.status).toBe('unknown')
+  })
+
+  test('sans connexion depuis le chargement, unknown compte depuis le chargement', () => {
+    const h = harness()
+    vi.advanceTimersByTime(10_000)
+    h.drop() // le premier essai échoue au bout de 10 s
+    vi.advanceTimersByTime(UNKNOWN_AFTER_MS - 10_000)
+    expect(h.states.at(-1)?.status).toBe('unknown')
+  })
+
+  test('une connexion rétablie efface unknown', () => {
+    const h = harness()
+    vi.advanceTimersByTime(UNKNOWN_AFTER_MS) // jamais connecté depuis le chargement
+    expect(h.states.at(-1)?.status).toBe('unknown')
+    h.open()
+    expect(h.states.at(-1)).toEqual({ status: 'connected' })
+  })
+
+  test('ferme une connexion restée muette 45 s', () => {
+    const h = harness()
+    h.open()
+    vi.advanceTimersByTime(SILENCE_MS - 1)
+    expect(h.last().closed).toBe(false)
+    vi.advanceTimersByTime(1)
+    expect(h.last().closed).toBe(true)
+  })
+
+  test('un message repousse le délai de silence', () => {
+    const h = harness()
+    h.open()
+    vi.advanceTimersByTime(SILENCE_MS - 1)
+    h.send({ type: 'ping', cursor: { history: 0, events: 0 } })
+    vi.advanceTimersByTime(SILENCE_MS - 1)
+    expect(h.last().closed).toBe(false)
+  })
+
+  test('stop ferme la connexion et ne reconnecte plus', () => {
+    const h = harness()
+    h.open()
+    h.stop()
+    expect(h.last().closed).toBe(true)
+    h.drop()
+    vi.advanceTimersByTime(60_000)
+    expect(h.sockets).toHaveLength(1)
+  })
+})
