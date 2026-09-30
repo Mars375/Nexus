@@ -187,19 +187,20 @@ describe('connectLive', () => {
     expect(h.last().closed).toBe(true) // la socket s'est fermée, message invalide n'a pas réarmé
   })
 
-  test('deux essais échoués sans message : deuxième attente 1000 ms', () => {
+  test('reset attempt sur le premier message valide, pas sur onopen', () => {
     const h = harness()
     h.open()
     h.drop() // premier essai échoue sans message
     expect(h.states.at(-1)).toEqual({ status: 'reconnecting', attempt: 1 })
     vi.advanceTimersByTime(500) // attente pour tentative 1
     expect(h.sockets).toHaveLength(2)
-    h.drop() // deuxième essai échoue aussi sans message
+    h.open() // socket 2 établie, mais pas de message → pas de reset
+    h.drop() // socket 2 échoue sans message → attempt reste 1, devient 2
     expect(h.states.at(-1)).toEqual({ status: 'reconnecting', attempt: 2 })
     vi.advanceTimersByTime(999)
     expect(h.sockets).toHaveLength(2) // pas encore de troisième socket
     vi.advanceTimersByTime(1)
-    expect(h.sockets).toHaveLength(3) // attente 1000 ms pour tentative 2
+    expect(h.sockets).toHaveLength(3) // attente 1000 ms pour tentative 2 (pas reset sur onopen)
   })
 
   test('stop en attente de reconnexion ne crée pas de socket et n\'émet pas unknown', () => {
@@ -227,5 +228,23 @@ describe('connectLive', () => {
     firstSocket.onclose?.({} as CloseEvent)
     vi.advanceTimersByTime(60_000)
     expect(h.sockets).toHaveLength(2) // pas de troisième socket créée
+  })
+
+  test('un message tardif de la première socket après détachement ne remonte pas', () => {
+    const h = harness()
+    h.open()
+    const firstSocket = h.last()
+    vi.advanceTimersByTime(SILENCE_MS)
+    expect(firstSocket.closed).toBe(true)
+    vi.advanceTimersByTime(500)
+    expect(h.sockets).toHaveLength(2)
+    const secondSocket = h.last()
+    h.open() // ouvre la deuxième socket
+    // Simuler un message tardif de la première socket
+    firstSocket.onmessage?.({ data: JSON.stringify({ type: 'ping', cursor: { history: 0, events: 0 } }) } as MessageEvent)
+    expect(h.messages).toHaveLength(0) // le message tardif est ignoré
+    // Vérifier que la deuxième socket fonctionne normalement
+    secondSocket.onmessage?.({ data: JSON.stringify({ type: 'ping', cursor: { history: 0, events: 0 } }) } as MessageEvent)
+    expect(h.messages).toHaveLength(1) // le message de la bonne socket est reçu
   })
 })

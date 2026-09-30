@@ -114,7 +114,7 @@ export function connectLive(options: {
     const current = options.open(liveUrl(cursor))
     socket = current
     current.onopen = () => {
-      if (stopped) return
+      if (stopped || socket !== current) return
       connected = true
       unknown = false
       clearTimeout(unknownTimer)
@@ -122,10 +122,10 @@ export function connectLive(options: {
       options.onState({ status: 'connected' })
     }
     current.onmessage = (event) => {
-      if (stopped) return
+      if (stopped || socket !== current) return
       let message: LiveMessage
       try {
-        message = JSON.parse(String(event.data)) as unknown as LiveMessage
+        message = JSON.parse(String(event.data)) as LiveMessage
       } catch {
         return // message illisible : ignoré, la relecture régulière reste le filet
       }
