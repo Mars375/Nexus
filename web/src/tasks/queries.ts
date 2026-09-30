@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
+import { REFRESH_MS } from '@/freshness'
 import {
   ApiError,
   tasksApi,
@@ -20,7 +21,7 @@ function explain(error: unknown): string {
 }
 
 /** En attendant le temps réel (#5), relecture régulière : un agent peut modifier une tâche. */
-export const TASKS_REFRESH_MS = 10_000
+export const TASKS_REFRESH_MS = REFRESH_MS.tasks
 
 export function useTasks() {
   return useQuery({

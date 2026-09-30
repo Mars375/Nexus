@@ -3,7 +3,7 @@
 export type Health = {
   version: string
   db: { status: 'ok' | 'unknown'; source: string; measured_at: string }
-  backup: { last_at: string | null; count: number; source: string }
+  backup: { last_at: string | null; count: number; source: string; measured_at: string }
 }
 
 export type Status = 'backlog' | 'todo' | 'in_progress' | 'blocked' | 'review' | 'done' | 'dropped'
@@ -88,7 +88,15 @@ export type StatusChange = {
   role?: Role
 }
 
-export type Comment = { id: number; task: string; author: Actor; body: string; at: string }
+export type Comment = {
+  id: number
+  task: string
+  author: Actor
+  body: string
+  at: string
+  source: string
+  measured_at: string
+}
 
 export type HistoryEntry = {
   id: number
@@ -97,6 +105,8 @@ export type HistoryEntry = {
   at: string
   action: string
   changes: Record<string, unknown>
+  source: string
+  measured_at: string
 }
 
 /** Refus lisible par Loïc : `code` stable côté serveur, `message` en français. */
