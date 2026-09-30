@@ -30,6 +30,7 @@ How to use it:
 - [ ] References are parsed strictly (ASCII digits, bounded length): `²` or 5 000 digits give a 404, not a 500.
 - [ ] Two fields that describe the same thing (`run` vs `payload.run_ref`) must agree, or the request is refused.
 - [ ] Error messages are in French, name the field, and never include the received value.
+- [ ] The UI validates messages pushed to it (WebSocket) before using them — never `JSON.parse(...) as T`: a message with an unknown type or a malformed cursor is ignored and the last good state (e.g. the catch-up cursor) is kept (#5). REST responses from our own API are typed by the client in `web/src/api.ts`.
 
 ## 3. Concurrency and idempotency
 
@@ -72,6 +73,7 @@ How to use it:
 - [ ] After a mutation, every affected query (detail, comments, history) is refreshed.
 - [ ] Keyboard: every action reachable without a mouse (Enter opens, Space drags); inputs mirror server limits (`maxLength`).
 - [ ] End-to-end tests cover the scenario where an agent changes the data while the user is looking at it.
+- [ ] A connection indicator only says « connecté » once the server has actually spoken (first valid message), not on socket open; opening a connection has a timeout too (#5).
 
 ## 7. Dates and times
 
@@ -91,5 +93,7 @@ How to use it:
 
 - [ ] `pnpm test`, `pnpm lint`, `pnpm --dir web build`, and the Playwright suite pass locally.
 - [ ] Migrations tested on an existing database, not only a fresh one.
+- [ ] Every regression test is proven to fail on the old code (revert or mutate, record the failing run): a test that passes both before and after the fix proves nothing (#5: a « reset on first message » test that never opened the second socket).
+- [ ] Error suppression is as narrow as the expected case: suppress the specific disconnect exception, never a broad `RuntimeError`/`Exception` around a task result — a real bug must surface in the logs (#5).
 - [ ] Stacked PRs are retargeted to `master` **before** their base branch is merged and deleted (otherwise GitHub closes them).
 - [ ] No stray artefacts committed (screenshots, test data): check `git status` before `git add -A`.
