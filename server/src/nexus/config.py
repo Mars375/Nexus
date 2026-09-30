@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +16,14 @@ def _default_data_dir() -> Path:
     return Path.home() / ".nexus"
 
 
+_ORIGIN = re.compile(r"[a-z][a-z0-9+.-]*://(\[[0-9a-f:.]+\]|[a-z0-9._-]+)(:[0-9]{1,5})?")
+
+
+def _is_plain_origin(origin: str) -> bool:
+    """Une origine sûre : schéma://hôte[:port] exactement (jamais `null`, chemin, identifiants)."""
+    return _ORIGIN.fullmatch(origin) is not None
+
+
 @dataclass(frozen=True)
 class Settings:
     data_dir: Path
@@ -24,6 +33,8 @@ class Settings:
     port: int = 8765
     tailscale_bin: str = "tailscale"
     nodes_refresh_seconds: float = 60.0
+    # Origines admises en plus de la boucle locale pour le WebSocket (ex. Tauri plus tard).
+    allowed_origins: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if self.backup_keep < 1:
@@ -40,6 +51,14 @@ class Settings:
                 "NEXUS_NODES_REFRESH_SECONDS doit être un nombre fini > 0 "
                 f"(reçu : {self.nodes_refresh_seconds})"
             )
+
+        for origin in self.allowed_origins:
+            if not _is_plain_origin(origin):
+                # Jamais la valeur reçue dans le message (ADR-006).
+                raise ValueError(
+                    "NEXUS_ALLOWED_ORIGINS : chaque origine doit avoir la forme "
+                    "schéma://hôte[:port], sans chemin, sans identifiants et sans requête"
+                )
 
     @property
     def db_path(self) -> Path:
@@ -63,4 +82,9 @@ class Settings:
             port=int(os.environ.get("NEXUS_PORT", "8765")),
             tailscale_bin=os.environ.get("NEXUS_TAILSCALE_BIN", "tailscale"),
             nodes_refresh_seconds=float(os.environ.get("NEXUS_NODES_REFRESH_SECONDS", "60")),
+            allowed_origins=frozenset(
+                item.strip()
+                for item in os.environ.get("NEXUS_ALLOWED_ORIGINS", "").split(",")
+                if item.strip()
+            ),
         )

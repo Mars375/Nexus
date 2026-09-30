@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page, type WebSocketRoute } from '@playwright/test'
 
 async function createTask(page: Page, title: string, opts: { todo?: string } = {}) {
   await page.getByRole('button', { name: 'Nouvelle tâche' }).first().click()
@@ -214,4 +214,69 @@ test('le tableau et le détail disent d\'où viennent les données', async ({ pa
   await card(page, 'Tracer la provenance').click()
   const pane = page.getByRole('complementary', { name: 'Détail de Tracer la provenance' })
   await expect(pane.locator('header').getByText(/^source : nexus\.db · mesuré il y a/)).toBeVisible()
+})
+
+const API = 'http://127.0.0.1:8799'
+
+test('une tâche créée par l’API apparaît en moins d’une seconde', async ({ page, request }) => {
+  await page.goto('/')
+  await expect(page.getByText('Temps réel : connecté')).toBeVisible()
+  const res = await request.post(`${API}/api/tasks`, {
+    data: { title: 'Arrivée en direct', objective: 'Prouver le temps réel' },
+  })
+  expect(res.ok()).toBeTruthy()
+  await expect(card(page, 'Arrivée en direct')).toBeVisible({ timeout: 1000 })
+})
+
+test('après une coupure, la reconnexion rattrape ce qui a changé', async ({ page, request }) => {
+  // Chaque connexion est numérotée : seuls comptent les messages reçus APRÈS la coupure.
+  // Sans cela, la connexion d'avant (côté serveur) pourrait livrer le changement en direct
+  // et le test passerait sans prouver le rattrapage.
+  const log: { connection: number; message: string }[] = []
+  let connections = 0
+  let blocked = false
+  const live: { current: { page: WebSocketRoute; server: WebSocketRoute } | null } = { current: null }
+  await page.routeWebSocket(/\/api\/ws/, (ws) => {
+    if (blocked) {
+      void ws.close({ code: 1011, reason: 'coupure simulée' })
+      return
+    }
+    const connection = ++connections
+    const server = ws.connectToServer()
+    server.onMessage((message) => {
+      log.push({ connection, message: String(message) })
+      ws.send(message)
+    })
+    live.current = { page: ws, server }
+  })
+  await page.goto('/')
+  await expect(page.getByText('Temps réel : connecté')).toBeVisible()
+
+  blocked = true
+  const cut = connections
+  await live.current!.server.close()
+  await live.current!.page.close({ code: 1011, reason: 'coupure simulée' })
+  await expect(page.getByText(/Temps réel : reconnexion/)).toBeVisible()
+
+  const res = await request.post(`${API}/api/tasks`, {
+    data: { title: 'Pendant la coupure', objective: 'Rattrapage' },
+  })
+  expect(res.ok()).toBeTruthy()
+  const ref = (await res.json()).id as string
+
+  blocked = false
+  await expect(page.getByText('Temps réel : connecté')).toBeVisible({ timeout: 15_000 })
+  await expect
+    .poll(
+      () =>
+        log.some(
+          (entry) =>
+            entry.connection > cut &&
+            entry.message.includes('"task_changed"') &&
+            entry.message.includes(`"${ref}"`),
+        ),
+      { timeout: 5000 },
+    )
+    .toBe(true)
+  await expect(card(page, 'Pendant la coupure')).toBeVisible()
 })
