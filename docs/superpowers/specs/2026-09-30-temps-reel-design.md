@@ -41,7 +41,7 @@ Volontairement minces : des références et des types, jamais de texte libre re�
 | `resync` | `cursor` | trop de changements d'un coup (plus de 500 lignes) : le client relit tout |
 | `ping` | `cursor` | rien de nouveau depuis 15 s ; prouve que la connexion vit |
 
-`cursor` est toujours le curseur **après** application du message : le client le garde tel quel.
+`cursor` est toujours un curseur jusqu'où tout est vu une fois le message appliqué : le client le garde tel quel. Dans une même relecture, seul le **dernier** message avance le curseur (les précédents portent celui de départ) : une coupure au milieu fait rejouer la relecture — une invalidation de plus, jamais un changement perdu.
 
 ### Boucle d'une connexion
 
@@ -54,7 +54,7 @@ Volontairement minces : des références et des types, jamais de texte libre re�
 
 Un WebSocket n'est pas protégé par CORS : un site quelconque ouvert dans le navigateur pourrait sinon se connecter à `ws://127.0.0.1:8765` et lire les changements.
 
-- Origines admises par défaut : `http://127.0.0.1:<port>`, `http://localhost:<port>` (l'interface servie) et `http://127.0.0.1:5173`, `http://localhost:5173` (serveur de dev Vite). Liste réglable par `NEXUS_ALLOWED_ORIGINS` (séparateur `,`) pour Tauri plus tard.
+- Origines admises : toute origine **de boucle locale** — schéma `http` ou `https`, hôte `localhost`, `127.0.0.1` ou `[::1]`, quel que soit le port (l'interface servie, le serveur de dev Vite sur 5173, celui des tests de bout en bout sur un autre port : le proxy Vite transmet l'`Origin` du navigateur tel quel). S'y ajoute une liste réglable par `NEXUS_ALLOWED_ORIGINS` (séparateur `,`, comparaison exacte) pour Tauri plus tard. Un site Internet n'a jamais une origine de boucle locale : le risque visé reste couvert. (Précision du 2026-09-30 : la première version listait des ports fixes, ce qui aurait refusé le WebSocket en e2e.)
 - Une connexion **sans** en-tête `Origin` (client non navigateur, local) est admise : elle pourrait lire l'API REST de toute façon.
 - Toute autre origine : handshake refusé (403 / code 1008), sans recopier l'origine reçue dans la réponse.
 
