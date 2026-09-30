@@ -61,7 +61,7 @@ export function HealthStatus() {
         />
         <span role="status" className="text-ink">{status}</span>
       </span>
-      {detail && <span className="truncate">{detail}</span>}
+      {detail && <span className="min-w-0 break-words">{detail}</span>}
     </footer>
   )
 }
