@@ -31,6 +31,20 @@ describe('listProvenance', () => {
     ]
     expect(listProvenance(items, 'tasks', T0 + 6_000)).toEqual({ source: 'nexus.db', measuredAt: at(0) })
   })
+  test('un élément illisible en premier rend la liste périmée', () => {
+    const items = [
+      { source: 'nexus.db', measured_at: 'pas une date' },
+      { source: 'nexus.db', measured_at: at(0) },
+    ]
+    expect(listProvenance(items, 'tasks', T0)?.measuredAt).toBe('pas une date')
+  })
+  test('un élément illisible en second rend la liste périmée', () => {
+    const items = [
+      { source: 'nexus.db', measured_at: at(0) },
+      { source: 'nexus.db', measured_at: 'pas une date' },
+    ]
+    expect(listProvenance(items, 'tasks', T0)?.measuredAt).toBe('pas une date')
+  })
   test('liste vide : source du type et instant de la dernière lecture réussie', () => {
     expect(listProvenance([], 'tasks', T0)).toEqual({
       source: SOURCE_OF.tasks,

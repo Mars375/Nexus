@@ -30,6 +30,7 @@ async function drag(page: Page, title: string, to: string) {
 test('créer, déplacer, commenter et filtrer une tâche', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByText('Aucune tâche pour l’instant.').or(page.getByText("Aucune tâche pour l'instant."))).toBeVisible()
+  await expect(page.getByRole('main').getByText(/^source : nexus\.db · mesuré il y a/)).toBeVisible()
 
   await createTask(page, 'Relever les statuts', { todo: 'Lire kanban_db.py' })
   await expect(column(page, 'À faire').getByText('Relever les statuts', { exact: true })).toBeVisible()
