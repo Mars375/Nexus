@@ -862,7 +862,6 @@ import { render, screen } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
 import type { NodeState, NowSnapshot } from '@/api'
 import { Floor } from './Floor'
-import { AGE_TICK_MS } from './model'
 
 const snap = (over: Partial<NowSnapshot> = {}): NowSnapshot => ({
   source: 'nexus.db', measured_at: new Date().toISOString(), operation: null, auxiliaries: [],
