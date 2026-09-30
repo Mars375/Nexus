@@ -24,6 +24,7 @@ How to use it:
 - [ ] Required text is stripped before length checks (`"   "` is empty).
 - [ ] Numbers: `bool` is rejected where a number is expected (`True` is an `int` in Python); `NaN`/`Infinity` are rejected before storage.
 - [ ] Every request body inherits `InputModel` (`nexus.validation`): unknown fields and lone UTF-16 surrogates (`"\ud800"`, keys included) are refused with a 422 — decoded fine, they cannot be encoded back and would break every later read.
+- [ ] A service that other code may call directly (future adapters, ADR-015) re-checks what the HTTP models guarantee: strict JSON only (no set, bytes, datetime, non-str keys), timezone-aware instants, known enums, a plain adapter name for `origin` — refused with a `RuleViolation`, never a crash during `flush()`.
 - [ ] Types inside free-form JSON (`payload`) are checked before they reach a typed column (e.g. `run_ref` must be a string).
 - [ ] References are parsed strictly (ASCII digits, bounded length): `²` or 5 000 digits give a 404, not a 500.
 - [ ] Two fields that describe the same thing (`run` vs `payload.run_ref`) must agree, or the request is refused.
@@ -40,6 +41,7 @@ How to use it:
 - [ ] A lock taken only to serialize leaves no user-visible trace: a refused or no-op effect must not bump `updated_at` (lists are sorted by it).
 - [ ] Closing is permanent: once a run reference is closed, a late or replayed opener (`working(r1)` after `done(r1)`) **or a second closer** (`done(r1)` after `handoff(r1)`) is recorded without effect and never becomes the active run again.
 - [ ] Race handlers rely on SQLite's legacy transaction mode (implicit `BEGIN` only before the first write, so a lookup holds no snapshot): if that ever changes (explicit `BEGIN`, `autocommit=False`), conflict paths must also catch `OperationalError` (`SQLITE_BUSY_SNAPSHOT`), not only `IntegrityError`.
+- [ ] A decision about the current state ("already in this status", "already lead agent") is taken on a fresh read (`session.refresh`) inside the write transaction, never on the copy loaded before it; an effect that changes nothing is recorded as not applied, never as a success.
 
 ## 4. State invariants
 
@@ -54,6 +56,7 @@ How to use it:
 - [ ] Three notions are never mixed: a response's `source` + `measured_at` say where and when the item was read (`nexus.db`); `Task.origin` says where the task came from (message, mail, decision); `Event.origin` names the channel that published the event (`api` or an adapter such as `hermes`) — `DATA-MODEL.md` calls it `Event.source` until #13 renames it.
 - [ ] Unknown or unreadable external data becomes `unknown` with a reason — never a guessed state (e.g. a non-boolean `Online` field).
 - [ ] Anything slow or external has a timeout and a startup fallback that does not block the API (serve an `unknown` snapshot first).
+- [ ] `server/tests/test_provenance_contract.py` walks every `GET /api/…` route: a new route with a new path parameter must add it to `PATH_VALUES`, and its entities must carry `source` + `measured_at`.
 
 ## 6. UI with data that changes
 
