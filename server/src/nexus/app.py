@@ -138,10 +138,12 @@ def create_app(
             db_status = "unknown"
         backups = backup.list_backups(settings.backup_dir)
         last = backup.backup_time(backups[-1]).isoformat() if backups else None
+        measured_at = now().isoformat()
         return {
             "version": app.version,
-            "db": {"status": db_status, "source": "nexus.db", "measured_at": now().isoformat()},
-            "backup": {"last_at": last, "count": len(backups), "source": "nexus.db/backups"},
+            "db": {"status": db_status, "source": "nexus.db", "measured_at": measured_at},
+            "backup": {"last_at": last, "count": len(backups), "source": "nexus.db/backups",
+                       "measured_at": measured_at},
         }
 
     @app.get("/api/nodes")

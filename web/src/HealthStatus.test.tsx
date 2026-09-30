@@ -19,7 +19,7 @@ function healthy() {
   return Response.json({
     version: '0.1.0',
     db: { status: 'ok', source: 'nexus.db', measured_at: measured },
-    backup: { last_at: measured, count: 1, source: 'nexus.db/backups' },
+    backup: { last_at: measured, count: 1, source: 'nexus.db/backups', measured_at: measured },
   })
 }
 
@@ -57,7 +57,7 @@ test('garde la date du dernier contrôle réussi après une panne', async () => 
 
   expect(await screen.findByText('Serveur injoignable — état unknown')).toBeInTheDocument()
   expect(screen.queryByText('Base OK')).not.toBeInTheDocument()
-  expect(screen.getByText(/^dernier contrôle réussi — source : nexus\.db/)).toBeInTheDocument()
+  expect(screen.getByText(/^dernier contrôle réussi —/)).toHaveTextContent(/source : nexus\.db/)
 })
 
 test('contrôle quand même si le navigateur se croit hors ligne', async () => {
@@ -71,4 +71,15 @@ test('contrôle quand même si le navigateur se croit hors ligne', async () => {
   await client.refetchQueries({ queryKey: ['health'] })
 
   expect(await screen.findByText('Serveur injoignable — état unknown')).toBeInTheDocument()
+})
+
+test('une santé trop ancienne est dite périmée', async () => {
+  const old = new Date(Date.now() - 60_000).toISOString()
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+    version: '0.1.0',
+    db: { status: 'ok', source: 'nexus.db', measured_at: old },
+    backup: { last_at: null, count: 0, source: 'nexus.db/backups', measured_at: old },
+  })))
+  renderApp()
+  expect(await screen.findByText('périmée')).toBeInTheDocument()
 })

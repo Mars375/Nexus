@@ -30,6 +30,7 @@ async function drag(page: Page, title: string, to: string) {
 test('créer, déplacer, commenter et filtrer une tâche', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByText('Aucune tâche pour l’instant.').or(page.getByText("Aucune tâche pour l'instant."))).toBeVisible()
+  await expect(page.getByRole('main').getByText(/^source : nexus\.db · mesuré il y a/)).toBeVisible()
 
   await createTask(page, 'Relever les statuts', { todo: 'Lire kanban_db.py' })
   await expect(column(page, 'À faire').getByText('Relever les statuts', { exact: true })).toBeVisible()
@@ -204,4 +205,13 @@ test("une tâche préparée « principale » démarre en auxiliaire si une autre
   await expect(column(page, 'En cours').getByText('Préparée principale', { exact: true })).toBeVisible()
   const started = await (await page.request.get(`/api/tasks/${id}`)).json()
   expect(started.operation_role).toBe('auxiliary')
+})
+
+test('le tableau et le détail disent d\'où viennent les données', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByRole('main').getByText(/^source : nexus\.db · mesuré il y a/).first()).toBeVisible()
+  await createTask(page, 'Tracer la provenance')
+  await card(page, 'Tracer la provenance').click()
+  const pane = page.getByRole('complementary', { name: 'Détail de Tracer la provenance' })
+  await expect(pane.locator('header').getByText(/^source : nexus\.db · mesuré il y a/)).toBeVisible()
 })

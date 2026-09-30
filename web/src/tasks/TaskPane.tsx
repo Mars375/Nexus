@@ -3,6 +3,8 @@ import { toast } from 'sonner'
 import { useState, type FormEvent, type ReactNode } from 'react'
 import type { Actor, HistoryEntry, Priority, Status, Task, TaskChanges } from '@/api'
 import { formatDateTime, isoToLocalInput, localInputToIso } from '@/format'
+import { listProvenance, type Provenanced } from '@/freshness'
+import { Provenance } from '@/Provenance'
 import { AgentMark, Button, Field, inputClass } from '@/ui'
 import { MoveDialog } from './MoveDialog'
 import {
@@ -57,6 +59,7 @@ export function TaskPane({ task, tasks, onClose }: Props) {
             )}
           </p>
           <h2 className="mt-0.5 font-display text-lg leading-tight font-semibold">{task.title}</h2>
+          <Provenance source={task.source} measuredAt={task.measured_at} kind="tasks" className="mt-1 block" />
         </div>
         <Button variant="ghost" onClick={onClose} aria-label="Fermer le détail">
           Fermer
@@ -387,6 +390,16 @@ function Dependencies({ task, tasks }: { task: Task; tasks: Task[] }) {
   )
 }
 
+/** Provenance d'une sous-liste (commentaires, historique) : son élément le plus ancien. */
+function ListProvenance({ items, updatedAt }: { items: Provenanced[] | undefined; updatedAt: number }) {
+  const provenance = items ? listProvenance(items, 'tasks', updatedAt) : null
+  return provenance ? (
+    <p className="mb-2">
+      <Provenance source={provenance.source} measuredAt={provenance.measuredAt} kind="tasks" />
+    </p>
+  ) : null
+}
+
 /** Chargement, échec ou données non à jour d'une section de détail (ADR-005 : jamais de vide muet). */
 function LoadState({ query, what, label }: {
   query: { isPending: boolean; isError: boolean; data: unknown }
@@ -419,6 +432,7 @@ function Comments({ id }: { id: string }) {
   return (
     <Section title="Commentaires">
       <LoadState query={comments} what="les commentaires" label="Commentaires" />
+      <ListProvenance items={comments.data} updatedAt={comments.dataUpdatedAt} />
       <ul className="grid gap-3">
         {comments.data?.map((c) => (
           <li key={c.id} className="text-xs">
@@ -479,6 +493,7 @@ function History({ id }: { id: string }) {
   return (
     <Section title="Historique">
       <LoadState query={history} what="l’historique" label="Historique" />
+      <ListProvenance items={history.data} updatedAt={history.dataUpdatedAt} />
       <ol className="grid gap-1.5 text-xs">
         {history.data
           ?.slice()

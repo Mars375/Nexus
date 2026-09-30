@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { Task } from '@/api'
 import { TaskPane } from './TaskPane'
@@ -116,4 +116,22 @@ test('un cycle apparu pendant la sélection est expliqué et bloque l’ajout', 
 
   expect(screen.getByRole('alert')).toHaveTextContent(/cycle/)
   expect(screen.getByRole('button', { name: 'Ajouter' })).toBeDisabled()
+})
+
+test('le panneau dit d’où viennent la tâche, ses commentaires et son historique', async () => {
+  const now = new Date().toISOString()
+  const comment = { id: 1, task: TASK.id, author: 'loic', body: 'noté', at: now, source: 'nexus.db', measured_at: now }
+  const entry = { id: 1, task: TASK.id, actor: 'loic', at: now, action: 'created', changes: {}, source: 'nexus.db', measured_at: now }
+  vi.stubGlobal('fetch', vi.fn(async (url: string) =>
+    Response.json(String(url).endsWith('/comments') ? [comment] : [entry]),
+  ))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(
+    <QueryClientProvider client={client}>
+      <TaskPane task={{ ...TASK, measured_at: now }} tasks={[TASK]} onClose={() => {}} />
+    </QueryClientProvider>,
+  )
+  await waitFor(() =>
+    expect(screen.getAllByText(/^source : nexus\.db · mesuré il y a/)).toHaveLength(3),
+  )
 })
