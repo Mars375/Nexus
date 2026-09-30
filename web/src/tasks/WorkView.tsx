@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { Actor, Priority, Role, Status } from '@/api'
+import { listProvenance } from '@/freshness'
+import { Provenance } from '@/Provenance'
 import { useNow } from '@/useNow'
 import { Button, toolbarControlClass } from '@/ui'
 import { Board } from './Board'
@@ -18,6 +20,7 @@ export function WorkView() {
   const set = <K extends keyof Filters>(key: K, value: Filters[K]) =>
     setFilters((f) => ({ ...f, [key]: value }))
 
+  const provenance = tasks.data ? listProvenance(tasks.data, 'tasks', tasks.dataUpdatedAt) : null
   const all = useMemo(() => tasks.data ?? [], [tasks.data])
   const visible = useMemo(() => applyFilters(all, filters, now), [all, filters, now])
   const statuses = filters.status
@@ -79,6 +82,12 @@ export function WorkView() {
             Nouvelle tâche
           </Button>
         </header>
+
+        {provenance && (
+          <p className="px-5 pb-2">
+            <Provenance source={provenance.source} measuredAt={provenance.measuredAt} kind="tasks" />
+          </p>
+        )}
 
         {tasks.isPending && <p className="px-5 text-sm text-muted">Chargement des tâches…</p>}
         {tasks.isError && !tasks.data && (

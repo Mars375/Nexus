@@ -1,14 +1,20 @@
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
+import type { ReactNode } from 'react'
 import { REFRESH_MS } from './freshness'
 import { fetchHealth, type Health } from './api'
 import { age } from './format'
+import { Provenance } from './Provenance'
 import { useNow } from './useNow'
 
-function provenance({ db, backup }: Health, now: number): string {
-  let text = `source : ${db.source} · mesuré ${age(db.measured_at, now)}`
-  if (backup.last_at) text += ` · dernière sauvegarde ${age(backup.last_at, now)}`
-  return text
+function Detail({ data }: { data: Health }) {
+  const now = useNow()
+  return (
+    <>
+      <Provenance source={data.db.source} measuredAt={data.db.measured_at} kind="health" />
+      {data.backup.last_at && <> · dernière sauvegarde {age(data.backup.last_at, now)}</>}
+    </>
+  )
 }
 
 /** Barre d'état : santé de la base, avec provenance et fraîcheur (ADR-005). */
@@ -22,10 +28,9 @@ export function HealthStatus() {
     networkMode: 'always',
     retry: false,
   })
-  const now = useNow()
 
   let status: string
-  let detail: string | null = null
+  let detail: ReactNode = null
   let tone: 'ok' | 'unknown' | 'pending' = 'pending'
   if (health.isPending) {
     status = 'Vérification…'
@@ -33,13 +38,13 @@ export function HealthStatus() {
     status = 'Serveur injoignable — état unknown'
     tone = 'unknown'
     detail = health.data
-      ? `dernier contrôle réussi — ${provenance(health.data, now)}`
+      ? <>dernier contrôle réussi — <Detail data={health.data} /></>
       : 'aucun contrôle réussi pour le moment'
   } else {
     const ok = health.data.db.status === 'ok'
     status = ok ? 'Base OK' : 'Base : état unknown'
     tone = ok ? 'ok' : 'unknown'
-    detail = provenance(health.data, now)
+    detail = <Detail data={health.data} />
   }
 
   return (
