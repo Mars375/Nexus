@@ -69,7 +69,45 @@ export function connectLive(options: {
   }
   const armSilence = () => {
     clearTimeout(silenceTimer)
-    silenceTimer = setTimeout(() => socket?.close(), SILENCE_MS) // la fermeture relance la reconnexion
+    silenceTimer = setTimeout(() => {
+      // Mark socket as stale before handling loss (detach it so late onclose is ignored)
+      const staleSocket = socket
+      socket = null
+      staleSocket?.close()
+      handleLoss()
+    }, SILENCE_MS)
+  }
+
+  // Factored loss handling: clear timers, update state, schedule reconnect
+  const handleLoss = () => {
+    if (stopped) return
+    clearTimeout(silenceTimer)
+    if (connected) {
+      // Perte d'une connexion établie : les 30 s comptent d'ici. Sans connexion depuis le
+      // chargement, elles comptent déjà depuis le chargement (on ne réarme pas).
+      connected = false
+      armUnknown()
+    }
+    attempt += 1
+    options.onState(unknown ? { status: 'unknown', attempt } : { status: 'reconnecting', attempt })
+    reconnectTimer = setTimeout(connect, reconnectDelay(attempt, options.random))
+  }
+
+  // Validate message has correct type, valid cursor with non-negative integers
+  const isValidMessage = (data: unknown): data is LiveMessage => {
+    if (!data || typeof data !== 'object') return false
+    const msg = data as Record<string, unknown>
+    const type = msg.type
+    if (!['hello', 'task_changed', 'event', 'resync', 'ping'].includes(type as string)) return false
+    const cursor = msg.cursor
+    if (!cursor || typeof cursor !== 'object') return false
+    const cursorObj = cursor as Record<string, unknown>
+    const history = cursorObj.history
+    const events = cursorObj.events
+    return (
+      Number.isInteger(history) && (history as number) >= 0 &&
+      Number.isInteger(events) && (events as number) >= 0
+    )
   }
 
   const connect = () => {
@@ -77,7 +115,6 @@ export function connectLive(options: {
     socket = current
     current.onopen = () => {
       if (stopped) return
-      attempt = 0
       connected = true
       unknown = false
       clearTimeout(unknownTimer)
@@ -86,28 +123,22 @@ export function connectLive(options: {
     }
     current.onmessage = (event) => {
       if (stopped) return
-      armSilence()
       let message: LiveMessage
       try {
-        message = JSON.parse(String(event.data)) as LiveMessage
+        message = JSON.parse(String(event.data)) as unknown as LiveMessage
       } catch {
         return // message illisible : ignoré, la relecture régulière reste le filet
       }
+      if (!isValidMessage(message)) return // message invalide : ignoré, curseur précédent conservé
+      // First valid message of this connection: reset attempt counter
+      attempt = 0
       cursor = message.cursor
+      armSilence() // Only re-arm on valid messages
       options.onMessage(message)
     }
     current.onclose = () => {
       if (stopped || socket !== current) return
-      clearTimeout(silenceTimer)
-      if (connected) {
-        // Perte d'une connexion établie : les 30 s comptent d'ici. Sans connexion depuis le
-        // chargement, elles comptent déjà depuis le chargement (on ne réarme pas).
-        connected = false
-        armUnknown()
-      }
-      attempt += 1
-      options.onState(unknown ? { status: 'unknown', attempt } : { status: 'reconnecting', attempt })
-      reconnectTimer = setTimeout(connect, reconnectDelay(attempt, options.random))
+      handleLoss()
     }
   }
 

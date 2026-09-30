@@ -163,4 +163,69 @@ describe('connectLive', () => {
     vi.advanceTimersByTime(60_000)
     expect(h.sockets).toHaveLength(1)
   })
+
+  test('ignore les messages avec curseur invalide', () => {
+    const h = harness()
+    h.open()
+    h.send(HELLO)
+    h.send(null)
+    h.send({ type: 'hello' })
+    h.send({ type: 'ping', cursor: { history: 'abc', events: 4 } })
+    expect(h.messages).toEqual([HELLO])
+    h.drop()
+    vi.advanceTimersByTime(500)
+    expect(h.last().url).toContain('history_after=3&events_after=4') // curseur précédent conservé
+  })
+
+  test('message invalide ne réarme pas le silence', () => {
+    const h = harness()
+    h.open()
+    h.send(HELLO)
+    vi.advanceTimersByTime(SILENCE_MS - 1)
+    h.send({ type: 'ping', cursor: { history: 'abc', events: 4 } }) // message invalide
+    vi.advanceTimersByTime(1)
+    expect(h.last().closed).toBe(true) // la socket s'est fermée, message invalide n'a pas réarmé
+  })
+
+  test('deux essais échoués sans message : deuxième attente 1000 ms', () => {
+    const h = harness()
+    h.open()
+    h.drop() // premier essai échoue sans message
+    expect(h.states.at(-1)).toEqual({ status: 'reconnecting', attempt: 1 })
+    vi.advanceTimersByTime(500) // attente pour tentative 1
+    expect(h.sockets).toHaveLength(2)
+    h.drop() // deuxième essai échoue aussi sans message
+    expect(h.states.at(-1)).toEqual({ status: 'reconnecting', attempt: 2 })
+    vi.advanceTimersByTime(999)
+    expect(h.sockets).toHaveLength(2) // pas encore de troisième socket
+    vi.advanceTimersByTime(1)
+    expect(h.sockets).toHaveLength(3) // attente 1000 ms pour tentative 2
+  })
+
+  test('stop en attente de reconnexion ne crée pas de socket et n\'émet pas unknown', () => {
+    const h = harness()
+    h.open()
+    h.drop()
+    h.stop()
+    vi.advanceTimersByTime(UNKNOWN_AFTER_MS)
+    const unknownStates = h.states.filter((s) => s.status === 'unknown')
+    expect(unknownStates).toHaveLength(0)
+    vi.advanceTimersByTime(60_000)
+    expect(h.sockets).toHaveLength(1)
+  })
+
+  test('silence ouvre une deuxième socket et l\'onclose tardive ne crée pas de troisième', () => {
+    const h = harness()
+    h.open()
+    const firstSocket = h.last()
+    vi.advanceTimersByTime(SILENCE_MS)
+    expect(firstSocket.closed).toBe(true)
+    expect(h.sockets).toHaveLength(1) // socket fermée mais pas encore de tentative de reconnexion
+    vi.advanceTimersByTime(500) // attente du premier reconnect (attempt 1)
+    expect(h.sockets).toHaveLength(2)
+    // Simuler une onclose tardive de la première socket
+    firstSocket.onclose?.({} as CloseEvent)
+    vi.advanceTimersByTime(60_000)
+    expect(h.sockets).toHaveLength(2) // pas de troisième socket créée
+  })
 })
