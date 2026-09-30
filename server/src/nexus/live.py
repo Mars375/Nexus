@@ -7,9 +7,12 @@ des références et des types, jamais de texte reçu : l'interface relit par l'A
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import suppress
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -114,3 +117,67 @@ def origin_allowed(origin: str | None, extra: frozenset[str]) -> bool:
     except ValueError:
         return False
     return parts.scheme in ("http", "https") and parts.hostname in _LOOPBACK_HOSTS
+
+
+router = APIRouter()
+
+
+@router.websocket("/api/ws")
+async def live_updates(websocket: WebSocket) -> None:
+    app = websocket.app
+    if not origin_allowed(websocket.headers.get("origin"), app.state.settings.allowed_origins):
+        await websocket.close(code=1008)  # avant acceptation : poignée de main refusée
+        return
+    make = app.state.sessionmaker
+
+    def read_current() -> Cursor:
+        with make() as session:
+            return current_cursor(session)
+
+    def read_changes(cursor: Cursor) -> tuple[list[dict], Cursor]:
+        with make() as session:
+            return changes_since(session, cursor)
+
+    try:
+        cursor, reset = start_cursor(
+            websocket.query_params.get("history_after"),
+            websocket.query_params.get("events_after"),
+            await asyncio.to_thread(read_current),
+        )
+    except ValueError:
+        # Raison générique : la valeur reçue n'est jamais recopiée.
+        await websocket.close(code=1008, reason="curseur invalide")
+        return
+    await websocket.accept()
+    await websocket.send_json({"type": "hello", "cursor": cursor.as_dict(), "reset": reset})
+
+    async def push() -> None:
+        nonlocal cursor
+        silent = 0.0
+        while True:
+            messages, cursor = await asyncio.to_thread(read_changes, cursor)
+            for message in messages:
+                await websocket.send_json(message)
+            if messages:
+                silent = 0.0
+            else:
+                silent += POLL_SECONDS
+                if silent >= PING_SECONDS:
+                    await websocket.send_json({"type": "ping", "cursor": cursor.as_dict()})
+                    silent = 0.0
+            await asyncio.sleep(POLL_SECONDS)
+
+    async def wait_for_disconnect() -> None:
+        while (await websocket.receive())["type"] != "websocket.disconnect":
+            pass  # le client n'envoie rien d'utile : on ne fait qu'attendre sa fermeture
+
+    sender = asyncio.create_task(push())
+    watcher = asyncio.create_task(wait_for_disconnect())
+    done, pending = await asyncio.wait({sender, watcher}, return_when=asyncio.FIRST_COMPLETED)
+    for task in pending:
+        task.cancel()
+        with suppress(asyncio.CancelledError, WebSocketDisconnect, RuntimeError):
+            await task
+    for task in done:
+        with suppress(WebSocketDisconnect, RuntimeError):
+            task.result()  # une fermeture côté client pendant un envoi n'est pas une erreur

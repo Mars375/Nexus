@@ -24,6 +24,8 @@ class Settings:
     port: int = 8765
     tailscale_bin: str = "tailscale"
     nodes_refresh_seconds: float = 60.0
+    # Origines admises en plus de la boucle locale pour le WebSocket (ex. Tauri plus tard).
+    allowed_origins: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if self.backup_keep < 1:
@@ -63,4 +65,9 @@ class Settings:
             port=int(os.environ.get("NEXUS_PORT", "8765")),
             tailscale_bin=os.environ.get("NEXUS_TAILSCALE_BIN", "tailscale"),
             nodes_refresh_seconds=float(os.environ.get("NEXUS_NODES_REFRESH_SECONDS", "60")),
+            allowed_origins=frozenset(
+                item.strip()
+                for item in os.environ.get("NEXUS_ALLOWED_ORIGINS", "").split(",")
+                if item.strip()
+            ),
         )

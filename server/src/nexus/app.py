@@ -15,7 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.exc import StaleDataError
 
-from nexus import backup, migrate, nodes
+from nexus import backup, live, migrate, nodes
 from nexus.clock import now
 from nexus.config import Settings
 from nexus.db import make_engine
@@ -97,8 +97,10 @@ def create_app(
             app.state.engine.dispose()
 
     app = FastAPI(title="Nexus", version=version("nexus"), lifespan=lifespan)
+    app.state.settings = settings
     app.include_router(tasks_api.router)
     app.include_router(events_api.router)
+    app.include_router(live.router)
 
     @app.exception_handler(RequestValidationError)
     def _invalid(_request: Request, exc: RequestValidationError) -> JSONResponse:

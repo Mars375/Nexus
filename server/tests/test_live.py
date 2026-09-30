@@ -1,8 +1,10 @@
 """Temps réel (#5) : curseur, lecture des changements, contrôle d'origine."""
 
 import pytest
+from starlette.websockets import WebSocketDisconnect
 
 from nexus import live
+from nexus.config import Settings
 from nexus.live import Cursor, changes_since, current_cursor, origin_allowed, start_cursor
 
 AT = "2026-09-30T09:00:00+02:00"
@@ -130,3 +132,68 @@ def test_a_configured_origin_is_allowed_exactly():
     extra = frozenset({"tauri://localhost"})
     assert origin_allowed("tauri://localhost", extra)
     assert not origin_allowed("tauri://localhost.evil", extra)
+
+
+def test_hello_without_cursor_starts_from_now(client):
+    new_task(client)
+    with db(client) as s:
+        now = current_cursor(s)
+    with client.websocket_connect("/api/ws") as ws:
+        assert ws.receive_json() == {"type": "hello", "cursor": now.as_dict(), "reset": False}
+
+
+def test_a_reconnection_replays_what_was_missed(client):
+    with db(client) as s:
+        before = current_cursor(s)
+    ref = new_task(client)
+    url = f"/api/ws?history_after={before.history}&events_after={before.events}"
+    with client.websocket_connect(url) as ws:
+        assert ws.receive_json()["type"] == "hello"
+        message = ws.receive_json()
+    assert (message["type"], message["task"]) == ("task_changed", ref)
+
+
+def test_a_change_after_connecting_is_pushed_live(client):
+    with client.websocket_connect("/api/ws") as ws:
+        ws.receive_json()  # hello
+        ref = new_task(client)
+        message = ws.receive_json()
+    assert (message["type"], message["task"]) == ("task_changed", ref)
+
+
+def test_silence_is_broken_by_a_ping(client, monkeypatch):
+    monkeypatch.setattr(live, "PING_SECONDS", 0.3)
+    with client.websocket_connect("/api/ws") as ws:
+        hello = ws.receive_json()
+        assert ws.receive_json() == {"type": "ping", "cursor": hello["cursor"]}
+
+
+def test_a_cursor_ahead_of_the_base_announces_a_reset(client):
+    with client.websocket_connect("/api/ws?history_after=999&events_after=999") as ws:
+        assert ws.receive_json()["reset"] is True
+
+
+def test_a_foreign_origin_is_refused(client):
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/api/ws", headers={"origin": "https://evil.example"}):
+            pass
+
+
+def test_a_loopback_origin_is_accepted(client):
+    with client.websocket_connect("/api/ws", headers={"origin": "http://localhost:5199"}) as ws:
+        assert ws.receive_json()["type"] == "hello"
+
+
+def test_an_invalid_cursor_is_refused_without_echo(client):
+    with pytest.raises(WebSocketDisconnect) as closed:
+        with client.websocket_connect("/api/ws?history_after=ghp_trace&events_after=0"):
+            pass
+    assert "ghp_trace" not in str(closed.value.reason or "")
+
+
+def test_allowed_origins_are_read_from_the_environment(monkeypatch, tmp_path):
+    monkeypatch.setenv("NEXUS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("NEXUS_ALLOWED_ORIGINS", " tauri://localhost , ,http://tauri.localhost")
+    assert Settings.from_env().allowed_origins == frozenset(
+        {"tauri://localhost", "http://tauri.localhost"}
+    )
