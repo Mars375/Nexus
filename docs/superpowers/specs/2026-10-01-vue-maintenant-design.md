@@ -51,7 +51,7 @@ Une seule lecture, un seul instantané cohérent (une session, une transaction d
 ### La scène de l'étage (`web/src/now/Floor.tsx`)
 
 - SVG isométrique, géométrie calculée par des fonctions pures (`web/src/now/iso.ts` : projection, boîtes, positions des postes) testées à part.
-- **Postes** : un par agent, placés sur deux rangées de part et d'autre de la table ; jusqu'à 12 postes (au-delà : troisième rangée). Bureau en volume + écran.
+- **Postes** : un par agent, placés sur deux rangées de part et d'autre de la table ; jusqu'à 12 postes : au-delà de 8, les deux rangées s'allongent (l'étage s'élargit), la table reste au centre. Bureau en volume + écran.
   - run : écran turquoise + flaque de lumière au sol ;
   - inactif : écran éteint, nom en gris ;
   - l'agent a une demande reçue : balise orange plantée sur son écran + lueur ambre + fil pointillé au sol jusqu'à ta table ;
@@ -96,7 +96,7 @@ Une seule lecture, un seul instantané cohérent (une session, une transaction d
 - Un agent avec plusieurs demandes : une seule balise, plusieurs fiches sur la table.
 - Demande sans tâche (`task` null) : fiche sur la table, pas de ligne vers une tâche ; texte « sur aucune tâche ».
 - Run ouvert sur une tâche abandonnée ou terminée : l'agent reste « run » (c'est ce que disent les événements) ; la tâche affichée est celle du `working`.
-- Plus de 8 agents connus : postes supplémentaires sur une troisième rangée.
+- Plus de 8 agents connus : les rangées s'allongent, l'étage s'élargit.
 - Nœud absent de la lecture Tailscale : pas de baie inventée.
 - Texte long (sujet, titre) : tronqué avec « … » dans la scène, complet dans les listes.
 - Secrets : les sujets de demandes et titres sont déjà stockés masqués ; rien de nouveau n'est reçu.
