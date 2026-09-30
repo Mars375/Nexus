@@ -151,3 +151,22 @@ def test_api_survives_tailscale_being_absent(settings):
 
     assert res.status_code == 200
     assert {n["status"] for n in res.json()} == {"unknown"}
+
+
+def test_unexpected_exception_in_first_read_is_logged(settings, caplog):
+    """Une exception inattendue lors de la première lecture doit être loguée."""
+    def boom():
+        raise RuntimeError("boom")
+
+    with TestClient(create_app(settings, nodes_runner=boom)) as client:
+        res = client.get("/api/nodes")
+
+    # L'API répond 200 même si la première lecture a échoué
+    assert res.status_code == 200
+    assert {n["status"] for n in res.json()} == {"unknown"}
+    # L'erreur est loguée
+    assert any(
+        "première lecture de l'état des nœuds échouée" in record.message
+        and record.levelname == "ERROR"
+        for record in caplog.records
+    )

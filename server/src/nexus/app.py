@@ -44,8 +44,11 @@ def create_app(
 
     async def nodes_loop(app: FastAPI, first_read: asyncio.Task) -> None:
         # Une seule lecture à la fois : on attend la première avant de rafraîchir.
-        with suppress(Exception):
+        try:
             await first_read
+        except Exception:
+            # La lecture attendue ne lève jamais (probe rend « unknown ») : ceci est un vrai bug.
+            log.exception("première lecture de l'état des nœuds échouée")
         while True:
             await asyncio.sleep(settings.nodes_refresh_seconds)
             try:
