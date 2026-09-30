@@ -113,13 +113,11 @@ export function connectLive(options: {
   const connect = () => {
     const current = options.open(liveUrl(cursor))
     socket = current
+    // Une poignée de main qui n'aboutit jamais est traitée comme un silence (45 s), puis relancée.
+    armSilence()
     current.onopen = () => {
       if (stopped || socket !== current) return
-      connected = true
-      unknown = false
-      clearTimeout(unknownTimer)
-      armSilence()
-      options.onState({ status: 'connected' })
+      armSilence() // « connecté » attend le premier message valide (ADR-005) : ici, on surveille seulement
     }
     current.onmessage = (event) => {
       if (stopped || socket !== current) return
@@ -130,10 +128,17 @@ export function connectLive(options: {
         return // message illisible : ignoré, la relecture régulière reste le filet
       }
       if (!isValidMessage(message)) return // message invalide : ignoré, curseur précédent conservé
-      // First valid message of this connection: reset attempt counter
+      // Premier message valide de la connexion : elle est établie (on ne se fie pas à onopen seul,
+      // un serveur peut accepter puis fermer sans rien dire).
       attempt = 0
       cursor = message.cursor
       armSilence() // Only re-arm on valid messages
+      if (!connected) {
+        connected = true
+        unknown = false
+        clearTimeout(unknownTimer)
+        options.onState({ status: 'connected' })
+      }
       options.onMessage(message)
     }
     current.onclose = () => {

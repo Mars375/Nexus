@@ -40,7 +40,12 @@ function harness() {
   const send = (data: unknown) =>
     last().onmessage?.({ data: typeof data === 'string' ? data : JSON.stringify(data) } as MessageEvent)
   const drop = () => last().onclose?.({} as CloseEvent)
-  return { sockets, states, messages, stop, last, open, send, drop }
+  // Connexion établie : la socket s'ouvre ET le serveur parle (premier message valide).
+  const up = () => {
+    open()
+    send({ type: 'hello', cursor: { history: 0, events: 0 }, reset: false })
+  }
+  return { sockets, states, messages, stop, last, open, send, drop, up }
 }
 
 const HELLO = { type: 'hello', cursor: { history: 3, events: 4 }, reset: false }
@@ -73,11 +78,44 @@ describe('liveUrl', () => {
 })
 
 describe('connectLive', () => {
-  test('connexion : connecting puis connected', () => {
+  test('connexion : connecting, puis connected au premier message valide seulement', () => {
     const h = harness()
     expect(h.states).toEqual([{ status: 'connecting' }])
     h.open()
+    expect(h.states).toEqual([{ status: 'connecting' }])
+    h.send(HELLO)
     expect(h.states.at(-1)).toEqual({ status: 'connected' })
+  })
+
+  test('un message invalide ne rend pas connecté', () => {
+    const h = harness()
+    h.open()
+    h.send({ type: 'ping', cursor: { history: 'abc', events: 4 } })
+    h.send('pas du json')
+    expect(h.states.some((s) => s.status === 'connected')).toBe(false)
+  })
+
+  test('un serveur qui accepte puis ferme sans parler n\'est jamais connecté', () => {
+    const h = harness()
+    h.open()
+    h.drop()
+    expect(h.states.map((s) => s.status)).toEqual(['connecting', 'reconnecting'])
+    vi.advanceTimersByTime(500)
+    h.open()
+    h.drop()
+    expect(h.states.some((s) => s.status === 'connected')).toBe(false)
+  })
+
+  test('une connexion qui ne s\'ouvre jamais est fermée après 45 s puis relancée', () => {
+    const h = harness()
+    vi.advanceTimersByTime(SILENCE_MS - 1)
+    expect(h.last().closed).toBe(false)
+    vi.advanceTimersByTime(1)
+    expect(h.sockets[0].closed).toBe(true)
+    // 30 s sans connexion sont déjà passées : l'état est unknown, pas reconnecting.
+    expect(h.states.at(-1)).toEqual({ status: 'unknown', attempt: 1 })
+    vi.advanceTimersByTime(500)
+    expect(h.sockets).toHaveLength(2)
   })
 
   test('transmet les messages et ignore un message illisible', () => {
@@ -103,7 +141,7 @@ describe('connectLive', () => {
 
   test('passe à unknown après 30 s sans connexion', () => {
     const h = harness()
-    h.open()
+    h.up()
     h.drop()
     vi.advanceTimersByTime(UNKNOWN_AFTER_MS - 1)
     expect(h.states.at(-1)?.status).not.toBe('unknown')
@@ -113,7 +151,7 @@ describe('connectLive', () => {
 
   test('unknown tient pendant les essais suivants', () => {
     const h = harness()
-    h.open()
+    h.up()
     h.drop()
     vi.advanceTimersByTime(UNKNOWN_AFTER_MS)
     h.drop() // un nouvel essai échoue
@@ -133,6 +171,8 @@ describe('connectLive', () => {
     vi.advanceTimersByTime(UNKNOWN_AFTER_MS) // jamais connecté depuis le chargement
     expect(h.states.at(-1)?.status).toBe('unknown')
     h.open()
+    expect(h.states.at(-1)?.status).toBe('unknown') // ouverte mais muette : pas encore rétablie
+    h.send(HELLO)
     expect(h.states.at(-1)).toEqual({ status: 'connected' })
   })
 
@@ -205,7 +245,7 @@ describe('connectLive', () => {
 
   test('stop en attente de reconnexion ne crée pas de socket et n\'émet pas unknown', () => {
     const h = harness()
-    h.open()
+    h.up()
     h.drop()
     h.stop()
     vi.advanceTimersByTime(UNKNOWN_AFTER_MS)
@@ -226,7 +266,7 @@ describe('connectLive', () => {
     expect(h.sockets).toHaveLength(2)
     // Simuler une onclose tardive de la première socket
     firstSocket.onclose?.({} as CloseEvent)
-    vi.advanceTimersByTime(60_000)
+    vi.advanceTimersByTime(SILENCE_MS - 1) // avant le délai de connexion de la deuxième socket
     expect(h.sockets).toHaveLength(2) // pas de troisième socket créée
   })
 

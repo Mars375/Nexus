@@ -12,6 +12,11 @@ test.each([
   expect(screen.getByText(text)).toBeInTheDocument()
 })
 
+test('l’état est annoncé comme une région de statut', () => {
+  render(<LiveStatus state={{ status: 'connected' }} />)
+  expect(screen.getByRole('status')).toHaveTextContent('Temps réel : connecté')
+})
+
 test('unknown est mis en évidence', () => {
   render(<LiveStatus state={{ status: 'unknown', attempt: 1 }} />)
   expect(screen.getByText(/unknown/)).toHaveClass('text-attention')

@@ -18,7 +18,9 @@ function describe(state: LiveState): string {
 /** État du temps réel dans la barre du bas ; aucune animation, seul l'état change le texte. */
 export function LiveStatus({ state }: { state: LiveState }) {
   return (
-    <span className={clsx('shrink-0', state.status === 'unknown' ? 'text-attention' : 'text-muted')}>
+    <span
+      role="status"
+      className={clsx('shrink-0', state.status === 'unknown' ? 'text-attention' : 'text-muted')}>
       {describe(state)}
     </span>
   )
