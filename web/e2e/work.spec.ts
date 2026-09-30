@@ -205,3 +205,12 @@ test("une tâche préparée « principale » démarre en auxiliaire si une autre
   const started = await (await page.request.get(`/api/tasks/${id}`)).json()
   expect(started.operation_role).toBe('auxiliary')
 })
+
+test('le tableau et le détail disent d\'où viennent les données', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByText(/^source : nexus\.db · mesuré il y a/).first()).toBeVisible()
+  await createTask(page, 'Tracer la provenance')
+  await card(page, 'Tracer la provenance').click()
+  const pane = page.getByRole('complementary', { name: 'Détail de Tracer la provenance' })
+  await expect(pane.getByText(/^source : nexus\.db · mesuré il y a/).first()).toBeVisible()
+})
