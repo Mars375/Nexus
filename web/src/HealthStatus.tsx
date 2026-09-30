@@ -4,6 +4,8 @@ import type { ReactNode } from 'react'
 import { REFRESH_MS } from './freshness'
 import { fetchHealth, type Health } from './api'
 import { age } from './format'
+import type { LiveState } from './live'
+import { LiveStatus } from './LiveStatus'
 import { Provenance } from './Provenance'
 import { useNow } from './useNow'
 
@@ -18,7 +20,7 @@ function Detail({ data }: { data: Health }) {
 }
 
 /** Barre d'état : santé de la base, avec provenance et fraîcheur (ADR-005). */
-export function HealthStatus() {
+export function HealthStatus({ live }: { live?: LiveState } = {}) {
   const health = useQuery({
     queryKey: ['health'],
     queryFn: ({ signal }) => fetchHealth(signal),
@@ -62,6 +64,7 @@ export function HealthStatus() {
         <span role="status" className="text-ink">{status}</span>
       </span>
       {detail && <span className="min-w-0 break-words">{detail}</span>}
+      {live && <LiveStatus state={live} />}
     </footer>
   )
 }

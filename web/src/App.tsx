@@ -2,6 +2,7 @@ import clsx from 'clsx'
 import { useEffect, useState } from 'react'
 import { Toaster } from 'sonner'
 import { HealthStatus } from './HealthStatus'
+import { useLiveUpdates } from './liveUpdates'
 import { WorkView } from './tasks/WorkView'
 
 type View = 'maintenant' | 'travail'
@@ -17,6 +18,7 @@ function currentView(): View {
 
 export default function App() {
   const [view, setView] = useState<View>(currentView)
+  const live = useLiveUpdates()
 
   useEffect(() => {
     const onHash = () => setView(currentView())
@@ -60,7 +62,7 @@ export default function App() {
           )}
         </main>
       </div>
-      <HealthStatus />
+      <HealthStatus live={live} />
       <Toaster position="bottom-center" offset={40} theme="system" richColors closeButton />
     </div>
   )
