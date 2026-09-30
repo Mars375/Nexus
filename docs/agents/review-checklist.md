@@ -56,7 +56,7 @@ How to use it:
 - [ ] Three notions are never mixed: a response's `source` + `measured_at` say where and when the item was read (`nexus.db`); `Task.origin` says where the task came from (message, mail, decision); `Event.origin` names the channel that published the event (`api` or an adapter such as `hermes`) — `DATA-MODEL.md` calls it `Event.source` until #13 renames it.
 - [ ] Unknown or unreadable external data becomes `unknown` with a reason — never a guessed state (e.g. a non-boolean `Online` field).
 - [ ] Anything slow or external has a timeout and a startup fallback that does not block the API (serve an `unknown` snapshot first).
-- [ ] `server/tests/test_provenance_contract.py` walks every `GET /api/…` route: a new route with a new path parameter must add it to `PATH_VALUES`, and its entities must carry `source` + `measured_at`.
+- [ ] `server/tests/test_provenance_contract.py` walks every `GET /api/…` route: a new route with a new path parameter must add its value to the dict returned by `seed()` in that file, and its entities must carry `source` + `measured_at`.
 
 ## 6. UI with data that changes
 
