@@ -54,16 +54,16 @@ def _open_runs(session: Session) -> dict[str, Event]:
     Même règle que `events.service._runs` : une clôture ne ferme que le run qu'elle nomme,
     pour cet agent et cette tâche.
     """
-    events = session.scalars(
+    events = list(session.scalars(
         select(Event).where(Event.kind.in_(("working", *RUN_CLOSERS))).order_by(Event.id.desc())
-    )
-    closed: set[tuple[str, int | None, str | None]] = set()
+    ))
+    # Les clôtures sur tout l'historique d'abord : un `working` tardif (id plus grand que sa
+    # clôture) ne rouvre pas un run déjà clos.
+    closed = {(e.actor, e.task_id, e.run_ref) for e in events if e.kind in RUN_CLOSERS}
     runs: dict[str, Event] = {}
     for event in events:
         key = (event.actor, event.task_id, event.run_ref)
-        if event.kind in RUN_CLOSERS:
-            closed.add(key)
-        elif event.actor not in runs and key not in closed:
+        if event.kind == "working" and event.actor not in runs and key not in closed:
             runs[event.actor] = event
     return runs
 
@@ -100,6 +100,7 @@ def snapshot(session: Session) -> dict:
         })
 
     cutoff = measured - WINDOW
+    # Fenêtre et tri sur `received_at` (ce que Nexus a reçu), pas sur `at` (l'heure déclarée).
     asks = [{
         "event": e.ref, "agent": e.actor, "kind": e.kind, "subject": e.subject,
         "task": _ref(e.task_id), "at": _iso(e.at),

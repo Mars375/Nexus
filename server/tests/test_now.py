@@ -71,6 +71,16 @@ def test_an_open_run_makes_the_agent_run_and_a_closer_makes_it_idle(client):
     assert snapshot(client)["agents"][0]["state"] == "idle"
 
 
+def test_a_late_working_of_a_closed_run_does_not_reopen_it(client):
+    ref = create(client, title="Refonte du pont", status="todo", next_action="x")
+    publish(client, "claimed", task=ref)
+    publish(client, "working", task=ref, payload={"run_ref": "session:abc"})
+    publish(client, "blocked", task=ref, run="session:abc", body="SSH",
+            payload={"plan": "rallumer"})
+    publish(client, "working", task=ref, subject="retard", payload={"run_ref": "session:abc"})
+    assert snapshot(client)["agents"][0]["state"] == "idle"
+
+
 def test_asks_are_questions_and_needs_human_for_loic_within_seven_days(client):
     ref = create(client)
     q = publish(client, "question", actor="mnema", subject="Quelle version ?", task=ref,
