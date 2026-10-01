@@ -14,7 +14,8 @@ const VIEWS: { id: View; label: string }[] = [
 ]
 
 function currentView(): View {
-  return window.location.hash === '#/maintenant' ? 'maintenant' : 'travail'
+  const hash = window.location.hash
+  return hash === '#/travail' || hash.startsWith('#/travail/') ? 'travail' : 'maintenant'
 }
 
 function openTaskFromHash(): string | null {

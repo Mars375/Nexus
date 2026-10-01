@@ -43,7 +43,7 @@ function Desk({ l, seat, m }: { l: Layout; seat: Layout['seats'][number]; m: Sea
 
 type RackView = { node: NodeState; tone: RackTone; text: string }
 
-export function Floor({ snapshot, nodes, nodesFailed = false, onOpenTask }: { snapshot: NowSnapshot; nodes: NodeState[] | undefined; nodesFailed?: boolean; onOpenTask: (ref: string) => void }) {
+export function Floor({ snapshot, nodes, nodesFailed = false }: { snapshot: NowSnapshot; nodes: NodeState[] | undefined; nodesFailed?: boolean }) {
   const now = useNow(AGE_TICK_MS)
   const seats = seatModels(snapshot)
   // Une mesure trop ancienne, ou une relecture en échec : jamais de vert sur une donnée périmée.
@@ -129,7 +129,7 @@ export function Floor({ snapshot, nodes, nodesFailed = false, onOpenTask }: { sn
           m.wait ? '[&>span:first-child]:text-attention' : m.block ? '[&>span:first-child]:text-danger' : m.run ? '' : '[&>span:first-child]:text-unknown')
         const style = { left: `${left}%`, top: `${top}%` }
         return target
-          ? <button key={m.agent} type="button" data-label={m.agent} className={clsx(cls, 'cursor-pointer bg-transparent')} style={style} onClick={() => onOpenTask(target)} aria-label={`${displayName(m.agent)}, ${targetTitle} : ouvrir la tâche`}>{name}</button>
+          ? <a key={m.agent} href={`#/travail/${target}`} data-label={m.agent} className={clsx(cls, 'cursor-pointer bg-transparent no-underline')} style={style} aria-label={`${displayName(m.agent)}, ${targetTitle} : ouvrir la tâche`}>{name}</a>
           : <div key={m.agent} data-label={m.agent} className={cls} style={style}>{name}</div>
       })}
 

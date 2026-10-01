@@ -10,7 +10,6 @@ import { AGE_TICK_MS, displayName } from './model'
 import { useArrivals } from './useArrivals'
 import { useNodes, useNowSnapshot } from './queries'
 
-const openTask = (ref: string) => { window.location.hash = `#/travail/${ref}` }
 
 // Classes écrites en entier : Tailwind ne génère pas une classe construite (`text-${tone}`).
 const TONE = { muted: 'text-muted', attention: 'text-attention', danger: 'text-danger', run: 'text-run' } as const
@@ -57,7 +56,7 @@ export function NowView() {
           {snap.isError && <span className="font-data text-[11px] text-attention">dernière lecture réussie affichée</span>}
         </header>
         <div className="flex min-h-[560px] flex-1 items-center justify-center max-[760px]:hidden">
-          <Floor snapshot={s} nodes={nodes.data} nodesFailed={nodes.isError} onOpenTask={openTask} />
+          <Floor snapshot={s} nodes={nodes.data} nodesFailed={nodes.isError} />
         </div>
         <AgentList snapshot={s} className="min-[760px]:sr-only" />
         <div className="grid grid-cols-2 gap-7 max-[760px]:grid-cols-1">

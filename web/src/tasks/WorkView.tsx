@@ -20,7 +20,7 @@ export function WorkView({ openTask }: { openTask?: string | null } = {}) {
   const [seenOpenTask, setSeenOpenTask] = useState(openTask)
   if (openTask !== seenOpenTask) {
     setSeenOpenTask(openTask)
-    if (openTask) setOpenId(openTask)
+    setOpenId(openTask ?? null)
   }
   const [creating, setCreating] = useState(false)
   const set = <K extends keyof Filters>(key: K, value: Filters[K]) =>

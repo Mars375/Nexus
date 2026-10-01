@@ -121,6 +121,29 @@ def test_blocks_and_their_start(client):
     assert b[0]["lead_agent"] == "artemis" and b[0]["since"]
 
 
+def test_done_tasks_older_than_seven_days_are_left_out(client, monkeypatch):
+    ref = create(client, title="Livrée", next_action="x")
+    move(client, ref, "in_progress")
+    move(client, ref, "done", evidence=["PR #1"])
+    assert [d["task"] for d in snapshot(client)["done"]] == [ref]
+    later = now() + timedelta(days=7, minutes=1)
+    monkeypatch.setattr("nexus.now.now", lambda: later)
+    assert snapshot(client)["done"] == []
+
+
+def test_a_done_task_edited_later_still_leaves_the_window_on_its_done_instant(client, monkeypatch):
+    ref = create(client, title="Livrée", next_action="x")
+    move(client, ref, "in_progress")
+    move(client, ref, "done", evidence=["PR #1"])
+    later = now() + timedelta(days=7, minutes=1)
+    # `updated_at` est récent (retouche), mais le passage à done date de plus de sept jours
+    monkeypatch.setattr("nexus.tasks.service.now", lambda: later)
+    res = client.patch(f"/api/tasks/{ref}", json={"title": "Livrée (retitrée)"})
+    assert res.status_code == 200, res.text
+    monkeypatch.setattr("nexus.now.now", lambda: later)
+    assert snapshot(client)["done"] == []
+
+
 def test_recent_done_with_evidence_at_most_five(client):
     refs = []
     for i in range(6):
