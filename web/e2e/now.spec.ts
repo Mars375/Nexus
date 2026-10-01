@@ -38,3 +38,48 @@ test('à 760 px pile, l\'étage et la liste ne se montrent pas ensemble', async 
   const list = await page.getByRole('list', { name: 'Agents' }).boundingBox()
   expect(list === null || list.width <= 1).toBeTruthy()
 })
+
+const AGENTS = ['helios', 'mnema', 'aether', 'artemis', 'claude', 'codex', 'orca', 'hermes'] as const
+
+async function seedAllAgents(request: import('@playwright/test').APIRequestContext) {
+  // La moitié des agents travaillent (étiquette avec titre long et durée), les autres restent inactifs.
+  for (const agent of AGENTS.slice(0, 5)) {
+    const task = await (await request.post(`${API}/api/tasks`, { data: { title: `Tâche de ${agent} avec un titre assez long`, objective: 'Étiquettes', status: 'todo', next_action: 'x' } })).json()
+    for (const [kind, extra] of [['claimed', {}], ['working', { payload: { run_ref: `session:lab-${agent}` } }]] as const) {
+      const res = await request.post(`${API}/api/events`, { data: { id: `evt_lab_${agent}_${kind}_${Date.now()}`, at: AT, actor: agent, kind, subject: 's', task: task.id, ...extra } })
+      expect(res.ok()).toBeTruthy()
+    }
+  }
+}
+
+for (const width of [1440, 1101, 1100, 761]) {
+  test(`aucune étiquette de poste n'en recouvre une autre à ${width} px`, async ({ page, request }) => {
+    await seedAllAgents(request)
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto('/#/maintenant')
+    await expect(page.locator('[data-label]')).toHaveCount(8)
+    const boxes = await page.locator('[data-label]').evaluateAll((els) => els.map((e) => {
+      const r = e.getBoundingClientRect()
+      // le texte compte aussi : une ligne plus large que l'étiquette déborderait sur sa voisine
+      const spans = [...e.querySelectorAll('span')].map((s) => { const range = document.createRange(); range.selectNodeContents(s); return range.getBoundingClientRect() }).filter((q) => q.width > 0)
+      const left = Math.min(r.left, ...spans.map((q) => q.left)), right = Math.max(r.right, ...spans.map((q) => q.right))
+      return { id: e.getAttribute('data-label'), left, right, top: r.top, bottom: r.bottom }
+    }))
+    for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+      const a = boxes[i], b = boxes[j]
+      const hit = a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+      expect(hit, `${a.id} recouvre ${b.id} ${JSON.stringify([a,b])}`).toBe(false)
+    }
+  })
+}
+
+test('mouvement réduit : une demande fraîche garde son fond ambre', async ({ page, request }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/#/maintenant')
+  await expect(page.getByText('Temps réel : connecté')).toBeVisible()
+  const res = await request.post(`${API}/api/events`, { data: { id: `evt_e2e_rm_${Date.now()}`, at: AT, actor: 'hermes', kind: 'question', subject: 'Question mouvement réduit', needs: ['loic'], payload: { options: ['a', 'b'] } } })
+  expect(res.ok()).toBeTruthy()
+  const row = page.locator('.now-fresh', { hasText: 'Question mouvement réduit' })
+  await expect(row).toBeVisible()
+  await expect(row).toHaveCSS('background-color', 'rgba(251, 146, 60, 0.05)')
+})

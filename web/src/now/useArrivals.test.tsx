@@ -3,7 +3,15 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { useArrivals } from './useArrivals'
 
-function Probe({ keys }: { keys: string[] }) {
+test('pendant le chargement (null), rien n\'est nouveau quand les premières clés arrivent', () => {
+  const { rerender } = render(<Probe keys={null} />)
+  rerender(<Probe keys={['a', 'b']} />)
+  expect(screen.getByText('aucune')).toBeInTheDocument()
+  rerender(<Probe keys={['a', 'b', 'c']} />)
+  expect(screen.getByText('c')).toBeInTheDocument()
+})
+
+function Probe({ keys }: { keys: string[] | null }) {
   const fresh = useArrivals(keys, 1000)
   return <p>{[...fresh].sort().join(',') || 'aucune'}</p>
 }

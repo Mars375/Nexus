@@ -36,4 +36,5 @@
 @keyframes now-fresh { from { background: rgba(251, 146, 60, 0.16) } to { background: rgba(251, 146, 60, 0.05) } }
 @media (prefers-reduced-motion: reduce) {
   .desk *, .route *, .ticket, .rack .led, .now-fresh { transition: none !important; animation: none !important }
+  .now-fresh { background: rgba(251, 146, 60, 0.05) }
 }

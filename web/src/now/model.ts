@@ -31,3 +31,10 @@ const LABEL: Record<NodeState['status'], string> = {
 export function rackLabel(n: NodeState): string {
   return LABEL[n.status]
 }
+
+/** Noms affichés sur Maintenant : une seule table pour l'étage, la liste et le panneau. */
+const AGENT_NAME: Record<string, string> = {
+  helios: 'Helios', mnema: 'Mnema', aether: 'Aether', artemis: 'Artemis', claude: 'Claude',
+  codex: 'Codex', orca: 'Orca', hermes: 'Hermes', loic: 'Loïc',
+}
+export const displayName = (actor: string): string => AGENT_NAME[actor] ?? actor

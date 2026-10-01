@@ -208,6 +208,7 @@ export type NowAsk = {
   subject: string
   task: string | null
   at: string
+  received_at: string
 }
 
 export type NowBlock = {
