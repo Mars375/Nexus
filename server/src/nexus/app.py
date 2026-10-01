@@ -21,6 +21,7 @@ from nexus.config import Settings
 from nexus.db import make_engine
 from nexus.events import api as events_api
 from nexus.events.service import EventNotFound
+from nexus.logs import AccessLogMiddleware
 from nexus.tasks import api as tasks_api
 from nexus.tasks.rules import RuleViolation
 from nexus.tasks.service import TaskNotFound
@@ -100,6 +101,8 @@ def create_app(
             app.state.engine.dispose()
 
     app = FastAPI(title="Nexus", version=version("nexus"), lifespan=lifespan)
+    # Journal d'accès sans valeur reçue (ADR-006) : gabarit de route, jamais le chemin réel.
+    app.add_middleware(AccessLogMiddleware)
     app.state.settings = settings
     app.include_router(tasks_api.router)
     app.include_router(events_api.router)
