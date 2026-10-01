@@ -71,6 +71,7 @@ Une seule lecture, un seul instantané cohérent (une session, une transaction d
 | Nœud qui change d'état | les LED changent de couleur (400 ms) |
 
 - L'état d'arrivée s'applique sans attendre une image (`offsetHeight` forcé) : un onglet en arrière-plan reçoit des messages temps réel (leçon de la maquette #6).
+- Écart accepté : les hachures (fond `url()` ↔ `none`) et les LED passées en contour ne s'interpolent pas, elles basculent sans fondu.
 - `prefers-reduced-motion` : aucun mouvement, états finaux affichés directement.
 
 ### Rafraîchissement
