@@ -17,6 +17,7 @@ How to use it:
 - [ ] Any field used to compare or look things up (event `id`, `run`, `payload.run_ref`, future references) that contains a secret is refused, not masked: two masked values (`run token=alpha`, `run token=beta`) would compare equal.
 - [ ] A value reduced to `[REDACTED]` (plus its label, e.g. `password=[REDACTED]`) counts as **empty** wherever a readable value is required (`secrets.is_blank`). A **reference** (evidence) must still carry an identifier once redacted spans and its label are removed (`secrets.is_blank_reference`): `commit: token=[REDACTED]` proves nothing.
 - [ ] Teaching the scanner a new secret *format* (a token shape it does not recognise yet) is tracked in issue #15 and does not block a PR — Loïc's decision. This never excuses a new data path: anything the PR stores, logs or echoes still goes through `nexus.secrets`.
+- [ ] Logs never carry a received path or query string: the access log writes the route template (`GET /api/tasks/{task_ref} 404`), uvicorn's own access log stays off, and its WebSocket lines lose their parameters (`nexus.logs`, #25). A new server entry point uses `uvicorn_log_config()` with `access_log=False`.
 - [ ] A WebSocket route checks the `Origin` header (loopback or explicitly configured only — CORS does not protect WebSockets) and never sends received free text: messages carry references, kinds and cursors; the UI re-reads through the REST API.
 
 ## 2. Validation
