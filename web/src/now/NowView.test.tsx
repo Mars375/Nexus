@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { NowSnapshot } from '@/api'
 import { NowView } from './NowView'
@@ -60,4 +60,29 @@ test('serveur injoignable : on le dit, sans étage vide présenté comme calme',
 test('la liste des agents existe toujours pour les lecteurs d\'écran', async () => {
   serve(empty); show()
   expect(await screen.findByRole('list', { name: 'Agents' })).toBeInTheDocument()
+})
+
+test('sans agent au travail, la phrase n\'est pas réservée aux lecteurs d\'écran', async () => {
+  serve(empty); show()
+  const line = await screen.findByText('Aucun agent ne travaille en ce moment.')
+  expect(line.closest('[class*="sr-only"]')).toBeNull()
+})
+
+test('une demande reçue liée à une tâche ouvre cette tâche', async () => {
+  serve({ ...empty, asks: [{ event: 'nx-evt-1', agent: 'mnema', kind: 'question', subject: 'Python ?', task: 'nx-task-32', at: new Date().toISOString() }] }); show()
+  const link = await screen.findByRole('link', { name: /Python \?/ })
+  expect(link).toHaveAttribute('href', '#/travail/nx-task-32')
+})
+
+test('une demande sans tâche n\'est pas un lien', async () => {
+  serve({ ...empty, asks: [{ event: 'nx-evt-1', agent: 'mnema', kind: 'question', subject: 'Python ?', task: null, at: new Date().toISOString() }] }); show()
+  await screen.findByText('Python ?')
+  expect(screen.queryByRole('link', { name: /Python \?/ })).toBeNull()
+})
+
+test('le lien d\'un agent vers sa tâche laisse le navigateur faire (ctrl-clic, clic molette)', async () => {
+  serve({ ...empty, agents: [{ agent: 'helios', state: 'run', task: 'nx-task-1', title: 'Pont', run: 's', since: new Date().toISOString() }] }); show()
+  const link = (await screen.findAllByRole('link', { name: 'Pont' }))[0]
+  expect(link).toHaveAttribute('href', '#/travail/nx-task-1')
+  expect(fireEvent.click(link, { ctrlKey: true })).toBe(true)
 })

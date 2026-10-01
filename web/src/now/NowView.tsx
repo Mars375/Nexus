@@ -57,7 +57,7 @@ export function NowView() {
         <div className="flex min-h-0 flex-1 items-center justify-center max-[760px]:hidden">
           <Floor snapshot={s} nodes={nodes.data} onOpenTask={openTask} />
         </div>
-        <AgentList snapshot={s} onOpenTask={openTask} className="min-[761px]:sr-only" />
+        <AgentList snapshot={s} className="min-[761px]:sr-only" />
         <div className="grid grid-cols-2 gap-7 max-[760px]:grid-cols-1">
           <section>
             <Heading tone={s.blocks.length ? 'danger' : 'muted'}>Blocages {s.blocks.length || ''}</Heading>
@@ -91,7 +91,10 @@ export function NowView() {
           <Heading tone="attention">Demandes reçues</Heading>
           {s.asks.length === 0 ? <p className="text-muted">Aucune demande reçue ces 7 derniers jours.</p> : s.asks.map((q) => (
             <div key={q.event} className={clsx('mb-1.5 border-l-2 border-attention px-3 py-2', freshAsks.has(q.event) ? 'now-fresh' : 'bg-[rgba(251,146,60,.05)]')}>
-              <div className="flex justify-between gap-3"><strong className="font-semibold">{q.subject}</strong><span className="font-data text-[11px] text-muted">{age(q.at, now)}</span></div>
+              <div className="flex justify-between gap-3">
+                {q.task ? <a href={`#/travail/${q.task}`} className="no-underline"><strong className="font-semibold">{q.subject}</strong></a> : <strong className="font-semibold">{q.subject}</strong>}
+                <span className="font-data text-[11px] text-muted">{age(q.at, now)}</span>
+              </div>
               <div className="text-xs text-muted">{q.kind === 'question' ? 'Question' : 'Demande de validation'} de {NAME[q.agent] ?? q.agent} {q.task ? `sur ${q.task}` : 'sur aucune tâche'}.</div>
             </div>
           ))}

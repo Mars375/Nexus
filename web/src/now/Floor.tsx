@@ -110,9 +110,10 @@ export function Floor({ snapshot, nodes, onOpenTask }: { snapshot: NowSnapshot; 
       {seats.map((m, i) => {
         const s = l.seats[i], from = s.back ? p(s.x + 1.5, s.y + 0.2, 1.8) : p(s.x + 1.5, s.y + DESK.d, 0)
         const [left, top] = toPercent(l, [from[0], from[1] + (s.back ? -30 : 26)])
-        const meta = m.task ? `${m.task} · ${m.since ? age(m.since, now).replace(/^il y a /, '') : 'durée inconnue'}` : m.block ? 'tâche bloquée' : 'inactif'
+        const blocked = snapshot.blocks.find((b) => b.lead_agent === m.agent)
+        const meta = m.task ? `${m.task} · ${m.since ? age(m.since, now).replace(/^il y a /, '') : 'durée inconnue'}` : m.block ? (blocked ? `${blocked.task} · tâche bloquée` : 'tâche bloquée') : 'inactif'
         const name = <><span className="block font-orbital-display text-[13px] font-semibold tracking-[0.14em]">{displayName(m.agent).toUpperCase()}</span>
-          {m.title && <span className="block font-data text-[11px] text-ink">{m.title}</span>}
+          {m.title && <span className="mx-auto block max-w-[18ch] truncate font-data text-[11px] text-ink">{m.title}</span>}
           <span className="block font-data text-[11px] text-muted">{meta}</span></>
         const cls = clsx('absolute whitespace-nowrap text-center', s.back ? '-translate-x-1/2 -translate-y-full pb-1' : '-translate-x-1/2 pt-1',
           m.wait ? '[&>span:first-child]:text-attention' : m.block ? '[&>span:first-child]:text-danger' : m.run ? '' : '[&>span:first-child]:text-unknown')

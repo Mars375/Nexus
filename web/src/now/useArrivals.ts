@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 export const ARRIVAL_HOLD_MS = 1800
 
@@ -12,7 +12,8 @@ export function useArrivals(keys: readonly string[], holdMs = ARRIVAL_HOLD_MS): 
   const [fresh, setFresh] = useState<ReadonlySet<string>>(() => new Set())
   const signature = keys.join('\u0000')
 
-  useEffect(() => {
+  // Avant la peinture : une arrivée ne passe jamais une image à pleine opacité avant son fondu.
+  useLayoutEffect(() => {
     const current = new Set(signature ? signature.split('\u0000') : [])
     const before = seen.current
     seen.current = current

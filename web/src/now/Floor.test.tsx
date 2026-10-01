@@ -67,3 +67,18 @@ test('cliquer un poste qui a une tâche ouvre la tâche', () => {
   screen.getByRole('button', { name: /Helios.*Refonte du pont/ }).click()
   expect(open).toHaveBeenCalledWith('nx-task-31')
 })
+
+test('un titre trop long est tronqué dans l\'étiquette, le nom et la durée restent entiers', () => {
+  const title = 'Refonte complète du pont entre Nexus et les agents de la salle des serveurs'
+  render(<Floor snapshot={snap({ agents: [{ agent: 'helios', state: 'run', task: 'nx-task-31', title, run: 's', since: new Date(Date.now() - 42 * 60_000).toISOString() }] })} nodes={[]} onOpenTask={() => {}} />)
+  expect(screen.getByText(title).className).toContain('truncate')
+  expect(screen.getByText('HELIOS').className).not.toContain('truncate')
+  expect(screen.getByText(/nx-task-31 · 42 min/).className).not.toContain('truncate')
+})
+
+test('l\'étiquette d\'un agent bloqué donne la tâche bloquée quand on la connaît', () => {
+  render(<Floor snapshot={snap({
+    blocks: [{ task: 'nx-task-29', title: 'Sauvegarde', cause: null, since: null, follow_up_at: null, lead_agent: 'artemis' }],
+  })} nodes={[]} onOpenTask={() => {}} />)
+  expect(screen.getByText('nx-task-29 · tâche bloquée')).toBeInTheDocument()
+})
