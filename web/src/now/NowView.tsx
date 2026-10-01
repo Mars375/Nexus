@@ -48,16 +48,16 @@ export function NowView() {
   return (
     <div className="orbital grid h-full min-h-0 grid-cols-[minmax(0,1fr)_336px] bg-paper font-orbital text-[13px] max-[1100px]:grid-cols-1 max-[1100px]:overflow-auto"
       style={{ backgroundImage: 'radial-gradient(rgba(244,244,245,.06) 1px, transparent 1px)', backgroundSize: '14px 14px' }}>
-      <section className="flex min-h-0 min-w-0 flex-col gap-2 px-7 pt-5 pb-4">
+      <section className="flex min-w-0 flex-col gap-2 min-[1101px]:min-h-0 px-7 pt-5 pb-4 min-[1101px]:overflow-auto">
         <header className="flex items-baseline gap-4">
           <h1 className="m-0 font-orbital-display text-2xl font-semibold uppercase tracking-[0.12em]">Maintenant</h1>
           <Provenance source={s.source} measuredAt={s.measured_at} kind="now" className="font-data" />
           {snap.isError && <span className="font-data text-[11px] text-attention">dernière lecture réussie affichée</span>}
         </header>
-        <div className="flex min-h-0 flex-1 items-center justify-center max-[760px]:hidden">
+        <div className="flex min-h-[560px] flex-1 items-center justify-center max-[760px]:hidden">
           <Floor snapshot={s} nodes={nodes.data} onOpenTask={openTask} />
         </div>
-        <AgentList snapshot={s} className="min-[761px]:sr-only" />
+        <AgentList snapshot={s} className="min-[760px]:sr-only" />
         <div className="grid grid-cols-2 gap-7 max-[760px]:grid-cols-1">
           <section>
             <Heading tone={s.blocks.length ? 'danger' : 'muted'}>Blocages {s.blocks.length || ''}</Heading>

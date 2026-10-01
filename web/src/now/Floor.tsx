@@ -10,6 +10,8 @@ import './floor.css'
 const NAME: Record<string, string> = { helios: 'Helios', mnema: 'Mnema', aether: 'Aether', artemis: 'Artemis', claude: 'Claude', codex: 'Codex', orca: 'Orca', hermes: 'Hermes' }
 const displayName = (agent: string) => NAME[agent] ?? agent
 const MAX_TICKETS = 3
+// Décalage vertical (px de la scène) entre le poste et son étiquette ; au-dessus des postes du fond, il dégage l'écran du poste voisin.
+const LABEL_LIFT = 40
 
 function Faces({ b, topClass }: { b: Box; topClass?: string }) {
   return (<><polygon className={clsx('f-top', topClass)} points={b.top} /><polygon className="f-left" points={b.left} /><polygon className="f-right" points={b.right} /></>)
@@ -26,7 +28,7 @@ function routePath(l: Layout, s: { x: number; y: number; back: boolean }): strin
 function Desk({ l, seat, m }: { l: Layout; seat: Layout['seats'][number]; m: SeatModel }) {
   const { x, y } = seat, p = l.project
   const pool = p(x + DESK.w / 2, y + 2.3)
-  const [bx, by0] = p(x + 2.62, y + 0.27, 1.66), [, by1] = p(x + 2.62, y + 0.27, 2.75)
+  const [bx, by0] = p(x + 0.55, y + 0.27, 1.66), [, by1] = p(x + 0.55, y + 0.27, 2.75)
   const screenPts = [p(x + 0.45, y + 0.28, 1.63), p(x + 2.55, y + 0.28, 1.63), p(x + 2.55, y + 0.28, 0.86), p(x + 0.45, y + 0.28, 0.86)].map((q) => q.join(',')).join(' ')
   return (
     <g className="desk" data-agent={m.agent} data-run={String(m.run)} data-wait={String(m.wait)} data-block={String(m.block)}>
@@ -58,7 +60,7 @@ export function Floor({ snapshot, nodes, onOpenTask }: { snapshot: NowSnapshot; 
   const label = (ask: number) => ask === 0 ? 'aucune demande reçue (7 j)' : `${ask} demande${ask > 1 ? 's' : ''}`
 
   return (
-    <div className="relative mx-auto w-full" style={{ aspectRatio: `${l.viewBox.w} / ${l.viewBox.h}`, maxHeight: '100%' }}>
+    <div className="@container relative mx-auto w-full" style={{ aspectRatio: `${l.viewBox.w} / ${l.viewBox.h}`, maxHeight: '100%' }}>
       <svg viewBox={`${l.viewBox.x} ${l.viewBox.y} ${l.viewBox.w} ${l.viewBox.h}`} className="absolute inset-0 size-full" role="img"
         aria-label="Étage de Nexus : un poste par agent, ta table au centre, la salle des serveurs">
         <defs>
@@ -99,7 +101,7 @@ export function Floor({ snapshot, nodes, onOpenTask }: { snapshot: NowSnapshot; 
         {seats.map((m, i) => <Desk key={m.agent} l={l} seat={l.seats[i]} m={m} />)}
         {seats.map((m, i) => {
           const s = l.seats[i], from = s.back ? p(s.x + 1.5, s.y + 0.2, 1.8) : p(s.x + 1.5, s.y + DESK.d, 0)
-          return <path key={m.agent} className="leader" d={`M${from} L${from[0]} ${from[1] + (s.back ? -30 : 26)}`} />
+          return <path key={m.agent} className="leader" d={`M${from} L${from[0]} ${from[1] + (s.back ? -LABEL_LIFT : 26)}`} />
         })}
         {racks.map((n, i) => {
           const r = l.racks[i], led = p(r.x + RACK.w, r.y + 0.7, 1.3), lx = p(l.width, 0)[0] + 26, ly = l.project(l.width, 0)[1] + 200 + i * 40
@@ -109,12 +111,12 @@ export function Floor({ snapshot, nodes, onOpenTask }: { snapshot: NowSnapshot; 
 
       {seats.map((m, i) => {
         const s = l.seats[i], from = s.back ? p(s.x + 1.5, s.y + 0.2, 1.8) : p(s.x + 1.5, s.y + DESK.d, 0)
-        const [left, top] = toPercent(l, [from[0], from[1] + (s.back ? -30 : 26)])
+        const [left, top] = toPercent(l, [from[0], from[1] + (s.back ? -LABEL_LIFT : 26)])
         const blocked = snapshot.blocks.find((b) => b.lead_agent === m.agent)
-        const meta = m.task ? `${m.task} · ${m.since ? age(m.since, now).replace(/^il y a /, '') : 'durée inconnue'}` : m.block ? (blocked ? `${blocked.task} · tâche bloquée` : 'tâche bloquée') : 'inactif'
-        const name = <><span className="block font-orbital-display text-[13px] font-semibold tracking-[0.14em]">{displayName(m.agent).toUpperCase()}</span>
-          {m.title && <span className="mx-auto block max-w-[18ch] truncate font-data text-[11px] text-ink">{m.title}</span>}
-          <span className="block font-data text-[11px] text-muted">{meta}</span></>
+        const meta = m.task ? `${m.task} · ${m.since ? age(m.since, now).replace(/^il y a /, '') : 'durée inconnue'}` : m.block ? (blocked ? `${blocked.task} · bloquée` : 'tâche bloquée') : 'inactif'
+        const name = <><span className="block font-orbital-display text-[13px] font-semibold tracking-[0.14em] @max-[640px]:text-[11px] @max-[640px]:tracking-[0.08em]">{displayName(m.agent).toUpperCase()}</span>
+          {m.title && <span className="mx-auto block max-w-[15ch] truncate font-data text-[11px] text-ink @max-[640px]:hidden">{m.title}</span>}
+          <span className="block font-data text-[11px] text-muted @max-[640px]:text-[10px]">{meta}</span></>
         const cls = clsx('absolute whitespace-nowrap text-center', s.back ? '-translate-x-1/2 -translate-y-full pb-1' : '-translate-x-1/2 pt-1',
           m.wait ? '[&>span:first-child]:text-attention' : m.block ? '[&>span:first-child]:text-danger' : m.run ? '' : '[&>span:first-child]:text-unknown')
         const style = { left: `${left}%`, top: `${top}%` }
@@ -124,16 +126,16 @@ export function Floor({ snapshot, nodes, onOpenTask }: { snapshot: NowSnapshot; 
       })}
 
       <div className="absolute -translate-y-1/2 whitespace-nowrap pl-2" style={{ left: `${tableLabel[0]}%`, top: `${tableLabel[1]}%` }}>
-        <span className={clsx('block font-orbital-display text-[13px] font-semibold tracking-[0.14em]', snapshot.asks.length ? 'text-attention' : 'text-muted')}>TA TABLE</span>
-        <span className="block font-data text-[11px] text-muted">{label(snapshot.asks.length)}{extra > 0 && ` · +${extra} sur la table`}</span>
+        <span className={clsx('block font-orbital-display text-[13px] font-semibold tracking-[0.14em] @max-[640px]:text-[11px] @max-[640px]:tracking-[0.08em]', snapshot.asks.length ? 'text-attention' : 'text-muted')}>TA TABLE</span>
+        <span className="block font-data text-[11px] text-muted @max-[640px]:text-[10px]">{label(snapshot.asks.length)}{extra > 0 && ` · +${extra} sur la table`}</span>
       </div>
 
       {racks.map((n, i) => {
         const [left, top] = toPercent(l, [p(l.width, 0)[0] + 26, l.project(l.width, 0)[1] + 200 + i * 40])
         return (
           <div key={n.id} className="absolute -translate-y-1/2 whitespace-nowrap" style={{ left: `${left}%`, top: `${top}%` }}>
-            <span className={clsx('block font-orbital-display text-[13px] font-semibold tracking-[0.14em]', rackTone(n) === 'ok' ? 'text-ink' : 'text-muted')}>{n.id.toUpperCase()}</span>
-            <span className="block font-data text-[11px] text-muted">{rackLabel(n)}</span>
+            <span className={clsx('block font-orbital-display text-[13px] font-semibold tracking-[0.14em] @max-[640px]:text-[11px] @max-[640px]:leading-[1.1] @max-[640px]:tracking-[0.08em]', rackTone(n) === 'ok' ? 'text-ink' : 'text-muted')}>{n.id.toUpperCase()}</span>
+            <span className="block font-data text-[11px] text-muted @max-[640px]:text-[10px] @max-[640px]:leading-[1.1]">{rackLabel(n)}</span>
           </div>
         )
       })}

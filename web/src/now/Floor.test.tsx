@@ -80,5 +80,5 @@ test('l\'étiquette d\'un agent bloqué donne la tâche bloquée quand on la con
   render(<Floor snapshot={snap({
     blocks: [{ task: 'nx-task-29', title: 'Sauvegarde', cause: null, since: null, follow_up_at: null, lead_agent: 'artemis' }],
   })} nodes={[]} onOpenTask={() => {}} />)
-  expect(screen.getByText('nx-task-29 · tâche bloquée')).toBeInTheDocument()
+  expect(screen.getByText('nx-task-29 · bloquée')).toBeInTheDocument()
 })
