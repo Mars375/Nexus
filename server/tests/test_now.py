@@ -2,6 +2,7 @@
 
 from datetime import timedelta
 
+from nexus import now as now_module
 from nexus.clock import now
 
 AT = "2026-09-30T09:00:00+02:00"
@@ -90,7 +91,8 @@ def test_asks_are_questions_and_needs_human_for_loic_within_seven_days(client):
     s = snapshot(client)
     assert [a["event"] for a in s["asks"]] == [q["id"]]
     assert s["asks"][0] == {"event": q["id"], "agent": "mnema", "kind": "question",
-                            "subject": "Quelle version ?", "task": ref, "at": s["asks"][0]["at"]}
+                            "subject": "Quelle version ?", "task": ref, "at": s["asks"][0]["at"],
+                            "received_at": s["asks"][0]["received_at"]}
 
 
 def test_the_seven_day_window_is_on_reception_not_on_the_claimed_date(client):
@@ -129,3 +131,53 @@ def test_recent_done_with_evidence_at_most_five(client):
     done = snapshot(client)["done"]
     assert [d["task"] for d in done] == list(reversed(refs))[:5]
     assert done[0]["evidence"] == ["PR #5"] and done[0]["at"]
+
+
+def test_a_closer_on_another_task_or_by_another_actor_does_not_close_the_run(client):
+    mine = create(client, title="Pont", status="todo", next_action="x")
+    other = create(client, title="Autre", status="todo", next_action="x")
+    publish(client, "claimed", task=mine)
+    publish(client, "working", task=mine, payload={"run_ref": "session:abc"})
+    # même run_ref, mais une autre tâche : ne ferme pas le run de `mine`
+    publish(client, "claimed", actor="mnema", task=other)
+    publish(client, "blocked", actor="mnema", task=other, run="session:abc", body="SSH",
+            payload={"plan": "rallumer"})
+    # même tâche et même run_ref, mais un autre acteur : ne le ferme pas non plus
+    publish(client, "blocked", actor="codex", task=mine, run="session:abc", body="SSH",
+            payload={"plan": "rallumer"})
+    assert snapshot(client)["agents"][0]["state"] == "run"
+
+
+def test_two_agents_runs_are_independent(client):
+    a = create(client, title="Pont", status="todo", next_action="x")
+    b = create(client, title="Sauvegarde", status="todo", next_action="x")
+    publish(client, "claimed", actor="helios", task=a)
+    publish(client, "working", actor="helios", task=a, payload={"run_ref": "session:a"})
+    publish(client, "claimed", actor="mnema", task=b)
+    publish(client, "working", actor="mnema", task=b, payload={"run_ref": "session:b"})
+    publish(client, "blocked", actor="mnema", task=b, run="session:b", body="SSH",
+            payload={"plan": "rallumer"})
+    states = {x["agent"]: x for x in snapshot(client)["agents"]}
+    assert states["helios"]["state"] == "run" and states["helios"]["task"] == a
+    assert states["mnema"]["state"] == "idle"
+
+
+def test_the_snapshot_reads_one_state_even_if_someone_commits_midway(client, monkeypatch):
+    real = now_module._open_runs
+
+    def commit_an_ask_midway(session):
+        publish(client, "question", actor="mnema", subject="Arrivée en cours de lecture",
+                needs=["loic"])
+        return real(session)
+
+    monkeypatch.setattr(now_module, "_open_runs", commit_an_ask_midway)
+    with client.app.state.sessionmaker() as session:
+        assert now_module.snapshot(session)["asks"] == []
+    monkeypatch.undo()
+    assert len(snapshot(client)["asks"]) == 1
+
+
+def test_asks_carry_their_reception_instant(client):
+    publish(client, "question", actor="mnema", subject="Q", needs=["loic"])
+    ask = snapshot(client)["asks"][0]
+    assert ask["received_at"]

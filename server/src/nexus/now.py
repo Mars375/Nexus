@@ -69,8 +69,11 @@ def _open_runs(session: Session) -> dict[str, Event]:
 
 
 def snapshot(session: Session) -> dict:
+    # pysqlite n'ouvre aucune transaction avant un SELECT : sans BEGIN explicite, chaque lecture
+    # verrait son propre état de la base. Une seule transaction de lecture = un seul instant.
+    session.connection().exec_driver_sql("BEGIN")
     measured = now()
-    tasks = {t.id: t for t in session.scalars(select(Task))}
+    tasks ={t.id: t for t in session.scalars(select(Task))}
 
     main = next((t for t in tasks.values()
                  if t.status == "in_progress" and t.operation_role == "main"
@@ -104,6 +107,7 @@ def snapshot(session: Session) -> dict:
     asks = [{
         "event": e.ref, "agent": e.actor, "kind": e.kind, "subject": e.subject,
         "task": _ref(e.task_id), "at": _iso(e.at),
+        "received_at": _iso(e.received_at),
     } for e in session.scalars(
         select(Event).where(Event.kind.in_(ASK_KINDS), Event.received_at >= cutoff)
         .order_by(Event.received_at.desc(), Event.id.desc())
@@ -118,7 +122,12 @@ def snapshot(session: Session) -> dict:
         "follow_up_at": _iso(t.follow_up_at), "lead_agent": t.lead_agent,
     } for t, since in blocked]
 
-    finished = [(t, _entered(session, t, "done")) for t in tasks.values() if t.status == "done"]
+    # Un changement de statut touche `updated_at` : une tâche plus ancienne que la fenêtre n'a
+    # pas pu passer à done dedans, inutile de relire son historique.
+    finished = [
+        (t, _entered(session, t, "done")) for t in tasks.values()
+        if t.status == "done" and t.updated_at >= cutoff
+    ]
     recent = [(t, at) for t, at in finished if at is not None and at >= cutoff]
     recent.sort(key=lambda pair: (pair[1], pair[0].id), reverse=True)
     done = [{
