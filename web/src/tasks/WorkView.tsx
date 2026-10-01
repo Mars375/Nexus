@@ -11,11 +11,17 @@ import { useTasks } from './queries'
 import { TaskPane } from './TaskPane'
 import { ACTOR_NAME, ACTORS, BOARD_STATUSES, PRIORITY_LABEL, ROLE_LABEL, STATUS_LABEL } from './vocabulary'
 
-export function WorkView() {
+export function WorkView({ openTask }: { openTask?: string | null } = {}) {
   const tasks = useTasks()
   const now = useNow(60_000)
   const [filters, setFilters] = useState<Filters>(NO_FILTER)
-  const [openId, setOpenId] = useState<string | null>(null)
+  const [openId, setOpenId] = useState<string | null>(openTask ?? null)
+  // Ajuste l'état pendant le rendu quand la route change (pas d'effet : un seul rendu).
+  const [seenOpenTask, setSeenOpenTask] = useState(openTask)
+  if (openTask !== seenOpenTask) {
+    setSeenOpenTask(openTask)
+    if (openTask) setOpenId(openTask)
+  }
   const [creating, setCreating] = useState(false)
   const set = <K extends keyof Filters>(key: K, value: Filters[K]) =>
     setFilters((f) => ({ ...f, [key]: value }))

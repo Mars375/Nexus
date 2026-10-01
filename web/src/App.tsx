@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Toaster } from 'sonner'
 import { HealthStatus } from './HealthStatus'
 import { useLiveUpdates } from './liveUpdates'
+import { NowView } from './now/NowView'
 import { WorkView } from './tasks/WorkView'
 
 type View = 'maintenant' | 'travail'
@@ -16,12 +17,17 @@ function currentView(): View {
   return window.location.hash === '#/maintenant' ? 'maintenant' : 'travail'
 }
 
+function openTaskFromHash(): string | null {
+  return /^#\/travail\/(nx-task-\d+)$/.exec(window.location.hash)?.[1] ?? null
+}
+
 export default function App() {
   const [view, setView] = useState<View>(currentView)
+  const [open, setOpen] = useState<string | null>(openTaskFromHash)
   const live = useLiveUpdates()
 
   useEffect(() => {
-    const onHash = () => setView(currentView())
+    const onHash = () => { setView(currentView()); setOpen(openTaskFromHash()) }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
@@ -50,15 +56,9 @@ export default function App() {
         </nav>
         <main className="flex min-w-0 flex-1 flex-col">
           {view === 'travail' ? (
-            <WorkView />
+            <WorkView openTask={open} />
           ) : (
-            <div className="p-5">
-              <h1 className="font-display text-lg font-semibold">Maintenant</h1>
-              <p className="mt-2 max-w-prose text-sm text-muted">
-                Bientôt ici : l'opération principale, les agents actifs, les blocages et ce qui
-                t'attend.
-              </p>
-            </div>
+            <NowView />
           )}
         </main>
       </div>
