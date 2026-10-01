@@ -2,6 +2,7 @@ import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { connectLive, type LiveMessage, type LiveState } from './live'
 import { tasksKey } from './tasks/queries'
+import { nowKey } from './now/queries'
 
 /** Un message ne fait que dire quoi relire : les données passent toujours par l'API REST. */
 export function applyLiveMessage(client: QueryClient, message: LiveMessage): void {
@@ -9,10 +10,12 @@ export function applyLiveMessage(client: QueryClient, message: LiveMessage): voi
     case 'task_changed':
       void client.invalidateQueries({ queryKey: tasksKey, exact: true })
       void client.invalidateQueries({ queryKey: ['tasks', message.task] })
+      void client.invalidateQueries({ queryKey: nowKey })
       return
     case 'event':
       void client.invalidateQueries({ queryKey: ['events'] })
       if (message.task) void client.invalidateQueries({ queryKey: ['tasks', message.task] })
+      void client.invalidateQueries({ queryKey: nowKey })
       return
     case 'resync':
       void client.invalidateQueries()

@@ -189,3 +189,79 @@ export const tasksApi = {
   unlink: (id: string, other: string) =>
     request<void>(`/api/tasks/${id}/dependencies/${other}`, { method: 'DELETE' }),
 }
+
+export type AgentId = Exclude<Actor, 'loic'>
+
+export type NowAgent = {
+  agent: AgentId
+  state: 'run' | 'idle'
+  task: string | null
+  title: string | null
+  run: string | null
+  since: string | null
+}
+
+export type NowAsk = {
+  event: string
+  agent: Actor
+  kind: 'question' | 'needs_human'
+  subject: string
+  task: string | null
+  at: string
+}
+
+export type NowBlock = {
+  task: string
+  title: string
+  cause: string | null
+  since: string | null
+  follow_up_at: string | null
+  lead_agent: Actor | null
+}
+
+export type NowDone = {
+  task: string
+  title: string
+  agent: Actor | null
+  evidence: string[]
+  at: string
+}
+
+export type NowSnapshot = {
+  source: string
+  measured_at: string
+  operation:
+    | {
+        task: string
+        title: string
+        lead_agent: Actor | null
+        since: string | null
+        next_action: string | null
+        due_at: string | null
+      }
+    | null
+  auxiliaries: { task: string; title: string }[]
+  agents: NowAgent[]
+  asks: NowAsk[]
+  blocks: NowBlock[]
+  done: NowDone[]
+}
+
+export type NodeState = {
+  id: string
+  kind: string
+  guardian_agent: string
+  status: 'online' | 'offline' | 'offline-by-design' | 'unknown'
+  last_seen: string | null
+  detail: string | null
+  source: string
+  measured_at: string
+}
+
+export const nowApi = {
+  get: (signal?: AbortSignal) => request<NowSnapshot>('/api/now', { signal }),
+}
+
+export const nodesApi = {
+  list: (signal?: AbortSignal) => request<NodeState[]>('/api/nodes', { signal }),
+}

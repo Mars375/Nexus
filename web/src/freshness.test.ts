@@ -55,3 +55,10 @@ describe('listProvenance', () => {
     expect(listProvenance([], 'tasks', 0)).toBeNull()
   })
 })
+
+describe('Maintenant', () => {
+  test('Maintenant se relit comme les tâches, depuis nexus.db', () => {
+    expect(REFRESH_MS.now).toBe(10_000)
+    expect(SOURCE_OF.now).toBe('nexus.db')
+  })
+})
