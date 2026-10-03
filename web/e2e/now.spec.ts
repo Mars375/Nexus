@@ -191,13 +191,15 @@ test('étage 1 à 3 au clavier (PageUp) puis retour aux boutons', async ({ page 
   await expect(page.locator('.desk').first()).toBeVisible()
 })
 
-test('un nœud de l\'étage 3 hors ligne : le repère de l\'étage 3 est visible et alerte', async ({ page }) => {
+test('un nœud de l\'étage 3 hors ligne : la pastille de ▲ est rouge et l\'étiquette le dit', async ({ page }) => {
   await serveNodes(page, 12, ['n10'])
   await page.goto('/#/maintenant')
-  const marker = page.locator('[data-floor-marker="3"]')
-  await expect(marker).toBeVisible()
-  await expect(marker).toHaveAttribute('data-alert', 'off')
-  await expect(marker).toHaveCSS('background-color', 'rgb(248, 113, 113)')
+  const pip = page.locator('.floor-pip[data-side="up"]')
+  await expect(pip).toBeVisible()
+  await expect(pip).toHaveAttribute('data-alert', 'off')
+  await expect(pip).toHaveCSS('background-color', 'rgb(248, 113, 113)')
+  await expect(page.locator('[data-floor-label]')).toHaveText('Étage 1 / 3 · alerte à l\'étage 3')
+  await expect(page.getByRole('button', { name: 'Monter d\'un étage : un nœud hors ligne à l\'étage 3' })).toBeVisible()
 })
 
 test('deux clics rapides sur ▲ : étage 3, puis une seule couche pleinement opaque, rien de figé', async ({ page }) => {

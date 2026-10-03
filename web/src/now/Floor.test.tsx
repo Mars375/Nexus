@@ -399,13 +399,14 @@ test('les liens des étiquettes ne se laissent pas glisser par le navigateur', (
 // --- Étages de baies (#36)
 const twelve = (over: Record<string, NodeState['status']> = {}) => ['cortex', 'synapse', 'artemis', 'helios', 'n5', 'n6', 'n7', 'n8', 'n9', 'n10', 'n11', 'n12'].map((id) => node(id, over[id] ?? 'online'))
 const pickLabel = () => document.querySelector('[data-floor-label]')?.textContent
-const up = () => screen.getByRole('button', { name: 'Monter d\'un étage' })
-const down = () => screen.getByRole('button', { name: 'Descendre d\'un étage' })
+const up = () => screen.getByRole('button', { name: /^Monter d'un étage/ })
+const down = () => screen.getByRole('button', { name: /^Descendre d'un étage/ })
+const pip = (c: HTMLElement, side: 'up' | 'down') => c.querySelector(`.floor-pip[data-side="${side}"]`)
 
 test('jusqu\'à 4 nœuds : pas de sélecteur d\'étage, l\'étage 1 est le bureau', () => {
   for (const n of [0, 1, 4]) {
     const { container, unmount } = render(<Floor snapshot={snap()} nodes={twelve().slice(0, n)} />)
-    expect(screen.queryByRole('button', { name: 'Monter d\'un étage' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Monter d'un étage/ })).toBeNull()
     expect(container.querySelector('[data-floor-count]')!.getAttribute('data-floor-count')).toBe('1')
     expect(container.querySelectorAll('.desk')).toHaveLength(3)
     unmount()
@@ -485,29 +486,50 @@ test('PageUp et PageDown changent d\'étage sur la scène, les flèches tournent
   expect(fireEvent.keyDown(stage, { key: 'PageUp', shiftKey: true })).toBe(true) // modifiers left to the browser
 })
 
-test('un nœud hors ligne rend le repère de son étage rouge, avec un texte lu', () => {
+test('un nœud hors ligne à l\'étage 3 : pastille rouge sur ▲, texte dans le nom du bouton et dans l\'étiquette', () => {
   const { container } = render(<Floor snapshot={snap()} nodes={twelve({ n10: 'offline' })} />)
-  const markers = [...container.querySelectorAll('[data-floor-marker]')]
-  expect(markers.map((m) => m.getAttribute('data-floor-marker'))).toEqual(['3', '2', '1']) // the highest on top
-  expect(container.querySelector('[data-floor-marker="3"]')!.getAttribute('data-alert')).toBe('off')
-  expect(container.querySelector('[data-floor-marker="3"]')!.textContent).toBe('Étage 3 : un nœud hors ligne')
-  expect(container.querySelector('[data-floor-marker="2"]')!.hasAttribute('data-alert')).toBe(false)
-  expect(container.querySelector('[data-floor-marker="2"]')!.textContent).toBe('')
+  expect(pip(container, 'up')!.getAttribute('data-alert')).toBe('off')
+  expect(pip(container, 'down')).toBeNull()
+  expect(up()).toHaveAccessibleName('Monter d\'un étage : un nœud hors ligne à l\'étage 3')
+  expect(down()).toHaveAccessibleName('Descendre d\'un étage')
+  expect(pickLabel()).toBe('Étage 1 / 3 · alerte à l\'étage 3')
+  expect(container.querySelector('[data-floor-marker]')).toBeNull() // the column of dots is gone
+})
+
+test('pastille sur ▼ pour un étage en dessous, la plus grave l\'emporte, aucune pour l\'étage affiché', () => {
+  const { container } = render(<Floor snapshot={snap()} nodes={twelve({ cortex: 'unknown', n10: 'offline' })} />)
+  expect(pip(container, 'up')!.getAttribute('data-alert')).toBe('off')
+  fireEvent.click(up()); fireEvent.click(up()) // floor 3 holds the offline node: it is the floor shown
+  expect(pip(container, 'up')).toBeNull()
+  expect(pip(container, 'down')!.getAttribute('data-alert')).toBe('unknown')
+  expect(down()).toHaveAccessibleName('Descendre d\'un étage : un nœud en état inconnu à l\'étage 1')
+  expect(pickLabel()).toBe('Étage 3 / 3 · alerte à l\'étage 1')
+})
+
+test('plusieurs étages en alerte : les deux textes, « alerte aux étages 1 et 3 »', () => {
+  const { container } = render(<Floor snapshot={snap()} nodes={twelve({ n6: 'unknown', n10: 'offline' })} />)
+  fireEvent.click(up())
+  expect(pickLabel()).toBe('Étage 2 / 3 · alerte à l\'étage 3') // the displayed floor 2 holds the unknown node
+  fireEvent.click(down())
+  expect(pickLabel()).toBe('Étage 1 / 3 · alerte aux étages 2 et 3')
+  expect(up()).toHaveAccessibleName('Monter d\'un étage : un nœud en état inconnu à l\'étage 2, un nœud hors ligne à l\'étage 3')
+  expect(pip(container, 'up')!.getAttribute('data-alert')).toBe('off')
 })
 
 test('un nœud inconnu, périmé ou une relecture en échec donne l\'ambre ; hors ligne prévu ne donne rien', () => {
   const old = new Date(Date.now() - 10 * 60_000).toISOString()
   const a = render(<Floor snapshot={snap()} nodes={twelve({ n6: 'unknown' })} />)
-  expect(a.container.querySelector('[data-floor-marker="2"]')!.getAttribute('data-alert')).toBe('unknown')
+  expect(pip(a.container, 'up')!.getAttribute('data-alert')).toBe('unknown')
   a.unmount()
   const b = render(<Floor snapshot={snap()} nodes={twelve().map((n) => n.id === 'n11' ? { ...n, measured_at: old } : n)} />)
-  expect(b.container.querySelector('[data-floor-marker="3"]')!.getAttribute('data-alert')).toBe('unknown')
+  expect(pip(b.container, 'up')!.getAttribute('data-alert')).toBe('unknown')
   b.unmount()
   const c = render(<Floor snapshot={snap()} nodes={twelve()} nodesFailed />)
-  for (const m of c.container.querySelectorAll('[data-floor-marker]')) expect(m.getAttribute('data-alert')).toBe('unknown')
+  expect(pip(c.container, 'up')!.getAttribute('data-alert')).toBe('unknown') // amber everywhere: floors 2 and 3 are above
+  expect(pickLabel()).toBe('Étage 1 / 3 · alerte aux étages 2 et 3')
   c.unmount()
   const d = render(<Floor snapshot={snap()} nodes={twelve({ artemis: 'offline-by-design' })} />)
-  expect(d.container.querySelector('[data-floor-marker="1"]')!.hasAttribute('data-alert')).toBe(false)
+  expect(pip(d.container, 'up')).toBeNull(); expect(pickLabel()).toBe('Étage 1 / 3')
   fireEvent.click(up()); fireEvent.click(down())
   expect(d.container.querySelector('[data-node="artemis"]')!.getAttribute('data-tone')).toBe('off') // its rack stays shown, off
 })
@@ -560,15 +582,17 @@ test('le numéro d\'étage roule une fois, dans le sens du mouvement', () => {
   expect(container.querySelector('[data-roll]')!.getAttribute('data-roll')).toBe('down')
 })
 
-test('une alerte qui apparaît sur un autre étage fait pulser son repère, jamais celui de l\'étage affiché', () => {
+test('une alerte qui apparaît sur un autre étage fait pulser la pastille du côté concerné, jamais pour l\'étage affiché', () => {
   motion()
   const { container, rerender } = render(<Floor snapshot={snap()} nodes={twelve()} />)
   expect(container.querySelector('.is-fresh')).toBeNull()
   rerender(<Floor snapshot={snap()} nodes={twelve({ n10: 'offline' })} />)
-  expect(container.querySelector('[data-floor-marker="3"]')!.classList.contains('is-fresh')).toBe(true)
+  expect(pip(container, 'up')!.classList.contains('is-fresh')).toBe(true)
   expect(container.querySelectorAll('.is-fresh')).toHaveLength(1)
-  rerender(<Floor snapshot={snap()} nodes={twelve({ cortex: 'offline', n10: 'offline' })} />)
-  expect(container.querySelector('[data-floor-marker="1"]')!.classList.contains('is-fresh')).toBe(false) // the floor shown
+  fireEvent.click(up()); fireEvent.click(up()) // now on floor 3, the floor with the alert
+  rerender(<Floor snapshot={snap()} nodes={twelve({ n10: 'offline', n11: 'offline' })} />)
+  expect(pip(container, 'up')).toBeNull(); expect(pip(container, 'down')).toBeNull() // nothing for the floor shown
+  expect(container.querySelector('.is-fresh')).toBeNull()
 })
 
 test('mouvement réduit : ni couche qui part, ni data-arriving, ni is-fresh, ni numéro qui roule', () => {

@@ -72,8 +72,8 @@ const MIN_FLOOR_PX = 529
 const LEGEND = { w: 210, row: 20 }
 const TABLE_CORNER = { w: 270, h: 40 }
 const BUTTONS = { w: 80, h: 40 }
-// Floor selector (up/down buttons, « Étage n / N », floor markers), under the rotation buttons once there are several floors.
-const SELECTOR = { w: 170, h: 40 }
+// Floor selector (up/down buttons, « Étage n / N » and its alert line), under the rotation buttons once there are several floors.
+const SELECTOR = { w: 210, h: 40 }
 // The legend lists the racks of the floor shown: four at most, however many nodes there are.
 const LEGEND_MAX_ROWS = 4
 

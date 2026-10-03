@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import type { NodeState, NowSnapshot } from '@/api'
-import { RACKS_PER_FLOOR, floorAlert, nodeFloors, rackLabel, rackTone, seatModels } from './model'
+import { RACKS_PER_FLOOR, floorAlert, floorAlertSides, nodeFloors, rackLabel, rackTone, seatModels } from './model'
 
 const base: NowSnapshot = {
   source: 'nexus.db', measured_at: '2026-10-01T10:00:00+02:00', operation: null, auxiliaries: [],
@@ -64,4 +64,14 @@ test('alerte d\'étage : hors ligne rouge, inconnu ou périmé ambre, hors ligne
   expect(floorAlert([nodeOf('a', 'offline')], () => true)).toBe('unknown')
   expect(floorAlert([nodeOf('a')], (n) => n.id === 'a')).toBe('unknown')
   expect(floorAlert([], fresh)).toBeNull()
+})
+
+test('alertes autour de l\'étage affiché : jamais pour lui, la plus grave de chaque côté', () => {
+  const alerts = [null, 'unknown', 'off', null] as const
+  expect(floorAlertSides(alerts, 1)).toEqual({ above: 'off', below: null, others: [{ floor: 2, alert: 'unknown' }, { floor: 3, alert: 'off' }] })
+  expect(floorAlertSides(alerts, 2)).toEqual({ above: 'off', below: null, others: [{ floor: 3, alert: 'off' }] })
+  expect(floorAlertSides(alerts, 3)).toEqual({ above: null, below: 'unknown', others: [{ floor: 2, alert: 'unknown' }] })
+  expect(floorAlertSides(alerts, 4)).toEqual({ above: null, below: 'off', others: [{ floor: 2, alert: 'unknown' }, { floor: 3, alert: 'off' }] })
+  expect(floorAlertSides([null, null], 1)).toEqual({ above: null, below: null, others: [] })
+  expect(floorAlertSides(['unknown', 'off', 'unknown'], 2)).toEqual({ above: 'unknown', below: 'unknown', others: [{ floor: 1, alert: 'unknown' }, { floor: 3, alert: 'unknown' }] })
 })

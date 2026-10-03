@@ -54,6 +54,18 @@ export function floorAlert(nodes: readonly NodeState[], stale: (n: NodeState) =>
   return amber ? 'unknown' : null
 }
 
+const SEVERITY: Record<FloorAlert, number> = { unknown: 1, off: 2 }
+const worst = (list: FloorAlert[]): FloorAlert | null => list.reduce<FloorAlert | null>((w, a) => (w === null || SEVERITY[a] > SEVERITY[w] ? a : w), null)
+
+/**
+ * Alerts of the floors out of sight, seen from floor `current` (1-based): the most severe above and
+ * below it (for the pips on ▲ and ▼), and every other alerting floor in order. Never the floor shown.
+ */
+export function floorAlertSides(alerts: readonly (FloorAlert | null)[], current: number): { above: FloorAlert | null; below: FloorAlert | null; others: { floor: number; alert: FloorAlert }[] } {
+  const others = alerts.flatMap((alert, i) => alert && i + 1 !== current ? [{ floor: i + 1, alert }] : [])
+  return { above: worst(others.filter((o) => o.floor > current).map((o) => o.alert)), below: worst(others.filter((o) => o.floor < current).map((o) => o.alert)), others }
+}
+
 const LABEL: Record<NodeState['status'], string> = {
   online: 'en ligne', unknown: 'unknown', offline: 'hors ligne', 'offline-by-design': 'hors ligne, prévu',
 }

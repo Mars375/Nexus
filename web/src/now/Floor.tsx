@@ -5,7 +5,7 @@ import { age } from '@/format'
 import { isStale } from '@/freshness'
 import { useNow } from '@/useNow'
 import { DESK, box, drawOrder, layoutFloor, toPercent, type Dir, type Layout } from './iso'
-import { AGE_TICK_MS, displayName, floorAlert, nodeFloors, rackLabel, rackTone, seatModels, type FloorAlert, type RackTone, type SeatModel } from './model'
+import { AGE_TICK_MS, displayName, floorAlert, floorAlertSides, nodeFloors, rackLabel, rackTone, seatModels, type FloorAlert, type RackTone, type SeatModel } from './model'
 import { Faces, Rack } from './Rack'
 import { ServerRoom } from './ServerRoom'
 import { useArrivals } from './useArrivals'
@@ -62,10 +62,24 @@ export function Floor(props: FloorProps) {
   const now = useNow(AGE_TICK_MS)
   const floors = nodeFloors(nodes)
   const alerts = floors.map((f) => floorAlert(f, (n) => nodesFailed || isStale(n.measured_at, 'nodes', now)))
-  // A new alert on a floor out of sight pulses its marker once; never on the floor shown, never under reduced motion.
-  const alertKeys = nodes === undefined ? null : alerts.flatMap((a, i) => a ? [`${i + 1}:${a}`] : [])
-  const freshAlerts = useArrivals(alertKeys)
-  const pulse = (n: number) => !prefersReducedMotion() && n !== level.floor && alerts[n - 1] != null && freshAlerts.has(`${n}:${alerts[n - 1]}`)
+  // Alerts of the floors out of sight sit on ▲ / ▼ and in the label, never for the floor shown.
+  const sides = floorAlertSides(alerts, level.floor)
+  // A new alert on a floor out of sight pulses the pip of its side once; never under reduced motion.
+  const freshAlerts = useArrivals(nodes === undefined ? null : alerts.flatMap((a, i) => a ? [`${i + 1}:${a}`] : []))
+  const pulse = (side: 'up' | 'down') => !prefersReducedMotion() && sides.others.some((o) => (side === 'up' ? o.floor > level.floor : o.floor < level.floor) && freshAlerts.has(`${o.floor}:${o.alert}`))
+  const listFloors = (fs: number[]) => fs.length === 1 ? `à l'étage ${fs[0]}` : `aux étages ${fs.slice(0, -1).join(', ')} et ${fs.at(-1)}`
+  const describe = (side: 'up' | 'down') => sides.others.filter((o) => (side === 'up' ? o.floor > level.floor : o.floor < level.floor)).map((o) => `${ALERT_TEXT[o.alert]} à l'étage ${o.floor}`).join(', ')
+  const stepButton = (side: 'up' | 'down') => {
+    const text = describe(side), pipAlert = side === 'up' ? sides.above : sides.below
+    const atLimit = side === 'up' ? level.floor >= level.count : level.floor <= 1
+    return (
+      <button type="button" className={clsx(ROTATE_BUTTON, 'relative')} aria-label={`${side === 'up' ? 'Monter' : 'Descendre'} d'un étage${text ? ` : ${text}` : ''}`}
+        {...(atLimit && { 'aria-disabled': true })} onClick={() => level.go(side === 'up' ? 1 : -1)}>
+        <span aria-hidden="true">{side === 'up' ? '▲' : '▼'}</span>
+        {pipAlert && <span aria-hidden="true" data-side={side} data-alert={pipAlert} className={clsx('floor-pip', pulse(side) && 'is-fresh')} />}
+      </button>
+    )
+  }
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     stage.onKeyDown(e)
     if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || level.count < 2) return
@@ -79,16 +93,12 @@ export function Floor(props: FloorProps) {
       </div>
       {level.count > 1 && (
         <div className="floor-pick pointer-events-none absolute left-0 top-10 flex items-center gap-1">
-          <button type="button" className={ROTATE_BUTTON} aria-label="Monter d'un étage" {...(level.floor >= level.count && { 'aria-disabled': true })} onClick={() => level.go(1)}><span aria-hidden="true">▲</span></button>
-          <span data-floor-label aria-live="polite" className="whitespace-nowrap font-data text-[11px] text-ink">Étage <span key={level.floor} className="floor-roll" {...(level.lifted !== undefined && level.dir && { 'data-roll': level.dir })}><span>{level.floor}</span></span> / {level.count}</span>
-          <button type="button" className={ROTATE_BUTTON} aria-label="Descendre d'un étage" {...(level.floor <= 1 && { 'aria-disabled': true })} onClick={() => level.go(-1)}><span aria-hidden="true">▼</span></button>
-          <ol className="m-0 flex h-9 list-none flex-col flex-wrap content-start justify-end gap-[3px] p-0">
-            {floors.map((_, i) => floors.length - 1 - i).map((i) => (
-              <li key={i} data-floor-marker={i + 1} data-current={String(i + 1 === level.floor)} {...(alerts[i] && { 'data-alert': alerts[i] })} className={clsx('floor-dot', pulse(i + 1) && 'is-fresh')}>
-                {alerts[i] && <span className="sr-only">{`Étage ${i + 1} : ${ALERT_TEXT[alerts[i]!]}`}</span>}
-              </li>
-            ))}
-          </ol>
+          {stepButton('up')}
+          {stepButton('down')}
+          <span data-floor-label aria-live="polite" className="flex flex-col whitespace-nowrap font-data text-[11px] leading-[13px] text-ink">
+            <span>Étage <span key={level.floor} className="floor-roll" {...(level.lifted !== undefined && level.dir && { 'data-roll': level.dir })}><span>{level.floor}</span></span> / {level.count}</span>
+            {sides.others.length > 0 && <span className={sides.others.some((o) => o.alert === 'off') ? 'text-danger' : 'text-attention'}> · alerte {listFloors(sides.others.map((o) => o.floor))}</span>}
+          </span>
         </div>
       )}
     </FloorScene>
