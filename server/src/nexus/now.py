@@ -36,16 +36,22 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-def _entered(session: Session, task: Task, status: str) -> datetime | None:
-    """Instant du dernier passage de la tâche au statut donné (aucune colonne ne le garde)."""
+def _transition(session: Session, task: Task, status: str) -> TaskHistory | None:
+    """Ligne d'historique du dernier passage de la tâche au statut donné : quand et par qui."""
     rows = session.scalars(
         select(TaskHistory).where(TaskHistory.task_id == task.id).order_by(TaskHistory.id.desc())
     )
     for row in rows:
         change = (row.changes or {}).get("status")
         if isinstance(change, list) and len(change) == 2 and change[1] == status:
-            return row.at
+            return row
     return None
+
+
+def _entered(session: Session, task: Task, status: str) -> datetime | None:
+    """Instant du dernier passage de la tâche au statut donné (aucune colonne ne le garde)."""
+    row = _transition(session, task, status)
+    return row.at if row is not None else None
 
 
 def _open_runs(session: Session) -> dict[str, Event]:
@@ -86,7 +92,7 @@ def snapshot(session: Session) -> dict:
     auxiliaries = [
         {"task": _ref(t.id), "title": t.title}
         for t in sorted(tasks.values(), key=lambda t: t.id)
-        if t.operation_role == "auxiliary" and t.status not in ("done", "dropped")
+        if t.operation_role == "auxiliary" and t.status == "in_progress"  # PRD §156 : en cours
     ]
 
     runs = _open_runs(session)
@@ -126,15 +132,16 @@ def snapshot(session: Session) -> dict:
     # Un changement de statut touche `updated_at` : une tâche plus ancienne que la fenêtre n'a
     # pas pu passer à done dedans, inutile de relire son historique.
     finished = [
-        (t, _entered(session, t, "done")) for t in tasks.values()
+        (t, _transition(session, t, "done")) for t in tasks.values()
         if t.status == "done" and t.updated_at >= cutoff
     ]
-    recent = [(t, at) for t, at in finished if at is not None and at >= cutoff]
-    recent.sort(key=lambda pair: (pair[1], pair[0].id), reverse=True)
+    recent = [(t, row) for t, row in finished if row is not None and row.at >= cutoff]
+    recent.sort(key=lambda pair: (pair[1].at, pair[0].id), reverse=True)
+    # `agent` : qui a clos la tâche (l'historique), pas son agent principal (ADR-005).
     done = [{
-        "task": _ref(t.id), "title": t.title, "agent": t.lead_agent,
-        "evidence": list(t.evidence or []), "at": _iso(at),
-    } for t, at in recent[:DONE_LIMIT]]
+        "task": _ref(t.id), "title": t.title, "agent": row.actor,
+        "evidence": list(t.evidence or []), "at": _iso(row.at),
+    } for t, row in recent[:DONE_LIMIT]]
 
     return {
         "source": "nexus.db", "measured_at": _iso(measured),

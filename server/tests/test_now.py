@@ -51,12 +51,20 @@ def test_the_main_operation_and_its_auxiliaries(client):
     main = create(client, title="Refonte du pont", next_action="relire les tables")
     move(client, main, "in_progress")
     aux = create(client, title="Doc d'installation", operation_role="auxiliary", next_action="x")
+    move(client, aux, "in_progress")
     s = snapshot(client)
     assert s["operation"]["task"] == main
     assert s["operation"]["title"] == "Refonte du pont"
     assert s["operation"]["next_action"] == "relire les tables"
     assert s["operation"]["since"]
     assert s["auxiliaries"] == [{"task": aux, "title": "Doc d'installation"}]
+
+
+def test_an_auxiliary_not_yet_started_is_not_shown(client):
+    # PRD §156, VIEWS §1 : les auxiliaires sont les autres tâches *en cours*.
+    create(client, title="Préparée", operation_role="auxiliary", next_action="x")
+    create(client, title="Prête", status="todo", operation_role="auxiliary", next_action="x")
+    assert snapshot(client)["auxiliaries"] == []
 
 
 def test_an_open_run_makes_the_agent_run_and_a_closer_makes_it_idle(client):
@@ -166,6 +174,15 @@ def test_recent_done_with_evidence_at_most_five(client):
     done = snapshot(client)["done"]
     assert [d["task"] for d in done] == list(reversed(refs))[:5]
     assert done[0]["evidence"] == ["PR #5"] and done[0]["at"]
+
+
+def test_done_names_who_closed_the_task_not_its_lead_agent(client):
+    ref = create(client, title="Livrée", lead_agent="helios", next_action="x")
+    move(client, ref, "in_progress")
+    res = client.post(f"/api/tasks/{ref}/status", json={"status": "done", "evidence": ["PR #9"]},
+                      headers={"X-Nexus-Actor": "mnema"})
+    assert res.status_code == 200, res.text
+    assert snapshot(client)["done"][0]["agent"] == "mnema"
 
 
 def test_a_closer_on_another_task_or_by_another_actor_does_not_close_the_run(client):

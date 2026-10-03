@@ -34,7 +34,8 @@ Une seule lecture, un seul instantané cohérent (une session, une transaction d
 - **agents** : tous les agents connus (`nexus.actors.AGENTS`), dans un ordre fixe, pour que chacun garde sa place sur l'étage. `run` = l'agent a un run ouvert (dernier `working` sans événement de clôture, même règle que `_runs`) ; sa tâche et son début viennent de ce `working`. Sinon `idle`. Un agent n'est jamais « bloqué » par lui-même : un blocage appartient à une tâche ; la scène marque le poste de l'agent principal d'une tâche bloquée.
 - **asks** : décision 2. `subject` passe par le même masquage que l'API d'événements (déjà stocké masqué, ADR-006).
 - **blocks** : tâches au statut `blocked`, plus anciennes d'abord. `since` = instant de la dernière ligne d'historique qui a fait passer la tâche à `blocked` (il n'y a pas de colonne dédiée) ; même règle pour `done[].at` avec `done`.
-- **done** : tâches passées en `done` ces 7 derniers jours (date du dernier changement de statut), avec leurs preuves, plus récentes d'abord, 5 au plus.
+- **auxiliaries** : tâches de rôle `auxiliary` **en cours** (`in_progress`), comme le disent PRD §156 et VIEWS §1 ; une auxiliaire préparée en backlog ou todo n'y figure pas.
+- **done** : tâches passées en `done` ces 7 derniers jours (date du dernier changement de statut), avec leurs preuves, plus récentes d'abord, 5 au plus. `agent` = l'acteur qui a fait passer la tâche à `done` (ligne d'historique), pas son agent principal. La fenêtre de 7 jours est une durée réelle, calculée en UTC.
 - **nœuds** : pas dans `/api/now` ; l'interface lit `/api/nodes` (autre source, autre cadence, déjà avec provenance).
 - Contrat de provenance (#8) : `/api/now` porte `source` et `measured_at` au niveau racine ; le test générique `test_provenance_contract.py` le couvre (objet porteur de `source`).
 - Aucune écriture, aucune migration.
