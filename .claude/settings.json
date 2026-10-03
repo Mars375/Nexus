@@ -1,0 +1,4 @@
+{
+  "model": "opusplan",
+  "fallbackModel": ["sonnet", "haiku"]
+}
