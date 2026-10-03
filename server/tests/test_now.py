@@ -1,9 +1,9 @@
 """Vue Maintenant (#6) : l'instantané GET /api/now."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from nexus import now as now_module
-from nexus.clock import now
+from nexus.clock import TZ, now
 
 AT = "2026-09-30T09:00:00+02:00"
 
@@ -108,6 +108,18 @@ def test_asks_received_more_than_seven_days_ago_are_left_out(client, monkeypatch
             payload={"options": ["oui", "non"]})
     later = now() + timedelta(days=7, minutes=1)
     monkeypatch.setattr("nexus.now.now", lambda: later)
+    assert snapshot(client)["asks"] == []
+
+
+def test_the_seven_day_window_is_a_real_duration_across_the_dst_change(client, monkeypatch):
+    # 2026-10-25 : passage à l'heure d'hiver. Reçue 7 j 0 h 30 avant la mesure (durée réelle),
+    # la demande est hors fenêtre ; une soustraction en heure murale de Paris la garderait.
+    received = datetime.fromisoformat("2026-10-21T12:30:00+02:00")
+    measured = datetime(2026, 10, 28, 12, tzinfo=TZ)  # comme nexus.clock.now(), fuseau nommé
+    monkeypatch.setattr("nexus.events.service.now", lambda: received)
+    publish(client, "needs_human", actor="helios", needs=["loic"], subject="Avant le changement",
+            at=received.isoformat(), payload={"options": ["oui", "non"]})
+    monkeypatch.setattr("nexus.now.now", lambda: measured)
     assert snapshot(client)["asks"] == []
 
 

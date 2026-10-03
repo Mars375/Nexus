@@ -107,6 +107,13 @@ test('nœuds pas encore lus : « lecture des nœuds… » et aucune baie', () =>
   expect(container.querySelector('[data-node]')).toBeNull()
 })
 
+test('nœuds illisibles dès la première lecture : « nœuds illisibles », pas une attente sans fin', () => {
+  const { container } = render(<Floor snapshot={snap()} nodes={undefined} nodesFailed />)
+  expect(screen.getByText('nœuds illisibles')).toBeInTheDocument()
+  expect(screen.queryByText('lecture des nœuds…')).toBeNull()
+  expect(container.querySelector('[data-node]')).toBeNull()
+})
+
 test('nœuds périmés : baies inconnues et légende « périmée », jamais verte', () => {
   const old = new Date(Date.now() - 10 * 60_000).toISOString()
   const { container } = render(<Floor snapshot={snap()} nodes={[{ ...node('helios', 'online'), measured_at: old }, node('synapse', 'online')]} />)

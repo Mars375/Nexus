@@ -139,7 +139,7 @@ export function Floor({ snapshot, nodes, nodesFailed = false }: { snapshot: NowS
       </div>
 
       {nodes === undefined && (
-        <div className="absolute -translate-y-1/2 whitespace-nowrap font-data text-[11px] text-muted" style={{ left: `${toPercent(l, [l.legend.x, l.legend.rows[0]])[0]}%`, top: `${toPercent(l, [l.legend.x, l.legend.rows[0]])[1]}%` }}>lecture des nœuds…</div>
+        <div className="absolute -translate-y-1/2 whitespace-nowrap font-data text-[11px] text-muted" style={{ left: `${toPercent(l, [l.legend.x, l.legend.rows[0]])[0]}%`, top: `${toPercent(l, [l.legend.x, l.legend.rows[0]])[1]}%` }}>{nodesFailed ? 'nœuds illisibles' : 'lecture des nœuds…'}</div>
       )}
       {racks.map(({ node: n, tone, text }, i) => {
         const [left, top] = toPercent(l, [l.legend.x, l.legend.rows[i]])

@@ -6,7 +6,7 @@ parce qu'elles auraient été lues à des instants différents.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import get_args
 
 from fastapi import APIRouter
@@ -102,7 +102,8 @@ def snapshot(session: Session) -> dict:
             "since": _iso(run.at) if run is not None else None,
         })
 
-    cutoff = measured - WINDOW
+    # En UTC : une durée réelle, même autour d'un changement d'heure (checklist §7).
+    cutoff = measured.astimezone(UTC) - WINDOW
     # Fenêtre et tri sur `received_at` (ce que Nexus a reçu), pas sur `at` (l'heure déclarée).
     asks = [{
         "event": e.ref, "agent": e.actor, "kind": e.kind, "subject": e.subject,
