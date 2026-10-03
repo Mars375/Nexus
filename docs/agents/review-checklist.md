@@ -8,6 +8,8 @@ How to use it:
 2. Write the tests for those cases first (TDD), then the code.
 3. Before opening the PR, walk through every applicable box and note in the PR body what was checked and what does not apply.
 4. After every bot round: search the whole codebase for the same pattern and fix every instance, not only the flagged line; then add the lesson to this checklist so the next PR does not repeat it.
+5. Treat every review finding (Antigravity, CodeRabbit, Codex, `reviewer`, Claude itself) as a hypothesis: check it against the primary source (official docs, the code, a test) before changing anything, and cite that source in the reply. PR #32 lost a round applying an Antigravity claim ("aliases are not accepted in `fallbackModel`") that the official docs contradict.
+6. Delegate the searches of steps 4 and 5 to the `explorer` subagent (Haiku): grepping for the same pattern and looking up a doc page do not need the main model.
 
 ## 1. Secrets (ADR-006 — nothing secret is ever stored, logged or echoed)
 
