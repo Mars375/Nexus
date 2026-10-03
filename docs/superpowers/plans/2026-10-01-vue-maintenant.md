@@ -331,7 +331,7 @@ git commit -m "feat: instantané GET /api/now pour la vue Maintenant (#6)"
 ```ts
 export type AgentId = Exclude<Actor, 'loic'>
 export type NowAgent = { agent: AgentId; state: 'run' | 'idle'; task: string | null; title: string | null; run: string | null; since: string | null }
-export type NowAsk = { event: string; agent: Actor; kind: 'question' | 'needs_human'; subject: string; task: string | null; at: string }
+export type NowAsk = { event: string; agent: Actor; kind: 'question' | 'needs_human'; subject: string; task: string | null; at: string; received_at: string }
 export type NowBlock = { task: string; title: string; cause: string | null; since: string | null; follow_up_at: string | null; lead_agent: Actor | null }
 export type NowDone = { task: string; title: string; agent: Actor | null; evidence: string[]; at: string }
 export type NowSnapshot = {
@@ -1390,7 +1390,7 @@ export function NowView() {
           <Heading tone="attention">Demandes reçues</Heading>
           {s.asks.length === 0 ? <p className="text-muted">Aucune demande reçue ces 7 derniers jours.</p> : s.asks.map((q) => (
             <div key={q.event} className={clsx('mb-1.5 border-l-2 border-attention px-3 py-2', freshAsks.has(q.event) ? 'now-fresh' : 'bg-[rgba(251,146,60,.05)]')}>
-              <div className="flex justify-between gap-3"><strong className="font-semibold">{q.subject}</strong><span className="font-data text-[11px] text-muted">{age(q.at, now)}</span></div>
+              <div className="flex justify-between gap-3"><strong className="font-semibold">{q.subject}</strong><span className="font-data text-[11px] text-muted">{age(q.received_at, now)}</span></div>
               <div className="text-xs text-muted">{q.kind === 'question' ? 'Question' : 'Demande de validation'} de {NAME[q.agent] ?? q.agent} {q.task ? `sur ${q.task}` : 'sur aucune tâche'}.</div>
             </div>
           ))}

@@ -10,8 +10,8 @@ from datetime import UTC, datetime, timedelta
 from typing import get_args
 
 from fastapi import APIRouter
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, aliased
 
 from nexus.actors import Agent
 from nexus.clock import now
@@ -36,42 +36,50 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-def _transition(session: Session, task: Task, status: str) -> TaskHistory | None:
-    """Ligne d'historique du dernier passage de la tâche au statut donné : quand et par qui."""
+def _since(row: TaskHistory | None) -> datetime | None:
+    return row.at if row is not None else None
+
+
+def _transitions(session: Session, tasks: list[Task], status: str) -> dict[int, TaskHistory]:
+    """Par tâche, la ligne d'historique du dernier passage au statut donné : quand et par qui.
+
+    Une seule requête pour toutes les tâches (aucune colonne ne garde cet instant).
+    """
+    found: dict[int, TaskHistory] = {}
+    if not tasks:
+        return found
     rows = session.scalars(
-        select(TaskHistory).where(TaskHistory.task_id == task.id).order_by(TaskHistory.id.desc())
+        select(TaskHistory).where(TaskHistory.task_id.in_([t.id for t in tasks]))
+        .order_by(TaskHistory.id.desc())
     )
     for row in rows:
+        if row.task_id in found:
+            continue
         change = (row.changes or {}).get("status")
         if isinstance(change, list) and len(change) == 2 and change[1] == status:
-            return row
-    return None
-
-
-def _entered(session: Session, task: Task, status: str) -> datetime | None:
-    """Instant du dernier passage de la tâche au statut donné (aucune colonne ne le garde)."""
-    row = _transition(session, task, status)
-    return row.at if row is not None else None
+            found[row.task_id] = row
+    return found
 
 
 def _open_runs(session: Session) -> dict[str, Event]:
     """Par agent, le `working` le plus récent dont le run n'est pas clos.
 
     Même règle que `events.service._runs` : une clôture ne ferme que le run qu'elle nomme,
-    pour cet agent et cette tâche.
+    pour cet agent et cette tâche, et pour de bon (un `working` tardif ne le rouvre pas).
+    Le filtre se fait en SQL : seuls les `working` encore ouverts sont lus, pas l'historique.
     """
-    events = list(session.scalars(
-        select(Event).where(Event.kind.in_(("working", *RUN_CLOSERS))).order_by(Event.id.desc())
-    ))
-    # Les clôtures sur tout l'historique d'abord : un `working` tardif (id plus grand que sa
-    # clôture) ne rouvre pas un run déjà clos.
-    closed = {(e.actor, e.task_id, e.run_ref) for e in events if e.kind in RUN_CLOSERS}
-    runs: dict[str, Event] = {}
-    for event in events:
-        key = (event.actor, event.task_id, event.run_ref)
-        if event.kind == "working" and event.actor not in runs and key not in closed:
-            runs[event.actor] = event
-    return runs
+    closer = aliased(Event)
+    closed = (
+        select(closer.id).where(
+            closer.kind.in_(RUN_CLOSERS), closer.actor == Event.actor,
+            closer.task_id.is_not_distinct_from(Event.task_id),
+            closer.run_ref.is_not_distinct_from(Event.run_ref),
+        ).exists()
+    )
+    latest = (
+        select(func.max(Event.id)).where(Event.kind == "working", ~closed).group_by(Event.actor)
+    )
+    return {e.actor: e for e in session.scalars(select(Event).where(Event.id.in_(latest)))}
 
 
 def snapshot(session: Session) -> dict:
@@ -86,7 +94,7 @@ def snapshot(session: Session) -> dict:
                  and t.human_owner == HUMAN), None)
     operation = None if main is None else {
         "task": _ref(main.id), "title": main.title, "lead_agent": main.lead_agent,
-        "since": _iso(_entered(session, main, "in_progress")),
+        "since": _iso(_since(_transitions(session, [main], "in_progress").get(main.id))),
         "next_action": main.next_action, "due_at": _iso(main.due_at),
     }
     auxiliaries = [
@@ -120,9 +128,9 @@ def snapshot(session: Session) -> dict:
         .order_by(Event.received_at.desc(), Event.id.desc())
     ) if HUMAN in (e.needs or [])]
 
-    blocked = [
-        (t, _entered(session, t, "blocked")) for t in tasks.values() if t.status == "blocked"
-    ]
+    blocked_tasks = [t for t in tasks.values() if t.status == "blocked"]
+    entered_blocked = _transitions(session, blocked_tasks, "blocked")
+    blocked = [(t, _since(entered_blocked.get(t.id))) for t in blocked_tasks]
     blocked.sort(key=lambda pair: (pair[1] is None, pair[1] or measured))
     blocks = [{
         "task": _ref(t.id), "title": t.title, "cause": t.block_cause, "since": _iso(since),
@@ -131,10 +139,9 @@ def snapshot(session: Session) -> dict:
 
     # Un changement de statut touche `updated_at` : une tâche plus ancienne que la fenêtre n'a
     # pas pu passer à done dedans, inutile de relire son historique.
-    finished = [
-        (t, _transition(session, t, "done")) for t in tasks.values()
-        if t.status == "done" and t.updated_at >= cutoff
-    ]
+    done_tasks = [t for t in tasks.values() if t.status == "done" and t.updated_at >= cutoff]
+    entered_done = _transitions(session, done_tasks, "done")
+    finished = [(t, entered_done.get(t.id)) for t in done_tasks]
     recent = [(t, row) for t, row in finished if row is not None and row.at >= cutoff]
     recent.sort(key=lambda pair: (pair[1].at, pair[0].id), reverse=True)
     # `agent` : qui a clos la tâche (l'historique), pas son agent principal (ADR-005).

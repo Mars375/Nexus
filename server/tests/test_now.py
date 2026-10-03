@@ -2,6 +2,8 @@
 
 from datetime import datetime, timedelta
 
+from sqlalchemy import event
+
 from nexus import now as now_module
 from nexus.clock import TZ, now
 
@@ -227,6 +229,38 @@ def test_the_snapshot_reads_one_state_even_if_someone_commits_midway(client, mon
         assert now_module.snapshot(session)["asks"] == []
     monkeypatch.undo()
     assert len(snapshot(client)["asks"]) == 1
+
+
+def _statements(client):
+    """Nombre de requêtes SQL d'un instantané lu directement sur la session."""
+    with client.app.state.sessionmaker() as session:
+        seen = []
+        listener = lambda *args: seen.append(args[2])  # noqa: E731
+        event.listen(session.get_bind(), "before_cursor_execute", listener)
+        try:
+            now_module.snapshot(session)
+        finally:
+            event.remove(session.get_bind(), "before_cursor_execute", listener)
+    return len(seen)
+
+
+def test_the_snapshot_cost_does_not_grow_with_tasks_or_closed_runs(client):
+    # NFR-7 (< 2 s) : un nombre fixe de requêtes, pas une par tâche ni tout l'historique des runs.
+    baseline = None
+    for round_ in range(2):
+        for i in range(3):
+            ref = create(client, title=f"Bloquée {round_}-{i}", status="todo", next_action="x")
+            move(client, ref, "in_progress")
+            move(client, ref, "blocked", block_cause="attente", block_plan="relancer")
+            done = create(client, title=f"Livrée {round_}-{i}", next_action="x")
+            move(client, done, "in_progress")
+            move(client, done, "done", evidence=["PR"])
+            run = f"session:{round_}-{i}"
+            publish(client, "working", task=done, payload={"run_ref": run})
+            publish(client, "done", task=done, payload={"run_ref": run})
+        count = _statements(client)
+        baseline = baseline or count
+        assert count == baseline
 
 
 def test_asks_carry_their_reception_instant(client):
