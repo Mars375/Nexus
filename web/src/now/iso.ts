@@ -77,6 +77,14 @@ const SELECTOR = { w: 170, h: 40 }
 // The legend lists the racks of the floor shown: four at most, however many nodes there are.
 const LEGEND_MAX_ROWS = 4
 
+// Server room (floors above the office): a smaller, centred floor drawn inside floor 1's frame (#36).
+export const SERVER_ROOM = { w: 11, d: 7 }
+const TRAY = { d: 0.6, h: 0.12, lift: 0.35 }
+const ROOM_MAX_RACKS = 4
+// Rack LEDs: five lights per face, the first with its top edge at LED_TOP, one every LED_STEP.
+export const LED_TOP = 2.1
+export const LED_STEP = 0.38
+
 const round = (v: number) => Math.round(v * 10) / 10
 const radians = (deg: number) => (deg * Math.PI) / 180
 
@@ -221,6 +229,13 @@ function fixedFrame(width: number, depth: number, seats: Seat[], racks: { x: num
     const p = projector(a)
     for (const [cx, cy] of [[0, 0], [width, 0], [0, depth], [width, depth]]) { grow(p(cx, cy, -0.35)); grow(p(cx, cy, 0)) }
     for (const r of racks) for (const [dx, dy] of [[0, 0], [RACK.w, 0], [0, RACK.d], [RACK.w, RACK.d]]) grow(p(r.x + dx, r.y + dy, RACK.h))
+    // The server room lies inside floor 1's footprint, so this grows nothing today: it keeps the frame honest if the room changes.
+    for (let n = 1; n <= ROOM_MAX_RACKS; n++) {
+      const g = serverRoom(width, depth, n)
+      for (const [cx, cy] of [[g.room.x, g.room.y], [g.room.x + g.room.w, g.room.y], [g.room.x, g.room.y + g.room.d], [g.room.x + g.room.w, g.room.y + g.room.d]]) { grow(p(cx, cy, -0.35)); grow(p(cx, cy, 0)) }
+      for (const r of g.racks) for (const [dx, dy] of [[0, 0], [RACK.w, 0], [0, RACK.d], [RACK.w, RACK.d]]) grow(p(r.x + dx, r.y + dy, RACK.h))
+      for (const [dx, dy] of [[0, 0], [g.tray.w, 0], [0, g.tray.d], [g.tray.w, g.tray.d]]) { grow(p(g.tray.x + dx, g.tray.y + dy, g.tray.z)); grow(p(g.tray.x + dx, g.tray.y + dy, g.tray.z + g.tray.h)) }
+    }
   }
   // label boxes unspread give the horizontal extent and a first top
   const unspread = (a: number) => placeLabels(width, depth, a, seats, projector(a), [])
@@ -238,6 +253,54 @@ function fixedFrame(width: number, depth: number, seats: Seat[], racks: { x: num
     vb = { ...vb, y, h: round(bottom + PAD - y) }
   }
   return vb
+}
+
+export type PlanRect = { x: number; y: number; w: number; d: number }
+export type ServerFloor = {
+  room: PlanRect
+  racks: { x: number; y: number }[]
+  /** Cold aisle in front of the LED side (+y, perforated tiles), hot aisle behind: same size. */
+  aisles: { cold: PlanRect; hot: PlanRect }
+  /** Cable tray above the racks: a thin box, as long as a row of four whatever the rack count. */
+  tray: PlanRect & { z: number; h: number }
+  /** Floor point where the « ÉTAGE n » mark is laid, in the cold aisle. */
+  markerAt: Pt
+  /** matrix(a b c d e f) taking plan units to the screen on the ground (z = 0): the mark turns with the floor. */
+  marker: readonly [number, number, number, number, number, number]
+  /** Side of the racks carrying the LEDs: +y when it faces the viewer, else -y; never ±x, which a neighbour can hide. */
+  ledFace: Dir
+}
+
+/** Fixed geometry of a server room on the floor of `width` × `depth`: centred on its centre, the rotation centre. */
+function serverRoom(width: number, depth: number, rackCount: number) {
+  const cx = width / 2, cy = depth / 2, pitch = RACK_PITCH
+  const row = (n: number) => (n - 1) * pitch + RACK.w
+  const room: PlanRect = { x: cx - SERVER_ROOM.w / 2, y: cy - SERVER_ROOM.d / 2, w: SERVER_ROOM.w, d: SERVER_ROOM.d }
+  const racks = Array.from({ length: rackCount }, (_, i) => ({ x: cx - row(rackCount) / 2 + i * pitch, y: cy - RACK.d / 2 }))
+  const aisle = (room.d - RACK.d) / 2
+  const aisles = { hot: { x: room.x, y: room.y, w: room.w, d: aisle }, cold: { x: room.x, y: cy + RACK.d / 2, w: room.w, d: aisle } }
+  const trayW = row(ROOM_MAX_RACKS)
+  const tray = { x: cx - trayW / 2, y: cy - TRAY.d / 2, w: trayW, d: TRAY.d, z: RACK.h + TRAY.lift, h: TRAY.h }
+  return { room, racks, aisles, tray }
+}
+
+/** Server room for `rackCount` racks (1 to 4), reusing the projection, angle and frame of the floor-1 layout. */
+export function layoutServerFloor(base: Layout, rackCount: number): ServerFloor {
+  const g = serverRoom(base.width, base.depth, rackCount)
+  const markerAt: Pt = [base.width / 2, g.aisles.cold.y + g.aisles.cold.d / 2]
+  const o = base.project(0, 0), px = base.project(10, 0), py = base.project(0, 10)
+  const marker = [(px[0] - o[0]) / 10, (px[1] - o[1]) / 10, (py[0] - o[0]) / 10, (py[1] - o[1]) / 10, o[0], o[1]] as const
+  const ledFace: Dir = base.sees(0, 1) ? '+y' : base.sees(0, -1) ? '-y' : (['+x', '-x', '+y', '-y'] as const).find((d) => base.sees(...NORMALS[d])) ?? '+x'
+  return { ...g, markerAt, marker, ledFace }
+}
+
+/** One indicator light on a rack side face, `z` being its top edge. */
+export function ledQuad(l: Pick<Layout, 'project'>, r: { x: number; y: number }, dir: Dir, z: number): Pt[] {
+  const along = [r.x + 0.25, r.x + 1.15], across = [r.y + 0.25, r.y + 1.15]
+  const fixed = dir === '+x' ? r.x + RACK.w : dir === '-x' ? r.x : dir === '+y' ? r.y + RACK.d : r.y
+  const at = (u: number, zz: number) => (dir === '+x' || dir === '-x' ? l.project(fixed, u, zz) : l.project(u, fixed, zz))
+  const [a, b] = dir === '+x' || dir === '-x' ? across : along
+  return [at(a, z), at(b, z), at(b, z - 0.16), at(a, z - 0.16)]
 }
 
 const pts = (list: Pt[]) => list.map((p) => `${p[0]},${p[1]}`).join(' ')
