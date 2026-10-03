@@ -7,8 +7,16 @@
 - A pre-commit hook (`.husky/pre-commit`) blocks test artefacts and local databases, runs gitleaks on staged changes (config: `.gitleaks.toml`), lints staged files, then typechecks and runs the fast tests. Never bypass it with `--no-verify`; fix the cause instead. Build fake secrets in tests at runtime (`"ghp_" + "A" * 36`).
 - Schema changes go through a new Alembic migration in `server/src/nexus/migrations/versions/`; the server applies migrations on startup.
 - The UI only talks to the FastAPI API — no browser-only APIs, so the same UI can ship inside Tauri later (ADR-017).
-- Product docs and user-facing text are in French (ADR-009); identifiers stay in English.
+- Product docs and user-facing text are in French (ADR-009); identifiers, code comments and docstrings stay in English: new ones and the ones a change touches; no mass translation of existing French comments.
 - Before opening a PR, walk through `docs/agents/review-checklist.md` (secrets, validation, concurrency, invariants, provenance, UI with changing data) and note in the PR body what was checked. Plan edge cases first and write their tests before the code.
+
+## Branches et PR
+
+- Une branche par issue ou par sujet, jamais deux sujets sur une même branche. Elle part de `master` à jour, sauf une PR empilée sur une autre (à recibler sur `master` avant la fusion de sa base, voir `docs/agents/review-checklist.md` §9). Noms : `feat/<n>-<sujet>`, `fix/<n>-<sujet>`, `docs/<sujet>`, `chore/<sujet>` (le numéro d'issue quand il y en a une) ; une session cloud qui impose `claude/<…>` garde ce nom.
+- Jamais de push direct sur `master`, pas de push forcé sauf `--force-with-lease` sur sa propre branche.
+- Une PR par branche, fusionnée en squash par l'agent seulement après l'accord explicite de Loïc, même quand un plan de `docs/superpowers/plans/` dit « merge when a round has no P1 ». GitHub supprime la branche distante à la fusion ; supprimer aussi la branche locale et lancer `git fetch --prune`.
+- Le corps de la PR ferme son issue avec le mot-clé anglais `Closes #<n>` (GitHub ne reconnaît pas « Ferme #<n> », et le mot-clé n'agit que pour une PR qui cible `master`). Une PR qui ne traite qu'une partie de l'issue écrit `Refs #<n>`.
+- Relectures, dans l'ordre de « Model routing » ci-dessous : `reviewer`, Antigravity, CodeRabbit, `@codex review`. Ne pas pousser de correction pendant qu'une relecture automatique (CodeRabbit, Codex) tourne encore ; Antigravity est lancée par Loïc, qui colle son résultat dans la conversation, et c'est ce message qui marque sa fin. L'agent vérifie chaque remarque à la source avant de l'appliquer, répond sur chaque fil (correction et commit, ou raison de ne pas corriger) puis le résout.
 
 ## Model routing
 
