@@ -49,7 +49,8 @@ def _transitions(session: Session, tasks: list[Task], status: str) -> dict[int, 
     if not tasks:
         return found
     rows = session.scalars(
-        select(TaskHistory).where(TaskHistory.task_id.in_([t.id for t in tasks]))
+        select(TaskHistory)
+        .where(TaskHistory.task_id.in_([t.id for t in tasks]))
         .order_by(TaskHistory.id.desc())
     )
     for row in rows:
@@ -70,11 +71,14 @@ def _open_runs(session: Session) -> dict[str, Event]:
     """
     closer = aliased(Event)
     closed = (
-        select(closer.id).where(
-            closer.kind.in_(RUN_CLOSERS), closer.actor == Event.actor,
+        select(closer.id)
+        .where(
+            closer.kind.in_(RUN_CLOSERS),
+            closer.actor == Event.actor,
             closer.task_id.is_not_distinct_from(Event.task_id),
             closer.run_ref.is_not_distinct_from(Event.run_ref),
-        ).exists()
+        )
+        .exists()
     )
     latest = (
         select(func.max(Event.id)).where(Event.kind == "working", ~closed).group_by(Event.actor)
@@ -87,16 +91,28 @@ def snapshot(session: Session) -> dict:
     # verrait son propre état de la base. Une seule transaction de lecture = un seul instant.
     session.connection().exec_driver_sql("BEGIN")
     measured = now()
-    tasks ={t.id: t for t in session.scalars(select(Task))}
+    tasks = {t.id: t for t in session.scalars(select(Task))}
 
-    main = next((t for t in tasks.values()
-                 if t.status == "in_progress" and t.operation_role == "main"
-                 and t.human_owner == HUMAN), None)
-    operation = None if main is None else {
-        "task": _ref(main.id), "title": main.title, "lead_agent": main.lead_agent,
-        "since": _iso(_since(_transitions(session, [main], "in_progress").get(main.id))),
-        "next_action": main.next_action, "due_at": _iso(main.due_at),
-    }
+    main = next(
+        (
+            t
+            for t in tasks.values()
+            if t.status == "in_progress" and t.operation_role == "main" and t.human_owner == HUMAN
+        ),
+        None,
+    )
+    operation = (
+        None
+        if main is None
+        else {
+            "task": _ref(main.id),
+            "title": main.title,
+            "lead_agent": main.lead_agent,
+            "since": _iso(_since(_transitions(session, [main], "in_progress").get(main.id))),
+            "next_action": main.next_action,
+            "due_at": _iso(main.due_at),
+        }
+    )
     auxiliaries = [
         {"task": _ref(t.id), "title": t.title}
         for t in sorted(tasks.values(), key=lambda t: t.id)
@@ -108,34 +124,53 @@ def snapshot(session: Session) -> dict:
     for agent in AGENT_ORDER:
         run = runs.get(agent)
         task = tasks.get(run.task_id) if run is not None and run.task_id is not None else None
-        agents.append({
-            "agent": agent, "state": "run" if run is not None else "idle",
-            "task": _ref(run.task_id) if run is not None else None,
-            "title": task.title if task is not None else None,
-            "run": run.run_ref if run is not None else None,
-            "since": _iso(run.at) if run is not None else None,
-        })
+        agents.append(
+            {
+                "agent": agent,
+                "state": "run" if run is not None else "idle",
+                "task": _ref(run.task_id) if run is not None else None,
+                "title": task.title if task is not None else None,
+                "run": run.run_ref if run is not None else None,
+                "since": _iso(run.at) if run is not None else None,
+            }
+        )
 
     # En UTC : une durée réelle, même autour d'un changement d'heure (checklist §7).
     cutoff = measured.astimezone(UTC) - WINDOW
     # Fenêtre et tri sur `received_at` (ce que Nexus a reçu), pas sur `at` (l'heure déclarée).
-    asks = [{
-        "event": e.ref, "agent": e.actor, "kind": e.kind, "subject": e.subject,
-        "task": _ref(e.task_id), "at": _iso(e.at),
-        "received_at": _iso(e.received_at),
-    } for e in session.scalars(
-        select(Event).where(Event.kind.in_(ASK_KINDS), Event.received_at >= cutoff)
-        .order_by(Event.received_at.desc(), Event.id.desc())
-    ) if HUMAN in (e.needs or [])]
+    asks = [
+        {
+            "event": e.ref,
+            "agent": e.actor,
+            "kind": e.kind,
+            "subject": e.subject,
+            "task": _ref(e.task_id),
+            "at": _iso(e.at),
+            "received_at": _iso(e.received_at),
+        }
+        for e in session.scalars(
+            select(Event)
+            .where(Event.kind.in_(ASK_KINDS), Event.received_at >= cutoff)
+            .order_by(Event.received_at.desc(), Event.id.desc())
+        )
+        if HUMAN in (e.needs or [])
+    ]
 
     blocked_tasks = [t for t in tasks.values() if t.status == "blocked"]
     entered_blocked = _transitions(session, blocked_tasks, "blocked")
     blocked = [(t, _since(entered_blocked.get(t.id))) for t in blocked_tasks]
     blocked.sort(key=lambda pair: (pair[1] is None, pair[1] or measured))
-    blocks = [{
-        "task": _ref(t.id), "title": t.title, "cause": t.block_cause, "since": _iso(since),
-        "follow_up_at": _iso(t.follow_up_at), "lead_agent": t.lead_agent,
-    } for t, since in blocked]
+    blocks = [
+        {
+            "task": _ref(t.id),
+            "title": t.title,
+            "cause": t.block_cause,
+            "since": _iso(since),
+            "follow_up_at": _iso(t.follow_up_at),
+            "lead_agent": t.lead_agent,
+        }
+        for t, since in blocked
+    ]
 
     # Un changement de statut touche `updated_at` : une tâche plus ancienne que la fenêtre n'a
     # pas pu passer à done dedans, inutile de relire son historique.
@@ -145,15 +180,26 @@ def snapshot(session: Session) -> dict:
     recent = [(t, row) for t, row in finished if row is not None and row.at >= cutoff]
     recent.sort(key=lambda pair: (pair[1].at, pair[0].id), reverse=True)
     # `agent` : qui a clos la tâche (l'historique), pas son agent principal (ADR-005).
-    done = [{
-        "task": _ref(t.id), "title": t.title, "agent": row.actor,
-        "evidence": list(t.evidence or []), "at": _iso(row.at),
-    } for t, row in recent[:DONE_LIMIT]]
+    done = [
+        {
+            "task": _ref(t.id),
+            "title": t.title,
+            "agent": row.actor,
+            "evidence": list(t.evidence or []),
+            "at": _iso(row.at),
+        }
+        for t, row in recent[:DONE_LIMIT]
+    ]
 
     return {
-        "source": "nexus.db", "measured_at": _iso(measured),
-        "operation": operation, "auxiliaries": auxiliaries, "agents": agents,
-        "asks": asks, "blocks": blocks, "done": done,
+        "source": "nexus.db",
+        "measured_at": _iso(measured),
+        "operation": operation,
+        "auxiliaries": auxiliaries,
+        "agents": agents,
+        "asks": asks,
+        "blocks": blocks,
+        "done": done,
     }
 
 
