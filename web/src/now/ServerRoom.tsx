@@ -1,6 +1,7 @@
-import type { NodeState } from '@/api'
 import { RACK, box, layoutServerFloor, type Layout, type PlanRect } from './iso'
-import type { RackTone } from './model'
+import { age } from '@/format'
+import { displayName, type RackView } from './model'
+import { toPercent } from './iso'
 import { Faces, Rack } from './Rack'
 
 const TILE = { w: 1, d: 1.4 } // perforated floor tiles of the cold aisle, in floor units
@@ -24,7 +25,7 @@ function joints(l: Layout, r: PlanRect): string {
  * everything else is static dressing (technical floor, aisles, markings, a cooling unit at each end
  * of the row, a cable tray) and carries no light, gauge or reading, so it can never pass for a measure.
  */
-export function ServerRoom({ l, floor, racks }: { l: Layout; floor: number; racks: { node: NodeState; tone: RackTone }[] }) {
+export function ServerRoom({ l, floor, racks }: { l: Layout; floor: number; racks: RackView[] }) {
   const g = layoutServerFloor(l, racks.length)
   const slab = box(l, g.room.x, g.room.y, -0.35, g.room.w, g.room.d, 0.35)
   const tray = box(l, g.tray.x, g.tray.y, g.tray.z, g.tray.w, g.tray.d, g.tray.h)
@@ -56,6 +57,33 @@ export function ServerRoom({ l, floor, racks }: { l: Layout; floor: number; rack
         )
       })}
       <g className="cable-tray"><Faces b={tray} /></g>
+      {g.labels.map((lab, i) => <path key={racks[i].node.id} className="leader" d={`M${lab.anchor} L${lab.x} ${lab.y}`} />)}
     </>
+  )
+}
+
+const NAME_TONE = (r: RackView): string => r.tone === 'off' ? (r.node.status === 'offline-by-design' ? 'text-unknown' : 'text-danger') : r.tone === 'unknown' ? 'text-attention' : ''
+
+/**
+ * HTML labels of a server floor's racks, laid like the desks' labels. Real data only: the name, the
+ * state text of the model (« périmée » included), when an offline or unknown node was last seen, its guardian.
+ * Purely visual (aria-hidden): the legend list carries the same information for screen readers.
+ */
+export function RackLabels({ l, racks, now }: { l: Layout; racks: RackView[]; now: number }) {
+  const g = layoutServerFloor(l, racks.length)
+  return (
+    <div aria-hidden="true">
+      {racks.map((r, i) => {
+        const lab = g.labels[i], [left, top] = toPercent(l, [lab.x, lab.y])
+        const seen = (r.node.status === 'offline' || r.node.status === 'unknown') && r.node.last_seen ? ` · vu ${age(r.node.last_seen, now)}` : ''
+        return (
+          <div key={r.node.id} data-rack-label={r.node.id} className={`absolute whitespace-nowrap text-center -translate-x-1/2 ${lab.below ? 'translate-y-0' : '-translate-y-full'}`} style={{ left: `${left}%`, top: `${top}%` }}>
+            <span data-line className={`block font-orbital-display text-[13px] font-semibold tracking-[0.14em] leading-[14px] ${NAME_TONE(r)}`}>{r.node.id.toUpperCase()}</span>
+            <span data-line className="mx-auto block max-w-[34ch] truncate font-data text-[11px] leading-[13px] text-muted">{r.state}{seen}</span>
+            <span data-line className="mx-auto hidden font-data text-[11px] leading-[13px] text-muted @min-[800px]:block">gardien : {displayName(r.node.guardian_agent)}</span>
+          </div>
+        )
+      })}
+    </div>
   )
 }

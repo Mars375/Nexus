@@ -19,6 +19,9 @@ export function seatModels(s: NowSnapshot): SeatModel[] {
 
 export type RackTone = 'ok' | 'unknown' | 'off'
 
+/** A rack as drawn and listed: its node, tone, state text in French (« périmée » when the reading is stale) and legend line. */
+export type RackView = { node: NodeState; tone: RackTone; state: string; text: string }
+
 export function rackTone(n: NodeState): RackTone {
   if (n.status === 'online') return 'ok'
   if (n.status === 'unknown') return 'unknown'

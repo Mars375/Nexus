@@ -53,12 +53,12 @@ async function seedAllAgents(request: import('@playwright/test').APIRequestConte
 }
 
 async function expectNoLabelOverlap(page: import('@playwright/test').Page, when: string) {
-  const boxes = await page.locator('[data-label]').evaluateAll((els) => els.map((e) => {
+  const boxes = await page.locator('[data-label], [data-rack-label]').evaluateAll((els) => els.map((e) => {
     const r = e.getBoundingClientRect()
     // le texte compte aussi : une ligne plus large que l'étiquette déborderait sur sa voisine
     const spans = [...e.querySelectorAll('span')].map((s) => { const range = document.createRange(); range.selectNodeContents(s); return range.getBoundingClientRect() }).filter((q) => q.width > 0)
     const left = Math.min(r.left, ...spans.map((q) => q.left)), right = Math.max(r.right, ...spans.map((q) => q.right))
-    return { id: e.getAttribute('data-label'), left, right, top: r.top, bottom: r.bottom }
+    return { id: e.getAttribute('data-label') ?? e.getAttribute('data-rack-label'), left, right, top: r.top, bottom: r.bottom }
   }))
   for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
     const a = boxes[i], b = boxes[j]
@@ -66,12 +66,12 @@ async function expectNoLabelOverlap(page: import('@playwright/test').Page, when:
     expect(hit, `${when} : ${a.id} recouvre ${b.id} ${JSON.stringify([a, b])}`).toBe(false)
   }
   // ni le coin « TA TABLE », ni la légende des baies, ni les boutons de rotation
-  const fixed = await page.locator('[data-table-corner], [data-legend], [data-stage] button, .floor-pick').evaluateAll((els) => els.map((e) => {
+  const fixed = await page.locator('[data-table-corner], [data-legend], [data-legend-summary], [data-stage] button, .floor-pick').evaluateAll((els) => els.map((e) => {
     const r = e.getBoundingClientRect()
-    return { id: e.hasAttribute('data-table-corner') ? 'coin TA TABLE' : e.hasAttribute('data-legend') ? 'légende' : e.classList.contains('floor-pick') ? 'sélecteur d\'étage' : `bouton ${e.getAttribute('aria-label')}`, left: r.left, right: r.right, top: r.top, bottom: r.bottom }
+    return { id: e.hasAttribute('data-table-corner') ? 'coin TA TABLE' : e.hasAttribute('data-legend') ? 'légende' : e.hasAttribute('data-legend-summary') ? 'résumé de la légende' : e.classList.contains('floor-pick') ? 'sélecteur d\'étage' : `bouton ${e.getAttribute('aria-label')}`, left: r.left, right: r.right, top: r.top, bottom: r.bottom }
   }))
   // table corner, legend, the rotation buttons, and with several floors the selector and its two buttons
-  expect(fixed).toHaveLength(2 + (await page.locator('[data-stage] button').count()) + (await page.locator('.floor-pick').count()))
+  expect(fixed).toHaveLength(2 + (await page.locator('[data-stage] button').count()) + (await page.locator('.floor-pick').count()) + (await page.locator('[data-legend-summary]').count()))
   for (const a of boxes) for (const b of fixed) {
     const hit = a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
     expect(hit, `${when} : ${a.id} recouvre ${b.id} ${JSON.stringify([a, b])}`).toBe(false)
@@ -239,3 +239,29 @@ test('▲ puis ▼ presque aussitôt : retour à l\'étage 1, une seule couche p
   await expect(page.locator('.level')).toHaveCSS('opacity', '1')
   await expect(page.locator('.level')).toHaveCSS('transform', 'none')
 })
+
+for (const width of [1440, 1100]) for (const [count, floor] of [[12, 2], [10, 3]] as const) {
+  test(`salle des serveurs (étage ${floor}, ${count} nœuds) : aucune étiquette de baie n'en recouvre une autre ni un coin fixe, avant et après un glisser, à ${width} px`, async ({ page }) => {
+    await serveNodes(page, count, ['n10'])
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto('/#/maintenant')
+    const stage = page.locator('[data-stage]')
+    for (let i = 1; i < floor; i++) await page.getByRole('button', { name: /^Monter d'un étage/ }).click()
+    await expect(stage).toHaveAttribute('data-floor', String(floor))
+    await page.waitForTimeout(500)
+    await expect(page.locator('[data-rack-label]')).toHaveCount(floor === 3 ? count - 8 : 4)
+    await expectNoLabelOverlap(page, `étage ${floor} à 0°`)
+    const box = (await stage.boundingBox())!
+    const x = box.x + box.width / 2, y = box.y + box.height * 0.8
+    await page.mouse.move(x, y); await page.mouse.down()
+    await page.mouse.move(x + 100, y, { steps: 5 }); await page.mouse.move(x + 200, y, { steps: 5 })
+    await page.mouse.up()
+    await expect(stage).toHaveAttribute('data-angle', '90')
+    await expectNoLabelOverlap(page, `étage ${floor} à 90° après un glisser`)
+    for (const quarter of ['180', '270']) {
+      await page.getByRole('button', { name: 'Tourner l\'étage vers la droite' }).click()
+      await expect(stage).toHaveAttribute('data-angle', quarter)
+      await expectNoLabelOverlap(page, `étage ${floor} à ${quarter}°`)
+    }
+  })
+}

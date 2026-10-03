@@ -493,6 +493,28 @@ describe('salle des serveurs (#36)', () => {
       }
     }
   })
+  test('une étiquette par baie : aucune ne touche une autre ni un coin fixe, à chaque quart de tour et tous les 15°, 8 et 12 agents', () => {
+    for (const agents of [8, 12]) for (const k of [1, 2, 3, 4]) for (let a = 0; a < 360; a += 15) {
+      const l = layoutFloor(agents, 4, a, 3), f = layoutServerFloor(l, k)
+      expect(f.labels).toHaveLength(k)
+      f.labels.forEach((lab, i) => {
+        for (const z of l.zones) expect(hit(lab.box, z), `étiquette ${i} touche une zone fixe, ${agents} agents, ${k} baies à ${a}°`).toBe(false)
+        for (let j = i + 1; j < k; j++) expect(hit(lab.box, f.labels[j].box), `étiquettes ${i} et ${j}, ${agents} agents, ${k} baies à ${a}°`).toBe(false)
+      })
+    }
+  })
+  test('les étiquettes des baies tiennent dans le cadre fixe à chaque angle', () => {
+    for (const agents of [8, 12]) for (let a = 0; a < 360; a += 5) {
+      const l = layoutFloor(agents, 4, a, 2), { x, y, w, h } = l.viewBox
+      for (const k of [1, 2, 3, 4]) for (const { box: b } of layoutServerFloor(l, k).labels) {
+        expect(b.x0, `${agents} agents, ${k} baies à ${a}°`).toBeGreaterThanOrEqual(x); expect(b.x1).toBeLessThanOrEqual(x + w)
+        expect(b.y0).toBeGreaterThanOrEqual(y); expect(b.y1).toBeLessThanOrEqual(y + h)
+      }
+    }
+  })
+  test('le cadre de l\'étage 1 ne bouge pas quand on ajoute les étiquettes des baies (4 nœuds et moins)', () => {
+    expect(layoutFloor(8, 4, 0, 1).viewBox).toEqual({ x: 131.4, y: -12.3, w: 807.2, h: 821.3 })
+  })
   test('à 45° pile, une face LED visible existe quand même', () => {
     const f = layoutServerFloor(layoutFloor(8, 4, 45, 2), 4)
     expect(['+y', '-y', '+x', '-x']).toContain(f.ledFace)

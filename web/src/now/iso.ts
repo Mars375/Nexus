@@ -60,6 +60,8 @@ const RACK_PER_COLUMN = Math.floor((FLOOR_DEPTH - RACK_MARGIN - RACK.d - RACK_ST
 // Room taken by label text around its anchor, in viewBox units (labels keep their px size).
 const LABEL_HALF = 110
 const LABEL_TEXT_H = 42
+// Three lines (40 px) at the smallest render (about 0.66 px per unit): the stage can be height-limited and shrink below 1 px per unit.
+const RACK_LABEL_H = 62
 const GAP = 6
 const SAMPLE_STEP = 5
 const LABEL_STEP = 1
@@ -141,7 +143,7 @@ export function layoutFloor(agentCount: number, rackCount: number, angle = 0, fl
   }
   const viewBox = vb
   const zones = zonesOf(viewBox, legendRows, selector)
-  const labels = placeLabels(width, depth, angle, seats, projector(angle), zones)
+  const labels = placeLabels(width, depth, angle, seatItems(width, seats), projector(angle), zones)
 
   const { turn, normal } = turner(width, depth, angle)
   const sees = (nx: number, ny: number) => { const [u, v] = normal(nx, ny); return u + v > 1e-9 }
@@ -189,33 +191,40 @@ export function spreadLabels(boxes: Rect[], fixed: Rect[], below: boolean[] = []
   })
 }
 
-/** A seat's label sits under its desk when its row is nearer the viewer than the floor centre. */
-function labelBelow(width: number, depth: number, angle: number, seat: Seat): boolean {
+/** Something that carries an HTML label: its footprint, the height the leader starts from, and where its row depth is read. */
+type Labelled = { x: number; y: number; w: number; d: number; top: number; refX: number; textH?: number }
+
+/** A label sits under its object when its row is nearer the viewer than the floor centre. */
+function labelBelow(width: number, depth: number, angle: number, item: Labelled): boolean {
   const { turn } = turner(width, depth, angle)
-  const [u, v] = turn(width / 2, seat.y + DESK.d / 2), [cu, cv] = turn(width / 2, depth / 2)
+  const [u, v] = turn(item.refX, item.y + item.d / 2), [cu, cv] = turn(width / 2, depth / 2)
   return u + v - (cu + cv) > 1e-9
 }
 
-/** Seat labels at `angle`: above or under their desk by row depth, then spread so none covers another or a fixed corner. */
-function placeLabels(width: number, depth: number, angle: number, seats: Seat[], project: Layout['project'], zones: Rect[]): SeatLabel[] {
+const seatItems = (width: number, seats: Seat[]): Labelled[] => seats.map((s) => ({ x: s.x, y: s.y, w: DESK.w, d: DESK.d, top: 1.8, refX: width / 2 }))
+// Racks in a row: each one is read at its own place along the row; the leader starts above the cable tray.
+const rackItems = (racks: { x: number; y: number }[]): Labelled[] => racks.map((r) => ({ x: r.x, y: r.y, w: RACK.w, d: RACK.d, top: RACK.h + 0.6, refX: r.x + RACK.w / 2, textH: RACK_LABEL_H }))
+
+/** Labels at `angle`: above or under their object by row depth, then spread so none covers another or a fixed corner. */
+function placeLabels(width: number, depth: number, angle: number, items: Labelled[], project: Layout['project'], zones: Rect[]): SeatLabel[] {
   const { turn } = turner(width, depth, angle)
-  const below = seats.map((s) => labelBelow(width, depth, angle, s))
-  const anchors = seats.map((s, i): Pt => {
-    const cx = s.x + DESK.w / 2, cy = s.y + DESK.d / 2
-    if (!below[i]) return project(cx, cy, 1.8)
-    // lowest point of the desk footprint on screen, under its centre
-    const low = Math.max(...[[s.x, s.y], [s.x + DESK.w, s.y], [s.x, s.y + DESK.d], [s.x + DESK.w, s.y + DESK.d]].map(([x, y]) => project(x, y, 0)[1]))
+  const below = items.map((s) => labelBelow(width, depth, angle, s))
+  const anchors = items.map((s, i): Pt => {
+    const cx = s.x + s.w / 2, cy = s.y + s.d / 2
+    if (!below[i]) return project(cx, cy, s.top)
+    // lowest point of the footprint on screen, under its centre
+    const low = Math.max(...[[s.x, s.y], [s.x + s.w, s.y], [s.x, s.y + s.d], [s.x + s.w, s.y + s.d]].map(([x, y]) => project(x, y, 0)[1]))
     return [project(cx, cy, 0)[0], low]
   })
-  const order = seats.map((s, i) => [i, (([u, v]) => u + v)(turn(s.x + DESK.w / 2, s.y + DESK.d / 2))] as const).sort((a, b) => a[1] - b[1] || a[0] - b[0]).map(([i]) => i)
+  const order = items.map((s, i) => [i, (([u, v]) => u + v)(turn(s.x + s.w / 2, s.y + s.d / 2))] as const).sort((a, b) => a[1] - b[1] || a[0] - b[0]).map(([i]) => i)
   const boxes = order.map((i): Rect => {
     const [ax, ay] = anchors[i]
     return below[i]
-      ? { x0: ax - LABEL_HALF, x1: ax + LABEL_HALF, y0: ay + LABEL_DROP, y1: ay + LABEL_DROP + LABEL_TEXT_H }
-      : { x0: ax - LABEL_HALF, x1: ax + LABEL_HALF, y0: ay - LABEL_LIFT - LABEL_TEXT_H, y1: ay - LABEL_LIFT }
+      ? { x0: ax - LABEL_HALF, x1: ax + LABEL_HALF, y0: ay + LABEL_DROP, y1: ay + LABEL_DROP + (items[i].textH ?? LABEL_TEXT_H) }
+      : { x0: ax - LABEL_HALF, x1: ax + LABEL_HALF, y0: ay - LABEL_LIFT - (items[i].textH ?? LABEL_TEXT_H), y1: ay - LABEL_LIFT }
   })
   const shifts = spreadLabels(boxes, zones, order.map((i) => below[i]))
-  const out: SeatLabel[] = new Array(seats.length)
+  const out: SeatLabel[] = new Array(items.length)
   order.forEach((i, k) => {
     const b = boxes[k], d = below[i] ? shifts[k] : -shifts[k]
     const box = { x0: b.x0, x1: b.x1, y0: round(b.y0 + d), y1: round(b.y1 + d) }
@@ -242,7 +251,9 @@ function fixedFrame(width: number, depth: number, seats: Seat[], racks: { x: num
     }
   }
   // label boxes unspread give the horizontal extent and a first top
-  const unspread = (a: number) => placeLabels(width, depth, a, seats, projector(a), [])
+  // With several floors, the racks' labels (one set per rack count) must fit too: floors share one frame.
+  const sets: Labelled[][] = [seatItems(width, seats), ...(selector ? [1, 2, 3, 4].map((n) => rackItems(serverRoom(width, depth, n).racks)) : [])]
+  const unspread = (a: number) => sets.flatMap((items) => placeLabels(width, depth, a, items, projector(a), []))
   let labelTop = Infinity, labelBottom = -Infinity
   for (let a = 0; a < 360; a += SAMPLE_STEP) for (const { box } of unspread(a)) { minX = Math.min(minX, box.x0); maxX = Math.max(maxX, box.x1); labelTop = Math.min(labelTop, box.y0); labelBottom = Math.max(labelBottom, box.y1) }
   const top0 = Math.min(minY, labelTop) - PAD, bottom0 = Math.max(maxY, labelBottom) + PAD
@@ -251,7 +262,7 @@ function fixedFrame(width: number, depth: number, seats: Seat[], racks: { x: num
   for (let pass = 0; pass < 8; pass++) {
     const zones = zonesOf(vb, legendRows, selector)
     let top = vb.y + PAD, bottom = vb.y + vb.h - PAD
-    for (let a = 0; a < 360; a += LABEL_STEP) for (const { box } of placeLabels(width, depth, a, seats, projector(a), zones)) { top = Math.min(top, box.y0); bottom = Math.max(bottom, box.y1) }
+    for (let a = 0; a < 360; a += LABEL_STEP) for (const { box } of sets.flatMap((items) => placeLabels(width, depth, a, items, projector(a), zones))) { top = Math.min(top, box.y0); bottom = Math.max(bottom, box.y1) }
     if (top >= vb.y + PAD - 0.05 && bottom <= vb.y + vb.h - PAD + 0.05) break
     const y = round(top - PAD)
     vb = { ...vb, y, h: round(bottom + PAD - y) }
@@ -280,6 +291,8 @@ export type ServerFloor = {
   markerFlip: boolean
   /** Side of the racks carrying the LEDs: +y when it faces the viewer, else -y; never ±x, which a neighbour can hide. */
   ledFace: Dir
+  /** One label per rack, placed and spread like the desks' (none touches another or a fixed corner). */
+  labels: SeatLabel[]
 }
 
 /** Fixed geometry of a server room on the floor of `width` × `depth`: the whole floor, the row centred on its centre (the rotation centre). */
@@ -309,7 +322,8 @@ export function layoutServerFloor(base: Layout, rackCount: number): ServerFloor 
   const marker = [(px[0] - o[0]) / 10, (px[1] - o[1]) / 10, (py[0] - o[0]) / 10, (py[1] - o[1]) / 10, o[0], o[1]] as const
   const ledFace: Dir = base.sees(0, 1) ? '+y' : base.sees(0, -1) ? '-y' : (['+x', '-x', '+y', '-y'] as const).find((d) => base.sees(...NORMALS[d])) ?? '+x'
   // The plan x axis is the reading direction: when it runs leftwards on screen the mark is turned half a turn.
-  return { ...g, markerAt, marker, markerFlip: marker[0] < 0, ledFace }
+  const labels = placeLabels(base.width, base.depth, base.angle, rackItems(g.racks), base.project, base.zones)
+  return { ...g, markerAt, marker, markerFlip: marker[0] < 0, ledFace, labels }
 }
 
 /** One indicator light on a rack side face, `z` being its top edge. */

@@ -5,9 +5,9 @@ import { age } from '@/format'
 import { isStale } from '@/freshness'
 import { useNow } from '@/useNow'
 import { DESK, box, drawOrder, layoutFloor, toPercent, type Dir, type Layout } from './iso'
-import { AGE_TICK_MS, displayName, floorAlert, floorAlertSides, nodeFloors, rackLabel, rackTone, seatModels, type FloorAlert, type RackTone, type SeatModel } from './model'
+import { AGE_TICK_MS, displayName, floorAlert, floorAlertSides, nodeFloors, rackLabel, rackTone, seatModels, type FloorAlert, type RackView, type SeatModel } from './model'
 import { Faces, Rack } from './Rack'
-import { ServerRoom } from './ServerRoom'
+import { RackLabels, ServerRoom } from './ServerRoom'
 import { useArrivals } from './useArrivals'
 import { prefersReducedMotion, useFloorLevel, type FloorLayer } from './useFloorLevel'
 import { useFloorRotation, type FloorStage } from './useFloorRotation'
@@ -46,8 +46,6 @@ function Desk({ l, seat, m }: { l: Layout; seat: Layout['seats'][number]; m: Sea
 
 const LED_FACES: Dir[] = ['+x', '-x', '+y', '-y']
 const NORMAL: Record<Dir, readonly [number, number]> = { '+x': [1, 0], '-x': [-1, 0], '+y': [0, 1], '-y': [0, -1] }
-
-type RackView = { node: NodeState; tone: RackTone; text: string }
 
 type FloorProps = { snapshot: NowSnapshot; nodes: NodeState[] | undefined; nodesFailed?: boolean }
 
@@ -114,7 +112,8 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
   // Une mesure trop ancienne, ou une relecture en échec : jamais de vert sur une donnée périmée.
   const racksOf = (list: NodeState[]): RackView[] => list.map((node) => {
     const stale = nodesFailed || isStale(node.measured_at, 'nodes', now)
-    return { node, tone: stale ? 'unknown' : rackTone(node), text: `${node.id.toUpperCase()} · ${stale ? 'périmée' : rackLabel(node)}` }
+    const state = stale ? 'périmée' : rackLabel(node)
+    return { node, tone: stale ? 'unknown' : rackTone(node), state, text: `${node.id.toUpperCase()} · ${state}` }
   })
   const floors = nodeFloors(nodes)
   const shown = racksOf(floors[Math.min(floor, floors.length) - 1] ?? [])
@@ -131,6 +130,7 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
   const tickets = snapshot.asks.slice(0, MAX_TICKETS)
   const extra = snapshot.asks.length - tickets.length
   const label = (ask: number) => ask === 0 ? 'aucune demande reçue (7 j)' : `${ask} demande${ask > 1 ? 's' : ''}`
+  const onRoom = Math.min(floor, floors.length) > 1
   const mounted: FloorLayer[] = layers ?? [{ floor, role: 'current', from: 'above' }]
 
   const dais = (
@@ -195,9 +195,12 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
   const roomLevel = (n: number) => {
     const racks = racksOf(floors[n - 1] ?? [])
     return (
+      <>
       <svg viewBox={viewBox} className="absolute inset-0 size-full" role="img" aria-label={`Étage ${n} de Nexus : salle des serveurs, ${racks.length} baie${racks.length > 1 ? 's' : ''}`}>
         <ServerRoom l={l} floor={n} racks={racks} />
       </svg>
+      <RackLabels l={l} racks={racks} now={now} />
+      </>
     )
   }
 
@@ -230,12 +233,14 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
         <span className="block font-data text-[11px] text-muted">{label(snapshot.asks.length)}{extra > 0 && ` · +${extra} sur la table`}</span>
       </div>
 
-      <ul data-legend className="pointer-events-none absolute bottom-0 right-0 m-0 flex list-none flex-col gap-1 p-0 font-data text-[11px]">
+      {/* On a server floor the legend is read by screen readers only; sighted users get the labels and a one-line summary. */}
+      <ul data-legend className={clsx('pointer-events-none absolute bottom-0 right-0 m-0 flex list-none flex-col gap-1 p-0 font-data text-[11px]', onRoom && 'sr-only')}>
         {nodes === undefined && <li className="text-muted">{nodesFailed ? 'nœuds illisibles' : 'lecture des nœuds…'}</li>}
         {shown.map(({ node: n, tone, text }) => (
           <li key={n.id} className={clsx('flex items-center gap-2', tone === 'ok' ? 'text-ink' : 'text-muted')}><span className="legend-dot" data-tone={tone} aria-hidden="true" />{text}</li>
         ))}
       </ul>
+      {onRoom && <p aria-hidden="true" data-legend-summary className="pointer-events-none absolute bottom-0 right-0 m-0 font-data text-[11px] text-ink">{shown.filter((r) => r.tone === 'ok').length} / {shown.length} en ligne</p>}
       {children}
     </div>
   )
