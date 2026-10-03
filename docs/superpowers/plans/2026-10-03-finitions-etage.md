@@ -4,7 +4,7 @@ Spec : issue #28. État vérifié sur `master` (après #29 et #33) :
 
 | Point | État |
 |---|---|
-| 1. Étage ~25 % plus petit que l'espace (marges du viewBox) | à faire |
+| 1. Étage ~25 % plus petit que l'espace (marges du viewBox) | non traité ici : la marge `PAD` n'explique que ~2,5 % en largeur et ~8 % en hauteur ; la place perdue vient surtout de la légende des nœuds (une ligne par nœud) que le cadre réserve. Tentative de resserrement annulée après relecture (cadre plus haut que master, étiquette hors cadre pendant un glisser). Suite : légende compacte, issue à part |
 | 2. Sous 800 px, seulement le nom de l'agent | à faire : tâche tronquée (choix de Loïc, 2026-10-03) |
 | 3. Légende « lecture des nœuds… » contre tuile « illisibles » | corrigé par #29 (`Floor.tsx` légende et `NowView.tsx` tuile suivent `nodesFailed`/`isError`) |
 | 4. Décalage de l'étage à 0 nœud | corrigé par #29 (`layoutFloor(…, nodes === undefined ? 1 : racks.length, …)`) |
@@ -17,9 +17,9 @@ Spec : issue #28. État vérifié sur `master` (après #29 et #33) :
 
 ### 1. Baies dans la profondeur (`iso.ts`, `iso.test.ts`)
 - Test d'abord : pour `rackCount` de 1 à 12, toutes les baies tiennent dans `[0, depth]` (y + profondeur de baie ≤ `depth`), sans se chevaucher.
-- Le pas vertical des baies devient `min(1.85, (depth - 0.8 - marge) / rackCount)` ; à 7 nœuds ou moins, positions inchangées (test de non-régression sur les points actuels).
+- Au-delà de 7 baies, colonnes de 7 au plus, espacées de 3,6 unités pour que les LED d'une baie ne soient pas cachées par la colonne voisine aux quatre quarts de tour ; à 7 nœuds ou moins, positions inchangées.
 
-### 2. viewBox resserré (`iso.ts`, `iso.test.ts`, e2e)
+### 2. viewBox resserré (abandonné, voir tableau) (`iso.ts`, `iso.test.ts`, e2e)
 - Test d'abord : le cadre fixe contient toujours, à chaque angle échantillonné, le sol, les baies et les étiquettes écartées (test existant) ; nouveau test : la marge entre ce contenu et le bord du viewBox ne dépasse pas une petite valeur (≤ 2 unités) sur au moins un côté horizontal et un côté vertical.
 - Réduire `PAD` au minimum qui garde le test de contenance vert ; ne rien couper (traits de rappel, étiquettes du dessous, coins réservés `zonesOf`).
 - e2e existants (aucun chevauchement à 1440 et 1100 px, avant et après un glisser) restent verts.
