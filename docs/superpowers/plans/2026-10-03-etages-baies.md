@@ -100,3 +100,33 @@ Choix direct d'un étage par clic sur un repère, Home / End, mémoire entre ses
 - **Ordre des nœuds = ordre d'importance, défini côté serveur** : le tuple `NODES` de `server/src/nexus/nodes.py` devient cortex, synapse, artemis, helios (commentaire : ordre d'importance, il fixe l'étage de chaque nœud). L'interface garde l'ordre reçu de `/api/nodes`, sans tri par `id`. Un test serveur fige cet ordre ; un test d'interface vérifie que l'ordre reçu est conservé et que l'étage d'un nœud ne dépend pas de son statut. Un nœud absent de la réponse suivante ne décale pas les autres d'étage tant que la liste du serveur est la même (l'ordre vient du serveur, pas de la présence).
 - **« TA TABLE »** : visible à tous les étages (une demande reçue ne disparaît pas parce que l'on regarde les baies).
 - **Sélecteur** : en haut à gauche, sous ↺ ↻ (proposition retenue) ; les captures mesurent la taille de l'étage 1 au-delà de 4 nœuds.
+
+## Ajustements après relecture (2026-10-03)
+
+Prioritaires sur ce qui précède.
+
+### A. Salle des serveurs sur l'emprise de l'étage 1 (option A de Loïc)
+- La salle reprend exactement les dimensions du sol de l'étage 1 (`SERVER_ROOM` disparaît) : même emprise de bâtiment, cadre fixe et viewBox de l'étage 1 inchangés (identiques à `master` jusqu'à 4 nœuds, gelés par un test), rien ne saute au changement d'étage.
+- La rangée de baies reste centrée (1 à 3 baies aussi) ; allées froide (devant la face LED) et chaude (derrière) de même profondeur, le long de la rangée.
+- Décor sobre, statique et manifestement décoratif : dalles techniques sur tout le sol (une seule trace), dalles perforées de l'allée froide, un groupe de refroidissement à chaque bout de la rangée de quatre (position fixe), chemin de câbles de groupe à groupe, marques de zone de travail au sol.
+- Règle stricte (checklist §5) : aucun décor ne ressemble à une donnée (ni voyant, ni jauge, ni valeur) ; aucune animation ; moins de 40 éléments SVG hors baies (testé).
+- Tests : tout reste dans le cadre fixe à chaque angle échantillonné (unités et marques comprises), baies centrées aux quatre quarts de tour, aucune LED cachée (autre baie, unité de refroidissement, chemin de câbles).
+
+### B. Étiquettes des baies (données réelles seulement)
+- Chaque baie d'une salle porte une étiquette HTML placée et écartée par la même mécanique que les postes (`placeLabels` généralisé, `spreadLabels`) : aucune ne touche une autre étiquette ni un coin fixe. Hauteur estimée plus prudente (62 unités) : la scène, limitée en hauteur, peut descendre sous 1 px par unité.
+- Contenu : nom du nœud en majuscules (couleur du ton), état en français du modèle (« périmée » et relecture en échec compris) + « · vu il y a … » pour un nœud hors ligne ou inconnu avec `last_seen`, puis `gardien : <agent>` (le nom d'affichage de l'agent). Sous 800 px : lignes 1 et 2 seulement, la ligne 2 est tronquée.
+- Légende : celle de l'étage 1 est inchangée. Sur une salle, la légende complète devient lisible par les lecteurs d'écran seulement (`sr-only`) ; une ligne « n / m en ligne » (baies fraîches et en ligne) la remplace à l'écran ; les étiquettes visuelles sont `aria-hidden`.
+- Le cadre commun des étages multiples réserve la place de ces étiquettes (pour 4 nœuds et moins, aucun changement).
+
+### C. Constats du reviewer
+1. Test de la pastille : un vrai identifiant (`cortex`) ; vérifié en retirant la condition « étage affiché » (le test échoue), puis rétablie.
+2. ▲ et ▼ aux bornes : `aria-disabled="true"` au lieu de `disabled`, le focus reste sur le bouton ; PageUp et PageDown continuent de fonctionner.
+3. Repli quand un étage disparaît : `lifted`, `arriving` et les couches qui partent sont remis à zéro ; ni glissement ni numéro qui roule.
+4. Ordre DOM stable des couches (par étage, la couche affichée passe devant par `z-index` dans un conteneur `isolation: isolate`) : un aller-retour 1 → 2 → 1 ne détache plus aucun nœud. Test jsdom (`MutationObserver`) et test e2e (opacité échantillonnée, aucune image à 0).
+5 et 6. Plus de liste de repères : voir D2. L'étage affiché reste identifié par le texte « Étage n / N » (zone `aria-live`) ; alertes dites par les noms des boutons et par l'étiquette.
+
+### D. Trois défauts vus sur les captures
+1. « ÉTAGE n » : posé sur l'allée la plus proche du spectateur (les baies, derrière, ne la cachent jamais), retourné de 180° quand son sens de lecture irait vers la gauche, jamais en miroir. Testé tous les 5°.
+2. Repères : la colonne de trois points est supprimée. Une pastille sur ▲ (étage au-dessus en alerte) et sur ▼ (au-dessous), de la couleur de l'alerte la plus grave (rouge hors ligne, ambre inconnu ou périmé, rien pour hors ligne prévu), jamais pour l'étage affiché ; texte « Étage 2 / 3 · alerte à l'étage 3 » ; noms accessibles « Monter d'un étage : un nœud hors ligne à l'étage 3 ». Une alerte nouvelle fait pulser la pastille du côté concerné, une fois.
+
+### E. Cette section.
