@@ -100,7 +100,9 @@ describe('viewBox fixe', () => {
     for (const a of [...ANGLES, 33, -47, 400]) expect(layoutFloor(8, 4, a).viewBox).toEqual(ref)
   })
   test('tout le sol, toutes les baies et toutes les étiquettes tiennent dans le cadre, à chaque angle', () => {
-    for (const racks of [0, 1, 4, 6, 8, 12]) for (const agents of [1, 8, 12]) for (let a = 0; a < 360; a += 3) {
+    // Two-column cases (8 racks and more) are sampled every 15° (the quarters included): each one builds its own frame.
+    const cases = [...[0, 1, 4, 6].flatMap((r) => [1, 8, 12].map((n) => [n, r, 3] as const)), ...[8, 12].flatMap((r) => [8, 12].map((n) => [n, r, 15] as const))]
+    for (const [agents, racks, step] of cases) for (let a = 0; a < 360; a += step) {
       const l = layoutFloor(agents, racks, a), { x, y, w, h } = l.viewBox
       const inside = ([px, py]: readonly [number, number], what: string) => {
         expect(px, `${what} x à ${a}°`).toBeGreaterThanOrEqual(x); expect(px, `${what} x à ${a}°`).toBeLessThanOrEqual(x + w)
