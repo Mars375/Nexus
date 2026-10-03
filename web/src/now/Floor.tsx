@@ -3,17 +3,15 @@ import type { NodeState, NowSnapshot } from '@/api'
 import { age } from '@/format'
 import { isStale } from '@/freshness'
 import { useNow } from '@/useNow'
-import { DESK, RACK, box, layoutFloor, toPercent, type Box, type Layout } from './iso'
+import { DESK, LABEL_LIFT, RACK, box, layoutFloor, toPercent, type Box, type Layout } from './iso'
 import { AGE_TICK_MS, displayName, rackLabel, rackTone, seatModels, type RackTone, type SeatModel } from './model'
 import { useArrivals } from './useArrivals'
 import './floor.css'
 
 const MAX_TICKETS = 3
-// Décalage vertical (px de la scène) entre le poste et son étiquette ; au-dessus des postes du fond, il dégage l'écran du poste voisin.
-const LABEL_LIFT = 40
 
 function Faces({ b, topClass }: { b: Box; topClass?: string }) {
-  return (<><polygon className={clsx('f-top', topClass)} points={b.top} /><polygon className="f-left" points={b.left} /><polygon className="f-right" points={b.right} /></>)
+  return (<><polygon className={clsx('f-top', topClass)} points={b.top} />{b.sides.map((s) => <polygon key={s.dir} className={s.shade} points={s.points} />)}</>)
 }
 
 function routePath(l: Layout, s: { x: number; y: number; back: boolean }): string {
@@ -33,8 +31,8 @@ function Desk({ l, seat, m }: { l: Layout; seat: Layout['seats'][number]; m: Sea
     <g className="desk" data-agent={m.agent} data-run={String(m.run)} data-wait={String(m.wait)} data-block={String(m.block)}>
       <ellipse className="pool" cx={pool[0]} cy={pool[1]} rx={2.4 * 22.5} ry={2.4 * 13} />
       <ellipse className="pool-att" cx={pool[0]} cy={pool[1]} rx={1.9 * 22.5} ry={1.9 * 13} />
-      <Faces b={box(p, x, y, 0, DESK.w, DESK.d, DESK.h)} topClass="desk-top" />
-      <Faces b={box(p, x + 0.35, y + 0.15, DESK.h, 2.3, 0.12, 0.95)} />
+      <Faces b={box(l, x, y, 0, DESK.w, DESK.d, DESK.h)} topClass="desk-top" />
+      <Faces b={box(l, x + 0.35, y + 0.15, DESK.h, 2.3, 0.12, 0.95)} />
       <polygon className="screen" points={screenPts} />
       <g className="beacon"><line x1={bx} y1={by0} x2={bx} y2={by1} /><polygon points={`${bx},${by1 - 7} ${bx + 6},${by1} ${bx},${by1 + 7} ${bx - 6},${by1}`} /></g>
     </g>
@@ -55,7 +53,7 @@ export function Floor({ snapshot, nodes, nodesFailed = false }: { snapshot: NowS
   const freshAsks = useArrivals(snapshot.asks.map((q) => q.event))
   const freshRoutes = new Set(snapshot.asks.filter((q) => freshAsks.has(q.event)).map((q) => q.agent))
   const p = l.project
-  const floor = box(p, 0, 0, -0.35, l.width, l.depth, 0.35)
+  const floor = box(l, 0, 0, -0.35, l.width, l.depth, 0.35)
   let grid = ''
   for (let i = 1; i < l.width; i++) grid += `M${p(i, 0)} L${p(i, l.depth)} `
   for (let j = 1; j < l.depth; j++) grid += `M${p(0, j)} L${p(l.width, j)} `
@@ -73,7 +71,7 @@ export function Floor({ snapshot, nodes, nodesFailed = false }: { snapshot: NowS
           <radialGradient id="now-att"><stop offset="0" stopColor="#fb923c" stopOpacity=".26" /><stop offset="1" stopColor="#fb923c" stopOpacity="0" /></radialGradient>
           <pattern id="now-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="#f87171" strokeOpacity=".55" strokeWidth="1.4" /></pattern>
         </defs>
-        <polygon className="floor-top" points={floor.top} /><polygon className="floor-left" points={floor.left} /><polygon className="floor-right" points={floor.right} />
+        <polygon className="floor-top" points={floor.top} />{floor.sides.map((s) => <polygon key={s.dir} className={s.shade === 'f-left' ? 'floor-left' : 'floor-right'} points={s.points} />)}
         <path className="floor-grid" d={grid.trim()} />
         {seats.map((m, i) => m.wait && (
           <g key={m.agent} className={clsx('route', freshRoutes.has(m.agent) && 'is-fresh')} data-route={m.agent}>
@@ -82,8 +80,8 @@ export function Floor({ snapshot, nodes, nodesFailed = false }: { snapshot: NowS
           </g>
         ))}
         <g className="dais" data-on={String(snapshot.asks.length > 0)}>
-          <Faces b={box(p, l.table.x, l.table.y, 0, l.table.w, l.table.d, 0.18)} />
-          <Faces b={box(p, l.table.x + 0.9, l.table.y + 0.7, 0.18, l.table.w - 1.8, l.table.d - 1.4, 0.5)} topClass="table-top" />
+          <Faces b={box(l, l.table.x, l.table.y, 0, l.table.w, l.table.d, 0.18)} />
+          <Faces b={box(l, l.table.x + 0.9, l.table.y + 0.7, 0.18, l.table.w - 1.8, l.table.d - 1.4, 0.5)} topClass="table-top" />
           {tickets.map((q, i) => {
             const tx = l.table.x + 1.3 + i * 0.95
             const pts = [p(tx, l.table.y + 1.15, 0.69), p(tx + 0.7, l.table.y + 1.15, 0.69), p(tx + 0.7, l.table.y + 1.95, 0.69), p(tx, l.table.y + 1.95, 0.69)].map((q2) => q2.join(',')).join(' ')
@@ -94,7 +92,7 @@ export function Floor({ snapshot, nodes, nodesFailed = false }: { snapshot: NowS
           const r = l.racks[i]
           return (
             <g key={n.id} className="rack" data-node={n.id} data-tone={tone}>
-              <Faces b={box(p, r.x, r.y, 0, RACK.w, RACK.d, RACK.h)} />
+              <Faces b={box(l, r.x, r.y, 0, RACK.w, RACK.d, RACK.h)} />
               {[0, 1, 2, 3, 4].map((j) => {
                 const z = 2.1 - j * 0.38, xr = r.x + RACK.w
                 const pts = [p(xr, r.y + 0.25, z), p(xr, r.y + 1.15, z), p(xr, r.y + 1.15, z - 0.16), p(xr, r.y + 0.25, z - 0.16)].map((q) => q.join(',')).join(' ')
@@ -107,10 +105,6 @@ export function Floor({ snapshot, nodes, nodesFailed = false }: { snapshot: NowS
         {seats.map((m, i) => {
           const s = l.seats[i], from = s.back ? p(s.x + 1.5, s.y + 0.2, 1.8) : p(s.x + 1.5, s.y + DESK.d, 0)
           return <path key={m.agent} className="leader" d={`M${from} L${from[0]} ${from[1] + (s.back ? -LABEL_LIFT : 26)}`} />
-        })}
-        {racks.map(({ node: n }, i) => {
-          const r = l.racks[i], led = p(r.x + RACK.w, r.y + 0.7, 1.3), lx = l.legend.x, ly = l.legend.rows[i]
-          return <path key={n.id} className="leader" d={`M${led} L${lx - 14} ${ly} L${lx - 4} ${ly}`} />
         })}
       </svg>
 
@@ -138,15 +132,10 @@ export function Floor({ snapshot, nodes, nodesFailed = false }: { snapshot: NowS
         <span className="block font-data text-[11px] text-muted">{label(snapshot.asks.length)}{extra > 0 && ` · +${extra} sur la table`}</span>
       </div>
 
-      {nodes === undefined && (
-        <div className="absolute -translate-y-1/2 whitespace-nowrap font-data text-[11px] text-muted" style={{ left: `${toPercent(l, [l.legend.x, l.legend.rows[0]])[0]}%`, top: `${toPercent(l, [l.legend.x, l.legend.rows[0]])[1]}%` }}>{nodesFailed ? 'nœuds illisibles' : 'lecture des nœuds…'}</div>
-      )}
-      {racks.map(({ node: n, tone, text }, i) => {
-        const [left, top] = toPercent(l, [l.legend.x, l.legend.rows[i]])
-        return (
-          <div key={n.id} className={clsx('absolute -translate-y-1/2 whitespace-nowrap font-data text-[11px]', tone === 'ok' ? 'text-ink' : 'text-muted')} style={{ left: `${left}%`, top: `${top}%` }}>{text}</div>
-        )
-      })}
+      <div className="absolute bottom-0 right-0 flex flex-col gap-1 font-data text-[11px]">
+        {nodes === undefined && <div className="text-muted">{nodesFailed ? 'nœuds illisibles' : 'lecture des nœuds…'}</div>}
+        {racks.map(({ node: n, tone, text }) => <div key={n.id} className={tone === 'ok' ? 'text-ink' : 'text-muted'}>{text}</div>)}
+      </div>
     </div>
   )
 }
