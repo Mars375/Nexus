@@ -363,21 +363,13 @@ describe('salle des serveurs (#36)', () => {
   const inside = (h: ReturnType<typeof hull>, q: readonly [number, number]) => h.every((a, i) => { const b = h[(i + 1) % h.length]; return (b[0] - a[0]) * (q[1] - a[1]) - (b[1] - a[1]) * (q[0] - a[0]) > 0.05 })
   const corners = (x: number, y: number, w: number, d: number, z0: number, z1: number) => ([[x, y], [x + w, y], [x, y + d], [x + w, y + d]] as const).flatMap(([px, py]) => [[px, py, z0], [px, py, z1]] as const)
 
-  test('la salle est centrée sur le sol de l\'étage 1, de taille constante, et tient dans son emprise', () => {
-    for (const agents of [1, 8, 12]) {
+  test('la salle a l\'emprise exacte de l\'étage 1, quel que soit le nombre de baies et d\'agents', () => {
+    for (const agents of [1, 8, 12]) for (const k of [1, 2, 3, 4]) {
       const base = layoutFloor(agents, 4, 0, 2)
-      const sizes = new Set<string>()
-      for (const k of [1, 2, 3, 4]) {
-        const { room } = layoutServerFloor(base, k)
-        sizes.add(`${room.w}x${room.d}`)
-        expect(room.x + room.w / 2).toBeCloseTo(base.width / 2, 6); expect(room.y + room.d / 2).toBeCloseTo(base.depth / 2, 6)
-        expect(room.x).toBeGreaterThanOrEqual(0); expect(room.y).toBeGreaterThanOrEqual(0)
-        expect(room.x + room.w).toBeLessThanOrEqual(base.width); expect(room.y + room.d).toBeLessThanOrEqual(base.depth)
-      }
-      expect(sizes.size).toBe(1)
+      expect(layoutServerFloor(base, k).room).toEqual({ x: 0, y: 0, w: base.width, d: base.depth })
     }
   })
-  test('les baies sont en rangée, centrées, sans chevauchement, dans la salle', () => {
+  test('les baies sont en rangée, centrées (1 à 3 baies aussi), sans chevauchement, dans la salle', () => {
     const base = layoutFloor(8, 4, 0, 2)
     for (const k of [1, 2, 3, 4]) {
       const { room, racks } = layoutServerFloor(base, k)
@@ -391,17 +383,39 @@ describe('salle des serveurs (#36)', () => {
       for (let i = 1; i < racks.length; i++) expect(racks[i].x).toBeGreaterThanOrEqual(racks[i - 1].x + RACK.w)
     }
   })
-  test('les allées chaude et froide sont symétriques autour de la rangée', () => {
-    const { room, aisles } = layoutServerFloor(layoutFloor(8, 4, 0, 2), 4)
-    expect(aisles.cold.d).toBeCloseTo((room.d - RACK.d) / 2, 6); expect(aisles.hot.d).toBeCloseTo(aisles.cold.d, 6)
-    expect(aisles.hot.y + aisles.hot.d + RACK.d + aisles.cold.d).toBeCloseTo(room.y + room.d, 6)
-    expect(aisles.cold.y).toBeGreaterThan(aisles.hot.y)
+  test('les allées chaude et froide longent la rangée, de part et d\'autre, de même profondeur', () => {
+    const { aisles } = layoutServerFloor(layoutFloor(8, 4, 0, 2), 4)
+    expect(aisles.cold.y).toBeCloseTo(14 / 2 + RACK.d / 2, 6) // right in front of the +y side of the row
+    expect(aisles.hot.y + aisles.hot.d).toBeCloseTo(14 / 2 - RACK.d / 2, 6)
+    expect(aisles.hot.d).toBeCloseTo(aisles.cold.d, 6); expect(aisles.cold.d).toBeGreaterThan(1)
   })
-  test('le chemin de câbles a la même longueur à tous les étages et passe au-dessus des baies', () => {
-    const lengths = new Set([1, 2, 3, 4].map((k) => layoutServerFloor(layoutFloor(8, 4, 0, 2), k).tray.w))
-    expect(lengths.size).toBe(1)
-    const { tray } = layoutServerFloor(layoutFloor(8, 4, 0, 2), 4)
-    expect(tray.z).toBeGreaterThan(RACK.h); expect(tray.h).toBeCloseTo(0.12, 6)
+  test('un groupe de refroidissement à chaque bout de la rangée, toujours au même endroit, sans toucher les baies', () => {
+    const base = layoutFloor(8, 4, 0, 2)
+    const ref = layoutServerFloor(base, 4).units
+    expect(ref).toHaveLength(2)
+    for (const k of [1, 2, 3, 4]) {
+      const { units, racks, room } = layoutServerFloor(base, k)
+      expect(units).toEqual(ref)
+      const [a, b] = units
+      expect(a.x + a.w / 2 + b.x + b.w / 2).toBeCloseTo(base.width, 6) // symmetric about the centre
+      for (const u of units) {
+        expect(u.x).toBeGreaterThanOrEqual(room.x); expect(u.x + u.w).toBeLessThanOrEqual(room.x + room.w)
+        expect(u.y + u.d / 2).toBeCloseTo(base.depth / 2, 6)
+        for (const r of racks) expect(u.x + u.w <= r.x - 0.4 || r.x + RACK.w <= u.x - 0.4, `unité et baie à moins de 0,4`).toBe(true)
+      }
+    }
+  })
+  test('le chemin de câbles a la même longueur à tous les étages, d\'une unité à l\'autre et au-dessus de tout', () => {
+    const base = layoutFloor(8, 4, 0, 2)
+    expect(new Set([1, 2, 3, 4].map((k) => layoutServerFloor(base, k).tray.w)).size).toBe(1)
+    const { tray, units } = layoutServerFloor(base, 4)
+    expect(tray.z).toBeGreaterThan(Math.max(RACK.h, ...units.map((u) => u.h))); expect(tray.h).toBeCloseTo(0.12, 6)
+    expect(tray.x).toBeLessThanOrEqual(units[0].x + 1e-9); expect(tray.x + tray.w).toBeGreaterThanOrEqual(units[1].x + units[1].w - 1e-9)
+  })
+  test('les marques au sol sont de simples traits fixes, tous dans la salle', () => {
+    const base = layoutFloor(8, 4, 0, 2), { room, markings } = layoutServerFloor(base, 4)
+    expect(markings.length).toBeGreaterThan(0)
+    for (const [[x0, y0], [x1, y1]] of markings) for (const [px, py] of [[x0, y0], [x1, y1]]) { expect(px).toBeGreaterThanOrEqual(room.x); expect(px).toBeLessThanOrEqual(room.x + room.w); expect(py).toBeGreaterThanOrEqual(room.y); expect(py).toBeLessThanOrEqual(room.y + room.d) }
   })
   test('sol, sommets des baies, chemin de câbles et marquage tiennent dans le cadre fixe, tous les 5°', () => {
     for (const agents of [1, 8, 12]) for (const floors of FLOOR_COUNTS) for (let a = 0; a < 360; a += 5) {
@@ -413,6 +427,8 @@ describe('salle des serveurs (#36)', () => {
         for (const [px, py] of [[f.room.x, f.room.y], [f.room.x + f.room.w, f.room.y], [f.room.x, f.room.y + f.room.d], [f.room.x + f.room.w, f.room.y + f.room.d]]) pts.push(base.project(px, py, 0), base.project(px, py, -0.35))
         for (const r of f.racks) for (const [px, py, pz] of corners(r.x, r.y, RACK.w, RACK.d, 0, RACK.h)) pts.push(base.project(px, py, pz))
         for (const [px, py, pz] of corners(f.tray.x, f.tray.y, f.tray.w, f.tray.d, f.tray.z, f.tray.z + f.tray.h)) pts.push(base.project(px, py, pz))
+        for (const u of f.units) for (const [px, py, pz] of corners(u.x, u.y, u.w, u.d, 0, u.h)) pts.push(base.project(px, py, pz))
+        for (const [p0, p1] of f.markings) pts.push(base.project(p0[0], p0[1], 0), base.project(p1[0], p1[1], 0))
         pts.push(base.project(f.markerAt[0], f.markerAt[1], 0))
         for (const [px, py] of pts) {
           expect(px, `${agents} agents, ${k} baies à ${a}°`).toBeGreaterThanOrEqual(x); expect(px).toBeLessThanOrEqual(x + w)
@@ -438,12 +454,14 @@ describe('salle des serveurs (#36)', () => {
       expect(base.sees(0, f.ledFace === '+y' ? 1 : -1)).toBe(true)
       const hulls = f.racks.map((r) => hull(corners(r.x, r.y, RACK.w, RACK.d, 0, RACK.h).map(([px, py, pz]) => base.project(px, py, pz))))
       const trayHull = hull(corners(f.tray.x, f.tray.y, f.tray.w, f.tray.d, f.tray.z, f.tray.z + f.tray.h).map(([px, py, pz]) => base.project(px, py, pz)))
+      const unitHulls = f.units.map((u) => ({ at: [u.x + u.w / 2, u.y + u.d / 2] as const, hull: hull(corners(u.x, u.y, u.w, u.d, 0, u.h).map(([px, py, pz]) => base.project(px, py, pz))) }))
       f.racks.forEach((r, i) => {
         for (let j = 0; j < 5; j++) {
           const quad = ledQuad(base, r, f.ledFace, LED_TOP - j * LED_STEP)
           const probes = [...quad, [quad.reduce((s, q) => s + q[0], 0) / 4, quad.reduce((s, q) => s + q[1], 0) / 4] as const]
           for (const q of probes) {
             expect(inside(trayHull, q), `LED ${j} de la baie ${i} sous le chemin de câbles, ${k} baies à ${a}°`).toBe(false)
+            for (const u of unitHulls) if (base.depthOf(...u.at) > base.depthOf(r.x + RACK.w / 2, r.y + RACK.d / 2)) expect(inside(u.hull, q), `LED ${j} de la baie ${i} cachée par une unité de refroidissement, ${k} baies à ${a}°`).toBe(false)
             f.racks.forEach((o, m) => { if (m !== i && base.depthOf(o.x + RACK.w / 2, o.y + RACK.d / 2) > base.depthOf(r.x + RACK.w / 2, r.y + RACK.d / 2)) expect(inside(hulls[m], q), `LED ${j} de la baie ${i} cachée par la baie ${m}, ${k} baies à ${a}°`).toBe(false) })
           }
         }
@@ -468,10 +486,10 @@ describe('salle des serveurs (#36)', () => {
       // reading direction on screen: the plan x axis, turned half a turn when the mark is flipped
       const dir = f.markerFlip ? -1 : 1
       expect(dir * ma, `à l'envers, ${k} baies à ${a}°`).toBeGreaterThanOrEqual(-1e-6)
-      const hulls = [...f.racks.map((r) => corners(r.x, r.y, RACK.w, RACK.d, 0, RACK.h)), corners(f.tray.x, f.tray.y, f.tray.w, f.tray.d, f.tray.z, f.tray.z + f.tray.h)].map((c) => hull(c.map(([px, py, pz]) => base.project(px, py, pz))))
+      const hulls = [...f.racks.map((r) => corners(r.x, r.y, RACK.w, RACK.d, 0, RACK.h)), ...f.units.map((u) => corners(u.x, u.y, u.w, u.d, 0, u.h)), corners(f.tray.x, f.tray.y, f.tray.w, f.tray.d, f.tray.z, f.tray.z + f.tray.h)].map((c) => hull(c.map(([px, py, pz]) => base.project(px, py, pz))))
       for (let t = -2.4; t <= 2.4 + 1e-9; t += 0.4) {
         const q = base.project(f.markerAt[0] + dir * t, f.markerAt[1], 0)
-        hulls.forEach((h, i) => expect(inside(h, q), `le marquage touche ${i < f.racks.length ? 'la baie ' + i : 'le chemin de câbles'}, ${k} baies à ${a}° (t = ${t.toFixed(1)})`).toBe(false))
+        hulls.forEach((h, i) => expect(inside(h, q), `le marquage touche l'obstacle ${i}, ${k} baies à ${a}° (t = ${t.toFixed(1)})`).toBe(false))
       }
     }
   })

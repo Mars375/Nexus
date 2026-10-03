@@ -47,6 +47,8 @@
 .aisle-cold { fill: rgba(125, 211, 252, 0.08); stroke: rgba(125, 211, 252, 0.18); stroke-width: 0.8 }
 .floor-marker { fill: rgba(244, 244, 245, 0.5); font-family: var(--font-orbital-display, inherit); font-weight: 600; letter-spacing: 0.14em }
 .cable-tray .f-top { fill: #262a31 }
+.floor-marking { fill: none; stroke: rgba(250, 204, 21, 0.35); stroke-width: 1.2; stroke-dasharray: 8 6 }
+.cooling-grille { fill: #0c0e11; stroke: rgba(244, 244, 245, 0.12); stroke-width: 0.6 }
 .floor-pip { position: absolute; top: 3px; right: 3px; width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 0 1.5px var(--surface, #0b0c0e) }
 .floor-pip[data-alert='off'] { background: var(--danger) }
 .floor-pip[data-alert='unknown'] { background: var(--attention) }

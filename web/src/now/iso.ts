@@ -77,8 +77,11 @@ const SELECTOR = { w: 210, h: 40 }
 // The legend lists the racks of the floor shown: four at most, however many nodes there are.
 const LEGEND_MAX_ROWS = 4
 
-// Server room (floors above the office): a smaller, centred floor drawn inside floor 1's frame (#36).
-export const SERVER_ROOM = { w: 11, d: 7 }
+// Server room (floors above the office): same footprint as floor 1, so the frame and the building stay put (#36).
+// Static dressing only (cooling units, cable tray, floor markings): never anything that looks like a measurement.
+const COOLING = { w: 1.8, h: RACK.h }
+const END_GAP = 0.45 // between the row of racks and a cooling unit, as between two racks
+const AISLE_DEPTH = 2.8
 const TRAY = { d: 0.6, h: 0.12, lift: 0.35 }
 const ROOM_MAX_RACKS = 4
 // Rack LEDs: five lights per face, the first with its top edge at LED_TOP, one every LED_STEP.
@@ -234,6 +237,7 @@ function fixedFrame(width: number, depth: number, seats: Seat[], racks: { x: num
       const g = serverRoom(width, depth, n)
       for (const [cx, cy] of [[g.room.x, g.room.y], [g.room.x + g.room.w, g.room.y], [g.room.x, g.room.y + g.room.d], [g.room.x + g.room.w, g.room.y + g.room.d]]) { grow(p(cx, cy, -0.35)); grow(p(cx, cy, 0)) }
       for (const r of g.racks) for (const [dx, dy] of [[0, 0], [RACK.w, 0], [0, RACK.d], [RACK.w, RACK.d]]) grow(p(r.x + dx, r.y + dy, RACK.h))
+      for (const u of g.units) for (const [dx, dy] of [[0, 0], [u.w, 0], [0, u.d], [u.w, u.d]]) grow(p(u.x + dx, u.y + dy, u.h))
       for (const [dx, dy] of [[0, 0], [g.tray.w, 0], [0, g.tray.d], [g.tray.w, g.tray.d]]) { grow(p(g.tray.x + dx, g.tray.y + dy, g.tray.z)); grow(p(g.tray.x + dx, g.tray.y + dy, g.tray.z + g.tray.h)) }
     }
   }
@@ -257,12 +261,17 @@ function fixedFrame(width: number, depth: number, seats: Seat[], racks: { x: num
 
 export type PlanRect = { x: number; y: number; w: number; d: number }
 export type ServerFloor = {
+  /** The whole floor: exactly floor 1's footprint. */
   room: PlanRect
   racks: { x: number; y: number }[]
-  /** Cold aisle in front of the LED side (+y, perforated tiles), hot aisle behind: same size. */
+  /** Cold aisle in front of the LED side (+y, perforated tiles), hot aisle behind: same size, along the row. */
   aisles: { cold: PlanRect; hot: PlanRect }
-  /** Cable tray above the racks: a thin box, as long as a row of four whatever the rack count. */
+  /** Cooling units at each end of a row of four: fixed, whatever the rack count. */
+  units: (PlanRect & { h: number })[]
+  /** Cable tray above the racks and units: a thin box, as long as the row of four plus both units. */
   tray: PlanRect & { z: number; h: number }
+  /** Floor markings (the working zone around the row), as plan segments. */
+  markings: [Pt, Pt][]
   /** Floor point where the « ÉTAGE n » mark is laid, in the aisle nearer to the viewer. */
   markerAt: Pt
   /** matrix(a b c d e f) taking plan units to the screen on the ground (z = 0): the mark turns with the floor. */
@@ -273,17 +282,20 @@ export type ServerFloor = {
   ledFace: Dir
 }
 
-/** Fixed geometry of a server room on the floor of `width` × `depth`: centred on its centre, the rotation centre. */
+/** Fixed geometry of a server room on the floor of `width` × `depth`: the whole floor, the row centred on its centre (the rotation centre). */
 function serverRoom(width: number, depth: number, rackCount: number) {
   const cx = width / 2, cy = depth / 2, pitch = RACK_PITCH
   const row = (n: number) => (n - 1) * pitch + RACK.w
-  const room: PlanRect = { x: cx - SERVER_ROOM.w / 2, y: cy - SERVER_ROOM.d / 2, w: SERVER_ROOM.w, d: SERVER_ROOM.d }
+  const room: PlanRect = { x: 0, y: 0, w: width, d: depth }
   const racks = Array.from({ length: rackCount }, (_, i) => ({ x: cx - row(rackCount) / 2 + i * pitch, y: cy - RACK.d / 2 }))
-  const aisle = (room.d - RACK.d) / 2
-  const aisles = { hot: { x: room.x, y: room.y, w: room.w, d: aisle }, cold: { x: room.x, y: cy + RACK.d / 2, w: room.w, d: aisle } }
-  const trayW = row(ROOM_MAX_RACKS)
-  const tray = { x: cx - trayW / 2, y: cy - TRAY.d / 2, w: trayW, d: TRAY.d, z: RACK.h + TRAY.lift, h: TRAY.h }
-  return { room, racks, aisles, tray }
+  const half = row(ROOM_MAX_RACKS) / 2 + END_GAP
+  const units = [cx - half - COOLING.w, cx + half].map((x) => ({ x, y: cy - RACK.d / 2, w: COOLING.w, d: RACK.d, h: COOLING.h }))
+  const zone = { x: units[0].x, w: units[1].x + COOLING.w - units[0].x }
+  const aisles = { hot: { x: zone.x, y: cy - RACK.d / 2 - AISLE_DEPTH, w: zone.w, d: AISLE_DEPTH }, cold: { x: zone.x, y: cy + RACK.d / 2, w: zone.w, d: AISLE_DEPTH } }
+  const tray = { x: zone.x, y: cy - TRAY.d / 2, w: zone.w, d: TRAY.d, z: RACK.h + TRAY.lift, h: TRAY.h }
+  const [y0, y1] = [aisles.hot.y - 0.5, aisles.cold.y + aisles.cold.d + 0.5]
+  const markings: [Pt, Pt][] = [[[zone.x, y0], [zone.x + zone.w, y0]], [[zone.x, y1], [zone.x + zone.w, y1]], [[zone.x, y0], [zone.x, y1]], [[zone.x + zone.w, y0], [zone.x + zone.w, y1]]]
+  return { room, racks, aisles, units, tray, markings }
 }
 
 /** Server room for `rackCount` racks (1 to 4), reusing the projection, angle and frame of the floor-1 layout. */

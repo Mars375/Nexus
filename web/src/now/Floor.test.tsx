@@ -645,3 +645,15 @@ test('aller-retour rapide 1 → 2 → 1 : les couches gardent leur ordre dans le
   watch.disconnect()
   vi.useRealTimers()
 })
+
+test('salle des serveurs : un décor statique et sobre, quelques éléments SVG, rien d\'animé ni qui ressemble à une mesure', () => {
+  const { container } = render(<Floor snapshot={snap()} nodes={twelve()} />)
+  fireEvent.click(up())
+  const room = container.querySelector('svg[aria-label^="Étage 2"]')!
+  const decor = [...room.querySelectorAll('*')].filter((e) => !e.closest('.rack'))
+  expect(decor.length).toBeLessThanOrEqual(40)
+  expect(room.querySelectorAll('.cooling')).toHaveLength(2) // one cooling unit at each end of the row
+  expect(room.querySelector('.floor-marking')).not.toBeNull()
+  expect(room.querySelectorAll('animate, animateTransform, circle, ellipse, [class*="led"]:not(.rack *)')).toHaveLength(0)
+  expect(room.querySelectorAll('.cooling .led, .cooling .led-on, .cooling .led-ring')).toHaveLength(0)
+})
