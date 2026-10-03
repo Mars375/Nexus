@@ -71,3 +71,16 @@ test('une arrivée n\'est jamais peinte une image sans son état « nouveau »',
   host.remove()
   g.IS_REACT_ACT_ENVIRONMENT = prev
 })
+
+test('un délai écoulé est oublié : la liste des minuteurs ne grandit pas avec les arrivées', () => {
+  const { rerender, unmount } = render(<Probe keys={[]} />)
+  const keys: string[] = []
+  for (let i = 0; i < 5; i++) {
+    keys.push(`k${i}`)
+    rerender(<Probe keys={[...keys]} />)
+    act(() => vi.advanceTimersByTime(1000))
+  }
+  const clear = vi.spyOn(window, 'clearTimeout')
+  unmount()
+  expect(clear).not.toHaveBeenCalled() // plus aucun minuteur en attente à nettoyer
+})

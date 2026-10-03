@@ -24,9 +24,12 @@ export function useArrivals(keys: readonly string[] | null, holdMs = ARRIVAL_HOL
     const added = [...current].filter((k) => !before.has(k))
     if (added.length === 0) return
     setFresh((f) => new Set([...f, ...added]))
-    timers.current.push(window.setTimeout(() => {
+    // Un minuteur écoulé quitte la liste : elle ne grandit pas sur un onglet ouvert des jours.
+    const id = window.setTimeout(() => {
+      timers.current = timers.current.filter((t) => t !== id)
       setFresh((f) => { const next = new Set(f); for (const k of added) next.delete(k); return next })
-    }, holdMs))
+    }, holdMs)
+    timers.current.push(id)
   }, [signature, holdMs])
 
   useEffect(() => () => { for (const t of timers.current) window.clearTimeout(t) }, [])
