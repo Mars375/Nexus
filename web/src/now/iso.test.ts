@@ -39,18 +39,25 @@ describe('layoutFloor', () => {
 })
 
 describe('baies dans la profondeur', () => {
-  test('de 1 à 12 baies, toutes tiennent dans la profondeur du sol', () => {
+  test('de 1 à 12 baies, toutes tiennent dans la profondeur du sol (deux colonnes au-delà de 7)', () => {
     for (let n = 1; n <= 12; n++) {
       const l = layoutFloor(8, n)
       expect(l.racks).toHaveLength(n)
       for (const r of l.racks) { expect(r.y, `${n} baies`).toBeGreaterThanOrEqual(0); expect(r.y + RACK.d, `${n} baies`).toBeLessThanOrEqual(l.depth) }
     }
   })
-  test('jusqu\'à 9 baies, aucune ne chevauche sa voisine (au-delà, la salle est pleine)', () => {
-    for (let n = 2; n <= 9; n++) {
+  test('de 1 à 12 baies, aucune ne chevauche une autre (en x comme en y)', () => {
+    for (let n = 1; n <= 12; n++) {
       const { racks } = layoutFloor(8, n)
-      for (let i = 1; i < racks.length; i++) expect(racks[i].y - racks[i - 1].y, `${n} baies`).toBeGreaterThanOrEqual(RACK.d - 1e-9)
+      for (let i = 0; i < racks.length; i++) for (let j = i + 1; j < racks.length; j++) {
+        const a = racks[i], b = racks[j]
+        const overlap = a.x < b.x + RACK.w && b.x < a.x + RACK.w && a.y < b.y + RACK.d && b.y < a.y + RACK.d
+        expect(overlap, `${n} baies : ${i} et ${j}`).toBe(false)
+      }
     }
+  })
+  test('toutes les baies restent dans la largeur du sol', () => {
+    for (let n = 1; n <= 12; n++) { const l = layoutFloor(8, n); for (const r of l.racks) { expect(r.x).toBeGreaterThanOrEqual(0); expect(r.x + RACK.w).toBeLessThanOrEqual(l.width) } }
   })
   test('à 7 baies ou moins, les positions sont celles d\'avant', () => {
     for (let n = 1; n <= 7; n++) expect(layoutFloor(8, n).racks.map((r) => r.y)).toEqual(Array.from({ length: n }, (_, i) => 0.8 + i * 1.85))
@@ -93,7 +100,7 @@ describe('viewBox fixe', () => {
     for (const a of [...ANGLES, 33, -47, 400]) expect(layoutFloor(8, 4, a).viewBox).toEqual(ref)
   })
   test('tout le sol, toutes les baies et toutes les étiquettes tiennent dans le cadre, à chaque angle', () => {
-    for (const racks of [0, 1, 4, 6]) for (const agents of [1, 8, 12]) for (let a = 0; a < 360; a += 3) {
+    for (const racks of [0, 1, 4, 6, 8, 12]) for (const agents of [1, 8, 12]) for (let a = 0; a < 360; a += 3) {
       const l = layoutFloor(agents, racks, a), { x, y, w, h } = l.viewBox
       const inside = ([px, py]: readonly [number, number], what: string) => {
         expect(px, `${what} x à ${a}°`).toBeGreaterThanOrEqual(x); expect(px, `${what} x à ${a}°`).toBeLessThanOrEqual(x + w)
