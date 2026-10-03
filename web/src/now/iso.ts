@@ -263,10 +263,12 @@ export type ServerFloor = {
   aisles: { cold: PlanRect; hot: PlanRect }
   /** Cable tray above the racks: a thin box, as long as a row of four whatever the rack count. */
   tray: PlanRect & { z: number; h: number }
-  /** Floor point where the « ÉTAGE n » mark is laid, in the cold aisle. */
+  /** Floor point where the « ÉTAGE n » mark is laid, in the aisle nearer to the viewer. */
   markerAt: Pt
   /** matrix(a b c d e f) taking plan units to the screen on the ground (z = 0): the mark turns with the floor. */
   marker: readonly [number, number, number, number, number, number]
+  /** True when the mark must be turned 180° about `markerAt` to read left to right. */
+  markerFlip: boolean
   /** Side of the racks carrying the LEDs: +y when it faces the viewer, else -y; never ±x, which a neighbour can hide. */
   ledFace: Dir
 }
@@ -287,11 +289,15 @@ function serverRoom(width: number, depth: number, rackCount: number) {
 /** Server room for `rackCount` racks (1 to 4), reusing the projection, angle and frame of the floor-1 layout. */
 export function layoutServerFloor(base: Layout, rackCount: number): ServerFloor {
   const g = serverRoom(base.width, base.depth, rackCount)
-  const markerAt: Pt = [base.width / 2, g.aisles.cold.y + g.aisles.cold.d / 2]
+  // Laid on the aisle nearer to the viewer, so the racks (behind it) never hide the mark.
+  const centre = (r: PlanRect): Pt => [r.x + r.w / 2, r.y + r.d / 2]
+  const cold = centre(g.aisles.cold), hot = centre(g.aisles.hot)
+  const markerAt = base.depthOf(...cold) >= base.depthOf(...hot) ? cold : hot
   const o = base.project(0, 0), px = base.project(10, 0), py = base.project(0, 10)
   const marker = [(px[0] - o[0]) / 10, (px[1] - o[1]) / 10, (py[0] - o[0]) / 10, (py[1] - o[1]) / 10, o[0], o[1]] as const
   const ledFace: Dir = base.sees(0, 1) ? '+y' : base.sees(0, -1) ? '-y' : (['+x', '-x', '+y', '-y'] as const).find((d) => base.sees(...NORMALS[d])) ?? '+x'
-  return { ...g, markerAt, marker, ledFace }
+  // The plan x axis is the reading direction: when it runs leftwards on screen the mark is turned half a turn.
+  return { ...g, markerAt, marker, markerFlip: marker[0] < 0, ledFace }
 }
 
 /** One indicator light on a rack side face, `z` being its top edge. */

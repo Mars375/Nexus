@@ -34,7 +34,7 @@ export function ServerRoom({ l, floor, racks }: { l: Layout; floor: number; rack
       <polygon className="aisle-hot" points={flat(l, g.aisles.hot)} />
       <polygon className="aisle-cold" points={flat(l, g.aisles.cold)} />
       <path className="floor-grid" d={joints(l, g.aisles.cold)} />
-      <text className="floor-marker" data-floor-mark={floor} transform={`matrix(${g.marker.join(' ')})`} x={g.markerAt[0]} y={g.markerAt[1]} fontSize="1.1" textAnchor="middle" dominantBaseline="central">{`ÉTAGE ${floor}`}</text>
+      <text className="floor-marker" data-floor-mark={floor} transform={`matrix(${g.marker.join(' ')})${g.markerFlip ? ` rotate(180 ${g.markerAt[0]} ${g.markerAt[1]})` : ''}`} x={g.markerAt[0]} y={g.markerAt[1]} fontSize="1.1" textAnchor="middle" dominantBaseline="central">{`ÉTAGE ${floor}`}</text>
       {order.map((i) => <Rack key={racks[i].node.id} l={l} at={g.racks[i]} node={racks[i].node} tone={racks[i].tone} face={g.ledFace} index={i} />)}
       <g className="cable-tray"><Faces b={tray} /></g>
     </>

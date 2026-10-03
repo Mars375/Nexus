@@ -460,6 +460,21 @@ describe('salle des serveurs (#36)', () => {
       }
     }
   })
+  test('« ÉTAGE n » se lit toujours à l\'endroit (jamais à l\'envers ni en miroir) et n\'est jamais caché par une baie ni par le chemin de câbles, à tous les angles', () => {
+    for (const k of [1, 2, 3, 4]) for (let a = 0; a < 360; a += 5) {
+      const base = layoutFloor(8, 4, a, 2), f = layoutServerFloor(base, k)
+      const [ma, mb, mc, md] = f.marker
+      expect(ma * md - mb * mc, `miroir, ${k} baies à ${a}°`).toBeGreaterThan(0)
+      // reading direction on screen: the plan x axis, turned half a turn when the mark is flipped
+      const dir = f.markerFlip ? -1 : 1
+      expect(dir * ma, `à l'envers, ${k} baies à ${a}°`).toBeGreaterThanOrEqual(-1e-6)
+      const hulls = [...f.racks.map((r) => corners(r.x, r.y, RACK.w, RACK.d, 0, RACK.h)), corners(f.tray.x, f.tray.y, f.tray.w, f.tray.d, f.tray.z, f.tray.z + f.tray.h)].map((c) => hull(c.map(([px, py, pz]) => base.project(px, py, pz))))
+      for (let t = -2.4; t <= 2.4 + 1e-9; t += 0.4) {
+        const q = base.project(f.markerAt[0] + dir * t, f.markerAt[1], 0)
+        hulls.forEach((h, i) => expect(inside(h, q), `le marquage touche ${i < f.racks.length ? 'la baie ' + i : 'le chemin de câbles'}, ${k} baies à ${a}° (t = ${t.toFixed(1)})`).toBe(false))
+      }
+    }
+  })
   test('à 45° pile, une face LED visible existe quand même', () => {
     const f = layoutServerFloor(layoutFloor(8, 4, 45, 2), 4)
     expect(['+y', '-y', '+x', '-x']).toContain(f.ledFace)
