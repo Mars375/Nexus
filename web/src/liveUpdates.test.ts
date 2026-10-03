@@ -25,11 +25,12 @@ describe('applyLiveMessage', () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['tasks', 'nx-task-3'] })
   })
 
-  test('un événement sans tâche ne relit que les événements', () => {
+  test('un événement sans tâche relit les événements et Maintenant', () => {
     const { client, invalidate } = spyClient()
     applyLiveMessage(client, { type: 'event', event: 'nx-evt-9', task: null, kind: 'unknown', cursor: CURSOR })
-    expect(invalidate).toHaveBeenCalledTimes(1)
+    expect(invalidate).toHaveBeenCalledTimes(2)
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['events'] })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['now'] })
   })
 
   test('resync ou reset relisent tout', () => {
@@ -46,5 +47,13 @@ describe('applyLiveMessage', () => {
     applyLiveMessage(client, { type: 'hello', cursor: CURSOR, reset: false })
     applyLiveMessage(client, { type: 'ping', cursor: CURSOR })
     expect(invalidate).not.toHaveBeenCalled()
+  })
+
+  test('un changement de tâche ou un événement relit aussi Maintenant', () => {
+    const { client, invalidate } = spyClient()
+    applyLiveMessage(client, { type: 'task_changed', task: 'nx-task-3', cursor: CURSOR })
+    applyLiveMessage(client, { type: 'event', event: 'nx-evt-9', task: null, kind: 'question', cursor: CURSOR })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['now'] })
+    expect(invalidate.mock.calls.filter(([f]) => JSON.stringify(f) === JSON.stringify({ queryKey: ['now'] }))).toHaveLength(2)
   })
 })

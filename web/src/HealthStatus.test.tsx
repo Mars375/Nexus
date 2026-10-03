@@ -83,3 +83,10 @@ test('une santé trop ancienne est dite périmée', async () => {
   renderApp()
   expect(await screen.findByText('périmée')).toBeInTheDocument()
 })
+
+test('la barre d\'état porte le thème orbital', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => healthy()))
+  renderApp()
+  expect(await screen.findByText('Base OK')).toBeInTheDocument()
+  expect(screen.getByRole('contentinfo')).toHaveClass('orbital')
+})

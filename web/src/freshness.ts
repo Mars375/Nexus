@@ -2,12 +2,13 @@
  * Fraîcheur des données (ADR-005) : cadence de relecture par type, et règle de péremption.
  * Une donnée est périmée quand elle a plus de STALE_FACTOR relectures de retard.
  */
-export type FreshnessKind = 'tasks' | 'health' | 'nodes'
+export type FreshnessKind = 'tasks' | 'health' | 'nodes' | 'now'
 
 export const REFRESH_MS: Record<FreshnessKind, number> = {
   tasks: 10_000,
   health: 10_000,
   nodes: 60_000,
+  now: 10_000,
 }
 
 export const STALE_FACTOR = 3
@@ -17,6 +18,7 @@ export const SOURCE_OF: Record<FreshnessKind, string> = {
   tasks: 'nexus.db',
   health: 'nexus.db',
   nodes: 'tailscale',
+  now: 'nexus.db',
 }
 
 export type Provenanced = { source: string; measured_at: string; source_url?: string | null }

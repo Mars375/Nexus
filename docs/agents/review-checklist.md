@@ -76,6 +76,7 @@ How to use it:
 - [ ] Keyboard: every action reachable without a mouse (Enter opens, Space drags); inputs mirror server limits (`maxLength`).
 - [ ] End-to-end tests cover the scenario where an agent changes the data while the user is looking at it.
 - [ ] A connection indicator only says « connecté » once the server has actually spoken (first valid message), not on socket open; opening a connection has a timeout too (#5).
+- [ ] An animated scene only animates on a real state change (never on first render, never in a loop), keeps working in a background tab, and honours `prefers-reduced-motion`; its labels were checked by eye at wide, medium and narrow widths (#6).
 
 ## 7. Dates and times
 

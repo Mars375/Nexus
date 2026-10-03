@@ -28,7 +28,7 @@ async function drag(page: Page, title: string, to: string) {
 }
 
 test('créer, déplacer, commenter et filtrer une tâche', async ({ page }) => {
-  await page.goto('/')
+  await page.goto('/#/travail')
   await expect(page.getByText('Aucune tâche pour l’instant.').or(page.getByText("Aucune tâche pour l'instant."))).toBeVisible()
   await expect(page.getByRole('main').getByText(/^source : nexus\.db · mesuré il y a/)).toBeVisible()
 
@@ -69,7 +69,7 @@ test('créer, déplacer, commenter et filtrer une tâche', async ({ page }) => {
 })
 
 test('au clavier, Entrée ouvre une carte', async ({ page }) => {
-  await page.goto('/')
+  await page.goto('/#/travail')
   await createTask(page, 'Carte au clavier')
   await card(page, 'Carte au clavier').focus()
   await page.keyboard.press('Enter')
@@ -78,7 +78,7 @@ test('au clavier, Entrée ouvre une carte', async ({ page }) => {
 
 test('un rafraîchissement raté garde le tableau affiché', async ({ page }) => {
   test.setTimeout(60_000)
-  await page.goto('/')
+  await page.goto('/#/travail')
   await createTask(page, 'Toujours visible')
   await page.route('**/api/tasks', (route) => route.fulfill({ status: 503, body: '' }))
 
@@ -87,7 +87,7 @@ test('un rafraîchissement raté garde le tableau affiché', async ({ page }) =>
 })
 
 test('un déplacement refusé revient en place avec la raison', async ({ page }) => {
-  await page.goto('/')
+  await page.goto('/#/travail')
   await createTask(page, 'Idée lointaine')
   await expect(column(page, 'Plus tard').getByText('Idée lointaine', { exact: true })).toBeVisible()
 
@@ -99,7 +99,7 @@ test('un déplacement refusé revient en place avec la raison', async ({ page })
 })
 
 test('bloquer demande la cause et ce qui débloquerait', async ({ page }) => {
-  await page.goto('/')
+  await page.goto('/#/travail')
   await createTask(page, 'Lire Artémis', { todo: 'SSH vers artemis' })
   await drag(page, 'Lire Artémis', 'En cours')
   await expect(column(page, 'En cours').getByText('Lire Artémis', { exact: true })).toBeVisible()
@@ -122,7 +122,7 @@ test('bloquer demande la cause et ce qui débloquerait', async ({ page }) => {
 
 test("une modification d'un agent pendant la saisie n'efface pas le brouillon", async ({ page }) => {
   test.setTimeout(60_000)
-  await page.goto('/')
+  await page.goto('/#/travail')
   await createTask(page, 'Tâche partagée', { todo: 'Étape initiale' })
   await card(page, 'Tâche partagée').click()
   const pane = page.getByRole('complementary', { name: /Détail de Tâche partagée/ })
@@ -150,7 +150,7 @@ test("une modification d'un agent pendant la saisie n'efface pas le brouillon", 
 
 test("un champ rempli par un agent pendant la saisie ne bloque pas l'enregistrement", async ({ page }) => {
   test.setTimeout(60_000)
-  await page.goto('/')
+  await page.goto('/#/travail')
   await createTask(page, 'Idée à mûrir')
   await card(page, 'Idée à mûrir').click()
   const pane = page.getByRole('complementary', { name: /Détail de Idée à mûrir/ })
@@ -172,7 +172,7 @@ test("un champ rempli par un agent pendant la saisie ne bloque pas l'enregistrem
 })
 
 test("un commentaire commencé sur une tâche ne suit pas vers une autre", async ({ page }) => {
-  await page.goto('/')
+  await page.goto('/#/travail')
   await createTask(page, 'Tâche A')
   await createTask(page, 'Tâche B')
 
@@ -186,7 +186,7 @@ test("un commentaire commencé sur une tâche ne suit pas vers une autre", async
 })
 
 test("une tâche préparée « principale » démarre en auxiliaire si une autre est en cours", async ({ page }) => {
-  await page.goto('/')
+  await page.goto('/#/travail')
   await createTask(page, 'Principale actuelle', { todo: 'Continuer' })
   await drag(page, 'Principale actuelle', 'En cours')
   await expect(column(page, 'En cours').getByText('Opération principale', { exact: true })).toBeVisible()
@@ -208,7 +208,7 @@ test("une tâche préparée « principale » démarre en auxiliaire si une autre
 })
 
 test('le tableau et le détail disent d\'où viennent les données', async ({ page }) => {
-  await page.goto('/')
+  await page.goto('/#/travail')
   await expect(page.getByRole('main').getByText(/^source : nexus\.db · mesuré il y a/).first()).toBeVisible()
   await createTask(page, 'Tracer la provenance')
   await card(page, 'Tracer la provenance').click()
@@ -219,7 +219,7 @@ test('le tableau et le détail disent d\'où viennent les données', async ({ pa
 const API = 'http://127.0.0.1:8799'
 
 test('une tâche créée par l’API apparaît en moins d’une seconde', async ({ page, request }) => {
-  await page.goto('/')
+  await page.goto('/#/travail')
   await expect(page.getByText('Temps réel : connecté')).toBeVisible()
   const res = await request.post(`${API}/api/tasks`, {
     data: { title: 'Arrivée en direct', objective: 'Prouver le temps réel' },
@@ -249,7 +249,7 @@ test('après une coupure, la reconnexion rattrape ce qui a changé', async ({ pa
     })
     live.current = { page: ws, server }
   })
-  await page.goto('/')
+  await page.goto('/#/travail')
   await expect(page.getByText('Temps réel : connecté')).toBeVisible()
 
   blocked = true

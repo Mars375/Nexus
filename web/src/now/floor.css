@@ -1,0 +1,40 @@
+/* L'étage (#6). Seuls les vrais changements d'état bougent ; rien en boucle. */
+.floor-top { fill: #0f1114; stroke: rgba(244, 244, 245, 0.28); stroke-width: 1 }
+.floor-left { fill: #0b0c0e; stroke: rgba(244, 244, 245, 0.18) }
+.floor-right { fill: #08090a; stroke: rgba(244, 244, 245, 0.14) }
+.floor-grid { fill: none; stroke: rgba(244, 244, 245, 0.045) }
+.f-top { fill: #1b1e24; stroke: rgba(244, 244, 245, 0.22); stroke-width: 0.8 }
+.f-left { fill: #121419; stroke: rgba(244, 244, 245, 0.12); stroke-width: 0.8 }
+.f-right { fill: #0d0f12; stroke: rgba(244, 244, 245, 0.1); stroke-width: 0.8 }
+.desk .screen { fill: #15181d; stroke: rgba(244, 244, 245, 0.2); stroke-width: 0.6; transition: fill 450ms ease }
+.desk .pool { fill: url(#now-run); opacity: 0; transition: opacity 700ms ease }
+.desk .pool-att { fill: url(#now-att); opacity: 0; transition: opacity 700ms ease }
+.desk[data-run='true'] .screen { fill: var(--run) }
+.desk[data-run='true'] .pool { opacity: 1 }
+.desk[data-wait='true'] .pool-att { opacity: 1 }
+.desk .beacon { opacity: 0; transform-box: fill-box; transform-origin: 50% 100%; transform: scaleY(0); transition: transform 500ms cubic-bezier(0.2, 0.7, 0.2, 1), opacity 200ms }
+.desk .beacon line { stroke: var(--attention); stroke-width: 1.4 }
+.desk .beacon polygon { fill: var(--attention) }
+.desk[data-wait='true'] .beacon { opacity: 1; transform: scaleY(1) }
+.desk .desk-top { transition: fill 300ms }
+.desk[data-block='true'] .desk-top { fill: url(#now-hatch); stroke: var(--danger); stroke-width: 1.2 }
+.route .r-base { fill: none; stroke: var(--attention); stroke-width: 1.2; stroke-dasharray: 3 5; opacity: 0.85 }
+.route .r-spark { fill: none; stroke: #ffd9b8; stroke-width: 2.4; stroke-linecap: round; stroke-dasharray: 0 100; opacity: 0 }
+.route.is-fresh .r-spark { animation: now-travel 1100ms cubic-bezier(0.3, 0.6, 0.3, 1) 1 both }
+@keyframes now-travel { 0% { stroke-dasharray: 8 100; stroke-dashoffset: 8; opacity: 1 } 90% { opacity: 1 } 100% { stroke-dasharray: 8 100; stroke-dashoffset: -92; opacity: 0 } }
+.table-top { fill: #1d2026 }
+.dais[data-on='true'] .table-top { stroke: var(--attention); stroke-width: 1.2 }
+.ticket { fill: var(--attention); opacity: 0.9 }
+.ticket.is-fresh { animation: now-land 300ms 900ms ease-out both }
+@keyframes now-land { from { opacity: 0 } to { opacity: 0.9 } }
+.rack .led { fill: #23262d; transition: fill 400ms, stroke 400ms }
+.rack[data-tone='ok'] .led { fill: var(--ok) }
+.rack[data-tone='unknown'] .led { fill: none; stroke: var(--unknown); stroke-width: 0.8; stroke-dasharray: 2 2 }
+.rack[data-tone='off'] .led { fill: none; stroke: var(--unknown); stroke-width: 0.8 }
+.leader { fill: none; stroke: rgba(244, 244, 245, 0.28) }
+.now-fresh { animation: now-fresh 1800ms ease-out both }
+@keyframes now-fresh { from { background: rgba(251, 146, 60, 0.16) } to { background: rgba(251, 146, 60, 0.05) } }
+@media (prefers-reduced-motion: reduce) {
+  .desk *, .route *, .ticket, .rack .led, .now-fresh { transition: none !important; animation: none !important }
+  .now-fresh { background: rgba(251, 146, 60, 0.05) }
+}

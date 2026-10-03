@@ -20,6 +20,8 @@
   --attention-soft: #fdf1dc;
   --danger: #b42318;
   --ok: #1f7a4d;
+  --run: #0f766e;
+  --unknown: #575f6e;
 
   --agent-loic: #1b1f24;
   --agent-helios: #b7860b;
@@ -64,10 +66,37 @@
   }
 }
 
+/*
+ * Thème « Salle orbitale » (#6) : quasi-noir, filets fins, couleur réservée aux états.
+ * Palette proposée par Gemini, contrastes recalculés (texte ≥ 4,5:1). Appliqué par la classe
+ * `orbital` : navigation, barre d'état, Maintenant. Travail garde le thème clair pour l'instant.
+ */
+.orbital {
+  --paper: #07080a;
+  --surface: #0b0c0e;
+  --surface-sunken: #0e1013;
+  --ink: #f4f4f5;
+  --muted: #a1a1aa;
+  --line: #22252b;
+  --accent: #5eead4;
+  --accent-soft: rgba(94, 234, 212, 0.08);
+  --attention: #fb923c;
+  --attention-soft: rgba(251, 146, 60, 0.06);
+  --danger: #f87171;
+  --ok: #4ade80;
+  --run: #5eead4;
+  --unknown: #8b8b95;
+  color-scheme: dark;
+  color: var(--ink);
+}
+
 @theme inline {
   --font-sans: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
   --font-display: 'Segoe UI Variable Display', 'Segoe UI Variable', 'Segoe UI', system-ui,
     sans-serif;
+  --font-orbital: 'Barlow', 'Segoe UI', system-ui, sans-serif;
+  --font-orbital-display: 'Barlow Condensed', 'Bahnschrift', 'Segoe UI', sans-serif;
+  --font-data: 'IBM Plex Mono', 'Cascadia Mono', ui-monospace, monospace;
 
   --color-paper: var(--paper);
   --color-surface: var(--surface);
@@ -82,6 +111,8 @@
   --color-attention-soft: var(--attention-soft);
   --color-danger: var(--danger);
   --color-ok: var(--ok);
+  --color-run: var(--run);
+  --color-unknown: var(--unknown);
 
   --text-2xs: 0.75rem;
   --text-xs: 0.8125rem;
