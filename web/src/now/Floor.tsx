@@ -1,4 +1,5 @@
 import clsx from 'clsx'
+import type { ReactNode } from 'react'
 import type { NodeState, NowSnapshot } from '@/api'
 import { age } from '@/format'
 import { isStale } from '@/freshness'
@@ -6,6 +7,7 @@ import { useNow } from '@/useNow'
 import { DESK, LABEL_LIFT, RACK, box, drawOrder, layoutFloor, toPercent, type Box, type Dir, type Layout } from './iso'
 import { AGE_TICK_MS, displayName, rackLabel, rackTone, seatModels, type RackTone, type SeatModel } from './model'
 import { useArrivals } from './useArrivals'
+import { useFloorRotation, type FloorStage } from './useFloorRotation'
 import './floor.css'
 
 const MAX_TICKETS = 3
@@ -55,12 +57,23 @@ type RackView = { node: NodeState; tone: RackTone; text: string }
 
 type FloorProps = { snapshot: NowSnapshot; nodes: NodeState[] | undefined; nodesFailed?: boolean }
 
+const ROTATE_BUTTON = 'pointer-events-auto grid size-9 place-items-center rounded-md border border-line bg-surface/80 text-base text-ink hover:bg-sunken focus-visible:outline-2 focus-visible:outline-accent'
+
+/** The floor with its rotation: drag, arrow keys and two buttons; the angle settles on quarter turns. */
 export function Floor(props: FloorProps) {
-  return <FloorScene {...props} angle={0} />
+  const { angle, rotateBy, stage } = useFloorRotation()
+  return (
+    <FloorScene {...props} angle={angle} stage={stage}>
+      <div className="absolute left-0 top-0 flex gap-1">
+        <button type="button" className={ROTATE_BUTTON} aria-label="Tourner l'étage vers la gauche" onClick={() => rotateBy(-90)}><span aria-hidden="true">↺</span></button>
+        <button type="button" className={ROTATE_BUTTON} aria-label="Tourner l'étage vers la droite" onClick={() => rotateBy(90)}><span aria-hidden="true">↻</span></button>
+      </div>
+    </FloorScene>
+  )
 }
 
 /** The floor seen at `angle` degrees: pure drawing, the angle is owned by the caller. */
-export function FloorScene({ snapshot, nodes, nodesFailed = false, angle }: FloorProps & { angle: number }) {
+export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage, children }: FloorProps & { angle: number; stage?: FloorStage; children?: ReactNode }) {
   const now = useNow(AGE_TICK_MS)
   const seats = seatModels(snapshot)
   // Une mesure trop ancienne, ou une relecture en échec : jamais de vert sur une donnée périmée.
@@ -108,7 +121,8 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle }: Floo
   }
 
   return (
-    <div className="@container relative mx-auto w-full" style={{ aspectRatio: `${l.viewBox.w} / ${l.viewBox.h}`, maxHeight: '100%' }}>
+    <div className="@container relative mx-auto w-full select-none focus-visible:outline-2 focus-visible:outline-accent" style={{ aspectRatio: `${l.viewBox.w} / ${l.viewBox.h}`, maxHeight: '100%', touchAction: 'pan-y' }}
+      {...(stage && { ...stage, role: 'group', tabIndex: 0, 'data-stage': '', 'aria-label': 'Étage : glisser, ou flèches gauche et droite, pour le faire pivoter' })}>
       <svg viewBox={`${l.viewBox.x} ${l.viewBox.y} ${l.viewBox.w} ${l.viewBox.h}`} className="absolute inset-0 size-full" role="img"
         aria-label="Étage de Nexus : un poste par agent, ta table au centre, la salle des serveurs">
         <defs>
@@ -161,6 +175,7 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle }: Floo
           <li key={n.id} className={clsx('flex items-center gap-2', tone === 'ok' ? 'text-ink' : 'text-muted')}><span className="legend-dot" data-tone={tone} aria-hidden="true" />{text}</li>
         ))}
       </ul>
+      {children}
     </div>
   )
 }
