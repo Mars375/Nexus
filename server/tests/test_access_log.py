@@ -224,6 +224,8 @@ def test_known_websocket_paths_keep_status_and_client_but_drop_all_parameters(su
 
 @pytest.mark.parametrize("path", [
     f"/api/ws/{SECRET}", f"/api/ws{SECRET}", "/api/ws/", "/api/WS", "/api/%77s", "//api/ws",
+    # Cible en forme absolue (`GET http://h/... HTTP/1.1`) : uvicorn écrit un chemin sans `/`.
+    f"http%3A//h/api/{SECRET}", "http%3A//h/api/ws", "http://h/api/ws", "api/ws", "",
 ])
 def test_websocket_allowlist_requires_an_exact_path(path):
     record = _ws_record(f"{path}?token={SECRET}", "403")
@@ -283,3 +285,11 @@ def test_log_configs_are_independent_of_uvicorn_defaults_and_each_other():
 
     assert second == uvicorn_log_config()
     assert LOGGING_CONFIG == original
+
+
+def test_the_uvicorn_access_logger_has_no_output_even_if_access_log_is_left_on():
+    # Défense en profondeur : avec `access_log=True` par erreur, uvicorn.access recopierait
+    # l'URL reçue. Sans gestionnaire ni propagation, ses lignes INFO ne sortent nulle part.
+    access = uvicorn_log_config()["loggers"]["uvicorn.access"]
+    assert access["handlers"] == []
+    assert access["propagate"] is False

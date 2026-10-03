@@ -65,20 +65,26 @@ class WebSocketPathFilter(logging.Filter):
     """Retire les paramètres (et masque un chemin inconnu) des lignes WebSocket d'uvicorn."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        """Sanitize matching WebSocket records in place and always return True.
+        """Réécrit sur place le chemin des lignes « WebSocket %s » ; garde toujours la ligne.
 
-        For messages containing '"WebSocket %s"' with arguments, strip query strings
-        from string arguments starting with '/'. Keep paths in WEBSOCKET_PATHS and
-        replace other paths with MASKED_PATH. Other records are left unchanged.
+        Le chemin perd ses paramètres, et tout chemin hors `WEBSOCKET_PATHS` devient
+        `MASKED_PATH`, quelle que soit sa forme (même sans `/` initial).
         """
         if isinstance(record.msg, str) and '"WebSocket %s"' in record.msg and record.args:
             args = list(record.args) if isinstance(record.args, tuple) else [record.args]
-            for i, value in enumerate(args):
-                if isinstance(value, str) and value.startswith("/"):
-                    path = value.split("?", 1)[0]
-                    args[i] = path if path in WEBSOCKET_PATHS else MASKED_PATH
+            # L'argument du `%s` de « WebSocket %s », quelle que soit sa forme : une cible en
+            # forme absolue (`GET http://h/...`) donne un chemin qui ne commence pas par `/`.
+            position = _conversions(record.msg[: record.msg.index('"WebSocket %s"')])
+            if position < len(args):
+                path = str(args[position]).split("?", 1)[0]
+                args[position] = path if path in WEBSOCKET_PATHS else MASKED_PATH
             record.args = tuple(args)
         return True
+
+
+def _conversions(fmt: str) -> int:
+    """Nombre de conversions `%` dans un format, sans compter les `%%` littéraux."""
+    return fmt.replace("%%", "").count("%")
 
 
 def uvicorn_log_config() -> dict[str, Any]:
@@ -93,4 +99,7 @@ def uvicorn_log_config() -> dict[str, Any]:
     for handler in config["handlers"].values():
         handler.setdefault("filters", []).append("websocket_path")
     config["loggers"]["nexus"] = {"handlers": ["default"], "level": "INFO", "propagate": False}
+    # Défense en profondeur : même avec `access_log=True` par erreur, le journal d'accès
+    # d'uvicorn (qui recopie l'URL reçue) n'a aucune sortie.
+    config["loggers"]["uvicorn.access"] = {"handlers": [], "level": "INFO", "propagate": False}
     return config
