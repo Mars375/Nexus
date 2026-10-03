@@ -194,6 +194,33 @@ test('les hachures et les LED sont des calques toujours présents : seul l\'éta
   }
 })
 
+test('aucune LED visible n\'est cachée par une autre baie, à chaque quart de tour, jusqu\'à 12 baies', () => {
+  type P = [number, number]
+  const parse = (pts: string): P[] => pts.split(' ').map((q) => q.split(',').map(Number) as P)
+  const inside = ([x, y]: P, poly: P[]) => { // point strictly inside a convex polygon (any winding)
+    let sign = 0
+    for (let i = 0; i < poly.length; i++) {
+      const [ax, ay] = poly[i], [bx, by] = poly[(i + 1) % poly.length]
+      const c = (bx - ax) * (y - ay) - (by - ay) * (x - ax)
+      if (Math.abs(c) < 1e-6) continue
+      if (sign === 0) sign = Math.sign(c); else if (Math.sign(c) !== sign) return false
+    }
+    return sign !== 0
+  }
+  for (const count of [8, 9, 12]) for (const a of QUARTERS) {
+    const nodes = Array.from({ length: count }, (_, i) => node(`n${i}`, 'online'))
+    const racks = [...scene(a, nodes).querySelectorAll('g.rack')]
+    expect(racks).toHaveLength(count)
+    racks.forEach((rack, i) => {
+      for (const led of rack.querySelectorAll('.led')) for (const pt of parse(led.getAttribute('points')!)) {
+        for (const later of racks.slice(i + 1)) for (const face of later.querySelectorAll('polygon:not(.led):not(.led-on):not(.led-ring)')) {
+          expect(inside(pt, parse(face.getAttribute('points')!)), `${count} baies à ${a}° : une LED de ${rack.getAttribute('data-node')} est cachée par ${later.getAttribute('data-node')}`).toBe(false)
+        }
+      }
+    })
+  }
+})
+
 test('postes, baies et table sont dessinés du fond vers l\'avant, à chaque quart de tour', () => {
   for (const a of QUARTERS) {
     const { container } = render(<FloorScene snapshot={snap()} nodes={[node('helios', 'online'), node('synapse', 'unknown'), node('artemis', 'offline-by-design')]} angle={a} />)

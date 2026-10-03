@@ -53,7 +53,7 @@ const PAD = 12
 const RACK_START = 0.8
 const RACK_PITCH = 1.85
 const RACK_MARGIN = 0.5
-const RACK_COLUMN_PITCH = 1.8
+const RACK_COLUMN_PITCH = 3.6 // wide enough that the outer column never hides the LED face of the inner one (tested at the quarters)
 const FLOOR_DEPTH = 14
 // Racks per column so the last one still ends RACK_MARGIN before the back edge (7 at depth 14).
 const RACK_PER_COLUMN = Math.floor((FLOOR_DEPTH - RACK_MARGIN - RACK.d - RACK_START) / RACK_PITCH) + 1
