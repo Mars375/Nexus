@@ -16,6 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.exc import StaleDataError
 
 from nexus import backup, live, migrate, nodes
+from nexus import now as now_view
 from nexus.clock import now
 from nexus.config import Settings
 from nexus.db import make_engine
@@ -117,6 +118,7 @@ def create_app(
     app.state.settings = settings
     app.include_router(tasks_api.router)
     app.include_router(events_api.router)
+    app.include_router(now_view.router)
     app.include_router(live.router)
 
     @app.exception_handler(RequestValidationError)

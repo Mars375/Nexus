@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Toaster } from 'sonner'
 import { HealthStatus } from './HealthStatus'
 import { useLiveUpdates } from './liveUpdates'
+import { NowView } from './now/NowView'
 import { WorkView } from './tasks/WorkView'
 
 type View = 'maintenant' | 'travail'
@@ -13,15 +14,21 @@ const VIEWS: { id: View; label: string }[] = [
 ]
 
 function currentView(): View {
-  return window.location.hash === '#/maintenant' ? 'maintenant' : 'travail'
+  const hash = window.location.hash
+  return hash === '#/travail' || hash.startsWith('#/travail/') ? 'travail' : 'maintenant'
+}
+
+function openTaskFromHash(): string | null {
+  return /^#\/travail\/(nx-task-\d+)$/.exec(window.location.hash)?.[1] ?? null
 }
 
 export default function App() {
   const [view, setView] = useState<View>(currentView)
+  const [open, setOpen] = useState<string | null>(openTaskFromHash)
   const live = useLiveUpdates()
 
   useEffect(() => {
-    const onHash = () => setView(currentView())
+    const onHash = () => { setView(currentView()); setOpen(openTaskFromHash()) }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
@@ -29,7 +36,7 @@ export default function App() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex min-h-0 flex-1">
-        <nav aria-label="Vues" className="flex w-44 shrink-0 flex-col gap-0.5 border-r border-line bg-surface p-2">
+        <nav aria-label="Vues" className="orbital flex w-44 shrink-0 flex-col gap-0.5 border-r border-line bg-surface p-2">
           <p className="px-2.5 pt-1.5 pb-3 font-display text-base font-semibold tracking-tight">Nexus</p>
           {VIEWS.map(({ id, label }) => (
             <a
@@ -50,15 +57,9 @@ export default function App() {
         </nav>
         <main className="flex min-w-0 flex-1 flex-col">
           {view === 'travail' ? (
-            <WorkView />
+            <WorkView openTask={open} />
           ) : (
-            <div className="p-5">
-              <h1 className="font-display text-lg font-semibold">Maintenant</h1>
-              <p className="mt-2 max-w-prose text-sm text-muted">
-                Bientôt ici : l'opération principale, les agents actifs, les blocages et ce qui
-                t'attend.
-              </p>
-            </div>
+            <NowView />
           )}
         </main>
       </div>

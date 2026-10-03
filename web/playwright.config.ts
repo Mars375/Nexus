@@ -20,6 +20,11 @@ export default defineConfig({
     viewport: { width: 1440, height: 900 },
     trace: 'retain-on-failure',
   },
+  // work.spec attend une base vide ; now.spec y crée des données : il passe donc après.
+  projects: [
+    { name: 'work', testMatch: /work.spec.ts/ },
+    { name: 'now', testMatch: /now.spec.ts/, dependencies: ['work'] },
+  ],
   webServer: [
     {
       command: 'uv run --directory ../server nexus',
