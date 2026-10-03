@@ -309,3 +309,10 @@ test('l\'angle survit au remontage de la vue', () => {
   const second = render(<Floor snapshot={snap()} nodes={[]} />)
   expect(screens(second.container)).toBe(0)
 })
+
+test('la scène expose son angle courant', () => {
+  const { container } = render(<Floor snapshot={snap()} nodes={[]} />)
+  expect(stageOf(container).getAttribute('data-angle')).toBe('0')
+  fireEvent.click(screen.getByRole('button', { name: /vers la gauche/ }))
+  expect(stageOf(container).getAttribute('data-angle')).toBe('-90')
+})
