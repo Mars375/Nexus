@@ -15,7 +15,7 @@
 - Le modèle principal est `claude-opus-5-5` (`.claude/settings.json`) ; l'alias `opusplan` n'est pas pris en charge dans nos sessions. Les subagents de `.claude/agents/` portent le modèle adapté à leur rôle (`explorer` Haiku, `implementer` Sonnet, `architect` et `reviewer` Opus). Ne pas forcer un modèle unique avec `CLAUDE_CODE_SUBAGENT_MODEL_FORCE`.
 - Toute tâche qui touche une migration, l'authentification, les secrets, la concurrence ou un invariant passe par `architect` avant `implementer`.
 - Après deux échecs de test sur la même tâche, relancer avec `model: opus` au lieu de réessayer à l'identique.
-- Toute PR passe par `reviewer` avant la relecture Antigravity, puis `@codex review` en dernier.
+- Toute PR passe d'abord par `reviewer`, puis par la relecture Antigravity (lancée par Loïc depuis sa machine : le skill et la CLI ne sont pas disponibles en session cloud), CodeRabbit (automatique sur la PR), et `@codex review` en dernier.
 - Les recherches larges en lecture seule vont à `explorer`, pas au modèle principal.
 
 ## Agent skills
