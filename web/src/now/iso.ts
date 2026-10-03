@@ -69,6 +69,7 @@ const BUTTONS = { w: 80, h: 40 }
 const round = (v: number) => Math.round(v * 10) / 10
 const radians = (deg: number) => (deg * Math.PI) / 180
 
+/** Rotation by `angle` degrees around the floor centre, for points and for face normals. */
 function turner(width: number, depth: number, angle: number) {
   const c = Math.cos(radians(angle)), s = Math.sin(radians(angle)), cx = width / 2, cy = depth / 2
   const turn = (x: number, y: number): Pt => [cx + (x - cx) * c - (y - cy) * s, cy + (x - cx) * s + (y - cy) * c]
@@ -76,6 +77,7 @@ function turner(width: number, depth: number, angle: number) {
   return { turn, normal }
 }
 
+/** Plan of the floor for `agentCount` seats and `rackCount` racks, projected at `angle` degrees inside a frame that does not depend on the angle. */
 export function layoutFloor(agentCount: number, rackCount: number, angle = 0): Layout {
   const perRow = Math.max(4, Math.ceil(agentCount / 2))
   const rowWidth = perRow * PITCH
@@ -124,6 +126,7 @@ type Frame = Layout['viewBox']
 type Projector = (a: number) => Layout['project']
 const frames = new Map<string, Frame>()
 
+/** Screen corners kept free for the legend, « TA TABLE » and the rotation buttons, in plan units at the smallest render. */
 function zonesOf(vb: Frame, rackCount: number): Rect[] {
   const k = vb.w / MIN_FLOOR_PX // plan units per px at the smallest render
   const right = vb.x + vb.w, bottom = vb.y + vb.h
@@ -166,6 +169,7 @@ function labelBelow(width: number, depth: number, angle: number, seat: Seat): bo
   return u + v - (cu + cv) > 1e-9
 }
 
+/** Seat labels at `angle`: above or under their desk by row depth, then spread so none covers another or a fixed corner. */
 function placeLabels(width: number, depth: number, angle: number, seats: Seat[], project: Layout['project'], zones: Rect[]): SeatLabel[] {
   const { turn } = turner(width, depth, angle)
   const below = seats.map((s) => labelBelow(width, depth, angle, s))
@@ -259,6 +263,7 @@ export function nearestQuarter(angle: number): number {
   return Math.floor(angle / 90 + 0.5) * 90 + 0
 }
 
+/** A point of the viewBox as percentages of its width and height, for HTML laid over the SVG. */
 export function toPercent(layout: Layout, p: Pt): readonly [number, number] {
   const { x, y, w, h } = layout.viewBox
   return [((p[0] - x) / w) * 100, ((p[1] - y) / h) * 100]

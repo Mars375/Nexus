@@ -69,7 +69,9 @@ export function useFloorRotation(): { angle: number; rotateBy: (delta: number) =
   const stage: FloorStage = {
     onPointerDown: (e) => {
       if (e.button !== 0 || (e.target as Element).closest?.('button')) return
-      if (drag.current?.active) return // a second pointer never takes over a drag in progress
+      // A second pointer never takes over a gesture already under way, even before it becomes a drag.
+      // The same pointer may restart one (a mouse released outside the stage before the threshold).
+      if (drag.current && drag.current.id !== e.pointerId) return
       swallowClick.current = false
       // The animation keeps running until the gesture really is a drag: a plain click must not freeze it mid-way.
       drag.current = { id: e.pointerId, startX: e.clientX, startAngle: current.current, active: false }

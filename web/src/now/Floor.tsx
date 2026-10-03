@@ -12,10 +12,12 @@ import './floor.css'
 
 const MAX_TICKETS = 3
 
+/** Top face and visible side faces of one box. */
 function Faces({ b, topClass }: { b: Box; topClass?: string }) {
   return (<><polygon className={clsx('f-top', topClass)} points={b.top} />{b.sides.map((s) => <polygon key={s.dir} className={s.shade} points={s.points} />)}</>)
 }
 
+/** Path of a request thread from a seat to the table, along the floor in right angles. */
 function routePath(l: Layout, s: { x: number; y: number; back: boolean }): string {
   const sx = s.x + DESK.w / 2, sy = s.back ? s.y + DESK.d : s.y
   const ty = s.back ? l.table.y : l.table.y + l.table.d
@@ -24,6 +26,7 @@ function routePath(l: Layout, s: { x: number; y: number; back: boolean }): strin
   return 'M' + [l.project(sx, sy), l.project(sx, my), l.project(tx, my), l.project(tx, ty)].map((p) => p.join(' ')).join(' L ')
 }
 
+/** One seat: desk, monitor (its screen only when it faces the viewer), light pool and beacon showing its state. */
 function Desk({ l, seat, m }: { l: Layout; seat: Layout['seats'][number]; m: SeatModel }) {
   const { x, y } = seat, p = l.project
   const pool = p(x + DESK.w / 2, y + 2.3)

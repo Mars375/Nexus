@@ -163,3 +163,11 @@ test('un second pointeur qui se pose et se lève ne fait pas perdre le calage du
   act(() => { vi.advanceTimersByTime(600) })
   expect(result.current.angle % 90).toBe(0)
 })
+
+test('un second pointeur posé avant le seuil ne remplace pas le geste du premier', () => {
+  const { result } = renderHook(() => useFloorRotation())
+  act(() => result.current.stage.onPointerDown(pointer(0, { pointerId: 1 })))
+  act(() => result.current.stage.onPointerDown(pointer(300, { pointerId: 2 })))
+  act(() => result.current.stage.onPointerMove(pointer(100, { pointerId: 1 })))
+  expect(result.current.angle).toBe(40)
+})

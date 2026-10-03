@@ -4,7 +4,7 @@ Spec : issue #30. Choix validés par Loïc le 2026-10-03 :
 
 - **Cadre fixe** : le viewBox est calculé une fois pour contenir l'étage à tous les angles ; rien ne saute pendant la rotation.
 - **Légende des baies dans un coin fixe, sans traits de rappel** : une ligne par baie, avec une pastille de la couleur (ton) de la baie.
-- **Étiquettes des postes toujours au-dessus de leur bureau**, quel que soit l'angle, avec le même trait de rappel vertical.
+- **Étiquettes des postes au-dessus de leur bureau**, avec le même trait de rappel vertical. Révisé pendant l'implémentation : la rangée la plus proche du spectateur a son étiquette en dessous du bureau, et `spreadLabels` écarte celles qui se chevauchent encore (validé par Loïc).
 
 ## Principe
 
@@ -28,7 +28,7 @@ Le plan au sol ne change pas (`layoutFloor` place postes, table et baies en unit
 - Postes, baies et table rendus dans l'ordre de `depthOf`.
 - **Écran du poste** : dessiné seulement si sa face (normale +y du plan) est visible ; sinon le dos du moniteur (une face de la boîte du moniteur suffit).
 - **LED des baies** : sur la face +x seulement si elle est visible ; sinon sur l'autre face latérale visible.
-- **Étiquettes** : toujours au-dessus du bureau (`project(x + 1.5, y + 0.75, 1.8)` relevé de `LABEL_LIFT`), traits de rappel recalculés à l'angle courant.
+- **Étiquettes** : au-dessus du bureau pour la rangée du fond, en dessous pour la rangée la plus proche (`labelBelow`, selon la profondeur à l'angle courant) ; `spreadLabels` décale ensuite celles qui se chevauchent ; traits de rappel recalculés à l'angle courant.
 - **Légende** : coin bas-droit fixe en HTML, une ligne par baie : pastille au ton de la baie (`data-tone`) + texte actuel. « lecture des nœuds… » / « nœuds illisibles » au même endroit.
 - Fils de demande et tickets : inchangés (ils passent par `project`).
 
