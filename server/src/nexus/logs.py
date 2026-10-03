@@ -65,10 +65,11 @@ class WebSocketPathFilter(logging.Filter):
     """Retire les paramètres (et masque un chemin inconnu) des lignes WebSocket d'uvicorn."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        """Réécrit sur place le chemin des lignes « WebSocket %s » ; garde toujours la ligne.
+        """Rewrite the path of uvicorn "WebSocket %s" records in place; always keep the record.
 
-        Le chemin perd ses paramètres, et tout chemin hors `WEBSOCKET_PATHS` devient
-        `MASKED_PATH`, quelle que soit sa forme (même sans `/` initial).
+        The path argument is found by position, whatever its shape (an absolute-form target
+        has no leading '/'). Its query string is dropped, and any path outside
+        WEBSOCKET_PATHS becomes MASKED_PATH. Other records are left unchanged.
         """
         if isinstance(record.msg, str) and '"WebSocket %s"' in record.msg and record.args:
             args = list(record.args) if isinstance(record.args, tuple) else [record.args]
