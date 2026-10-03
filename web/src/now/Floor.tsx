@@ -79,9 +79,9 @@ export function Floor(props: FloorProps) {
       </div>
       {level.count > 1 && (
         <div className="floor-pick pointer-events-none absolute left-0 top-10 flex items-center gap-1">
-          <button type="button" className={ROTATE_BUTTON} aria-label="Monter d'un étage" disabled={level.floor >= level.count} onClick={() => level.go(1)}><span aria-hidden="true">▲</span></button>
+          <button type="button" className={ROTATE_BUTTON} aria-label="Monter d'un étage" {...(level.floor >= level.count && { 'aria-disabled': true })} onClick={() => level.go(1)}><span aria-hidden="true">▲</span></button>
           <span data-floor-label aria-live="polite" className="whitespace-nowrap font-data text-[11px] text-ink">Étage <span key={level.floor} className="floor-roll" {...(level.lifted !== undefined && level.dir && { 'data-roll': level.dir })}><span>{level.floor}</span></span> / {level.count}</span>
-          <button type="button" className={ROTATE_BUTTON} aria-label="Descendre d'un étage" disabled={level.floor <= 1} onClick={() => level.go(-1)}><span aria-hidden="true">▼</span></button>
+          <button type="button" className={ROTATE_BUTTON} aria-label="Descendre d'un étage" {...(level.floor <= 1 && { 'aria-disabled': true })} onClick={() => level.go(-1)}><span aria-hidden="true">▼</span></button>
           <ol className="m-0 flex h-9 list-none flex-col flex-wrap content-start justify-end gap-[3px] p-0">
             {floors.map((_, i) => floors.length - 1 - i).map((i) => (
               <li key={i} data-floor-marker={i + 1} data-current={String(i + 1 === level.floor)} {...(alerts[i] && { 'data-alert': alerts[i] })} className={clsx('floor-dot', pulse(i + 1) && 'is-fresh')}>

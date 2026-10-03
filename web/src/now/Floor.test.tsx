@@ -415,7 +415,7 @@ test('jusqu\'à 4 nœuds : pas de sélecteur d\'étage, l\'étage 1 est le burea
 test('à 12 nœuds : ▲ ▼ nommés, « Étage 1 / 3 », ▼ désactivé en bas', () => {
   render(<Floor snapshot={snap()} nodes={twelve()} />)
   expect(pickLabel()).toBe('Étage 1 / 3')
-  expect(up()).toBeEnabled(); expect(down()).toBeDisabled()
+  expect(up()).not.toHaveAttribute('aria-disabled'); expect(down()).toHaveAttribute('aria-disabled', 'true'); expect(down()).not.toBeDisabled()
   expect(document.querySelector('[data-floor-label]')!.getAttribute('aria-live')).toBe('polite')
 })
 
@@ -440,7 +440,7 @@ test('la dernière salle peut être incomplète : 12 nœuds donnent 4, 10 nœuds
   expect(pickLabel()).toBe('Étage 3 / 3')
   expect(container.querySelectorAll('g.rack')).toHaveLength(2)
   expect(screen.getByRole('img', { name: 'Étage 3 de Nexus : salle des serveurs, 2 baies' })).toBeInTheDocument()
-  expect(up()).toBeDisabled()
+  expect(up()).toHaveAttribute('aria-disabled', 'true')
 })
 
 test('l\'ordre reçu fixe les étages : ni l\'id ni le statut ne déplacent un nœud', () => {
@@ -577,4 +577,18 @@ test('mouvement réduit : ni couche qui part, ni data-arriving, ni is-fresh, ni 
   expect(container.querySelectorAll('.level')).toHaveLength(1)
   rerender(<Floor snapshot={snap()} nodes={twelve({ n10: 'offline' })} />)
   expect(container.querySelectorAll('[data-arriving], [data-role="leaving"], .is-fresh, [data-roll]')).toHaveLength(0)
+})
+
+test('au dernier étage, ▲ garde le focus (aria-disabled, pas disabled) et PageDown fonctionne toujours', () => {
+  const { container } = render(<Floor snapshot={snap()} nodes={twelve()} />)
+  fireEvent.click(up()); fireEvent.click(up())
+  up().focus()
+  expect(up()).toHaveFocus()
+  fireEvent.click(up()) // at the limit: ignored
+  expect(up()).toHaveFocus()
+  expect(stageOf(container).getAttribute('data-floor')).toBe('3')
+  fireEvent.keyDown(stageOf(container), { key: 'PageUp' })
+  expect(stageOf(container).getAttribute('data-floor')).toBe('3')
+  fireEvent.keyDown(stageOf(container), { key: 'PageDown' })
+  expect(stageOf(container).getAttribute('data-floor')).toBe('2')
 })

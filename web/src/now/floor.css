@@ -51,7 +51,7 @@
 .floor-dot[data-current='true'] { background: var(--ink, #f4f4f5); border-color: var(--ink, #f4f4f5) }
 .floor-dot[data-alert='off'] { background: var(--danger); border-color: var(--danger) }
 .floor-dot[data-alert='unknown'] { background: var(--attention); border-color: var(--attention) }
-.floor-pick button:disabled { opacity: 0.35; cursor: default }
+.floor-pick button[aria-disabled='true'] { opacity: 0.35; cursor: default }
 /* Lift (#36): transform and opacity only, once per move. A floor leaving slides away from the side the move came from; the new one slides in from it. */
 .level { transition: transform 350ms cubic-bezier(0.2, 0.7, 0.2, 1), opacity 350ms }
 .level[data-role='leaving'] { pointer-events: none; opacity: 0 }
