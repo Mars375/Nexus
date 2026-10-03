@@ -50,6 +50,9 @@ const B = Math.sin(Math.PI / 6) * UNIT
 const PITCH = 4 // un poste tous les 4 unités sur une rangée
 const ORIGIN = { x: 150, y: 110 } // coin gauche du sol à 0° ; fixe pour que le plan à 0° garde ses coordonnées
 const PAD = 12
+const RACK_START = 0.8
+const RACK_PITCH = 1.85
+const RACK_MARGIN = 0.5
 // Room taken by label text around its anchor, in viewBox units (labels keep their px size).
 const LABEL_HALF = 110
 const LABEL_TEXT_H = 42
@@ -93,7 +96,9 @@ export function layoutFloor(agentCount: number, rackCount: number, angle = 0): L
   // table centrée sur l'étendue réelle des postes
   const first = 1.2, last = 1.2 + (perRow - 1) * PITCH + DESK.w
   const table = { w: 5, d: 3.2, x: (first + last) / 2 - 2.5, y: 5.4 }
-  const racks = Array.from({ length: rackCount }, (_, i) => ({ x: width - 2.1, y: 0.8 + i * 1.85 }))
+  // Rack pitch shrinks so the last rack still ends RACK_MARGIN before the back edge of the floor.
+  const rackPitch = rackCount > 1 ? Math.min(RACK_PITCH, (depth - RACK_MARGIN - RACK.d - RACK_START) / (rackCount - 1)) : RACK_PITCH
+  const racks = Array.from({ length: rackCount }, (_, i) => ({ x: width - 2.1, y: RACK_START + i * rackPitch }))
 
   // origine choisie pour que le coin gauche du sol (0, depth) tombe à ORIGIN.x à 0°
   const ox = ORIGIN.x + depth * A

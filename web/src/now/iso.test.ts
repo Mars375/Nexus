@@ -38,6 +38,25 @@ describe('layoutFloor', () => {
   })
 })
 
+describe('baies dans la profondeur', () => {
+  test('de 1 à 12 baies, toutes tiennent dans la profondeur du sol', () => {
+    for (let n = 1; n <= 12; n++) {
+      const l = layoutFloor(8, n)
+      expect(l.racks).toHaveLength(n)
+      for (const r of l.racks) { expect(r.y, `${n} baies`).toBeGreaterThanOrEqual(0); expect(r.y + RACK.d, `${n} baies`).toBeLessThanOrEqual(l.depth) }
+    }
+  })
+  test('jusqu\'à 9 baies, aucune ne chevauche sa voisine (au-delà, la salle est pleine)', () => {
+    for (let n = 2; n <= 9; n++) {
+      const { racks } = layoutFloor(8, n)
+      for (let i = 1; i < racks.length; i++) expect(racks[i].y - racks[i - 1].y, `${n} baies`).toBeGreaterThanOrEqual(RACK.d - 1e-9)
+    }
+  })
+  test('à 7 baies ou moins, les positions sont celles d\'avant', () => {
+    for (let n = 1; n <= 7; n++) expect(layoutFloor(8, n).racks.map((r) => r.y)).toEqual(Array.from({ length: n }, (_, i) => 0.8 + i * 1.85))
+  })
+})
+
 describe('projection', () => {
   test('à 0°, les points sont ceux de la projection isométrique d\'origine', () => {
     const l = layoutFloor(8, 4)
