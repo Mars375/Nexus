@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 /** Duration of the lift transition (floor.css); a leaving floor stays mounted a little longer than that. */
 export const LEVEL_MS = 350
 const UNMOUNT_GRACE_MS = 50
+/** How long a room keeps its « arriving » mark: the racks settle (up to 4 × 40 ms apart) and their LEDs cascade in. */
+export const ARRIVE_MS = 420
 
 // Floor asked for, kept for the page session only: no browser storage (ADR-017), nothing moves on its own.
 let requested = 1
@@ -12,7 +14,7 @@ export function resetFloorLevel(): void {
   requested = 1
 }
 
-const prefersReducedMotion = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
+export const prefersReducedMotion = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
 
 /**
  * One mounted floor. `from` is the side the last move came from (`above` when going up), for the
@@ -28,6 +30,10 @@ export type FloorLevel = {
   go: (delta: number) => void
   /** Direction of the last move; absent until the first one. */
   dir: 'up' | 'down' | undefined
+  /** The floor reached by the last move (an action, not a fall back): the one that slides in. Absent until the first move. */
+  lifted: number | undefined
+  /** Room floor still settling in after a move, for the rack and LED cascade. */
+  arriving: number | undefined
   /** The floor shown, preceded by the floors still leaving (never any under reduced motion). */
   layers: FloorLayer[]
 }
@@ -35,7 +41,7 @@ export type FloorLevel = {
 /** Which of `count` floors is shown, with the layers the lift animation needs mounted. */
 export function useFloorLevel(count: number, { loaded }: { loaded: boolean }): FloorLevel {
   const [target, setTarget] = useState(requested)
-  const [motion, setMotion] = useState<{ dir: 'up' | 'down' | undefined; from: FloorLayer['from']; leaving: Leaving[] }>({ dir: undefined, from: 'above', leaving: [] })
+  const [motion, setMotion] = useState<{ dir: 'up' | 'down' | undefined; from: FloorLayer['from']; leaving: Leaving[]; lifted: number | undefined; arriving: number | undefined }>({ dir: undefined, from: 'above', leaving: [], lifted: undefined, arriving: undefined })
   const asked = useRef(target)
   const countRef = useRef(count)
   const shown = useRef(Math.min(target, count))
@@ -62,11 +68,16 @@ export function useFloorLevel(count: number, { loaded }: { loaded: boolean }): F
     requested = next
     setTarget(next)
     const dir = next > base ? 'up' : 'down', from = dir === 'up' ? 'above' : 'below'
-    if (prefersReducedMotion()) { setMotion({ dir, from, leaving: [] }); return }
+    if (prefersReducedMotion()) { setMotion({ dir, from, leaving: [], lifted: undefined, arriving: undefined }); return }
     // A floor never shown (a second quick press) has nothing to slide out; one coming back stops leaving.
     const leaves = base === shown.current
     const id = nextId.current++
-    setMotion((m) => ({ dir, from, leaving: [...m.leaving.filter((l) => l.floor !== next && l.floor !== base), ...(leaves ? [{ id, floor: base, from } as Leaving] : [])] }))
+    setMotion((m) => ({ dir, from, lifted: next, arriving: next > 1 ? next : undefined, leaving: [...m.leaving.filter((l) => l.floor !== next && l.floor !== base), ...(leaves ? [{ id, floor: base, from } as Leaving] : [])] }))
+    const done = window.setTimeout(() => {
+      timers.current = timers.current.filter((x) => x !== done)
+      setMotion((m) => (m.arriving === next ? { ...m, arriving: undefined } : m))
+    }, ARRIVE_MS)
+    timers.current.push(done)
     if (leaves) {
       const t = window.setTimeout(() => {
         timers.current = timers.current.filter((x) => x !== t)
@@ -80,5 +91,5 @@ export function useFloorLevel(count: number, { loaded }: { loaded: boolean }): F
     ...motion.leaving.filter((l) => l.floor !== floor).map((l): FloorLayer => ({ floor: l.floor, role: 'leaving', from: l.from })),
     { floor, role: 'current', from: motion.from },
   ]
-  return { floor, count, go, dir: motion.dir, layers }
+  return { floor, count, go, dir: motion.dir, lifted: motion.lifted, arriving: motion.arriving, layers }
 }

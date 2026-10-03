@@ -9,7 +9,7 @@ import { AGE_TICK_MS, displayName, floorAlert, nodeFloors, rackLabel, rackTone, 
 import { Faces, Rack } from './Rack'
 import { ServerRoom } from './ServerRoom'
 import { useArrivals } from './useArrivals'
-import { useFloorLevel, type FloorLayer } from './useFloorLevel'
+import { prefersReducedMotion, useFloorLevel, type FloorLayer } from './useFloorLevel'
 import { useFloorRotation, type FloorStage } from './useFloorRotation'
 import './floor.css'
 
@@ -62,13 +62,17 @@ export function Floor(props: FloorProps) {
   const now = useNow(AGE_TICK_MS)
   const floors = nodeFloors(nodes)
   const alerts = floors.map((f) => floorAlert(f, (n) => nodesFailed || isStale(n.measured_at, 'nodes', now)))
+  // A new alert on a floor out of sight pulses its marker once; never on the floor shown, never under reduced motion.
+  const alertKeys = nodes === undefined ? null : alerts.flatMap((a, i) => a ? [`${i + 1}:${a}`] : [])
+  const freshAlerts = useArrivals(alertKeys)
+  const pulse = (n: number) => !prefersReducedMotion() && n !== level.floor && alerts[n - 1] != null && freshAlerts.has(`${n}:${alerts[n - 1]}`)
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     stage.onKeyDown(e)
     if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || level.count < 2) return
     if (e.key === 'PageUp' || e.key === 'PageDown') { e.preventDefault(); level.go(e.key === 'PageUp' ? 1 : -1) }
   }
   return (
-    <FloorScene {...props} angle={angle} stage={{ ...stage, onKeyDown }} floor={level.floor} floorCount={level.count} layers={level.layers} dir={level.dir}>
+    <FloorScene {...props} angle={angle} stage={{ ...stage, onKeyDown }} floor={level.floor} floorCount={level.count} layers={level.layers} dir={level.dir} lifted={level.lifted} arriving={level.arriving}>
       <div className="absolute left-0 top-0 flex gap-1">
         <button type="button" className={ROTATE_BUTTON} aria-label="Tourner l'étage vers la gauche" onClick={() => rotateBy(-90)}><span aria-hidden="true">↺</span></button>
         <button type="button" className={ROTATE_BUTTON} aria-label="Tourner l'étage vers la droite" onClick={() => rotateBy(90)}><span aria-hidden="true">↻</span></button>
@@ -76,11 +80,11 @@ export function Floor(props: FloorProps) {
       {level.count > 1 && (
         <div className="floor-pick pointer-events-none absolute left-0 top-10 flex items-center gap-1">
           <button type="button" className={ROTATE_BUTTON} aria-label="Monter d'un étage" disabled={level.floor >= level.count} onClick={() => level.go(1)}><span aria-hidden="true">▲</span></button>
-          <span aria-live="polite" className="whitespace-nowrap font-data text-[11px] text-ink">Étage {level.floor} / {level.count}</span>
+          <span data-floor-label aria-live="polite" className="whitespace-nowrap font-data text-[11px] text-ink">Étage <span key={level.floor} className="floor-roll" {...(level.lifted !== undefined && level.dir && { 'data-roll': level.dir })}><span>{level.floor}</span></span> / {level.count}</span>
           <button type="button" className={ROTATE_BUTTON} aria-label="Descendre d'un étage" disabled={level.floor <= 1} onClick={() => level.go(-1)}><span aria-hidden="true">▼</span></button>
           <ol className="m-0 flex h-9 list-none flex-col flex-wrap content-start justify-end gap-[3px] p-0">
             {floors.map((_, i) => floors.length - 1 - i).map((i) => (
-              <li key={i} data-floor-marker={i + 1} data-current={String(i + 1 === level.floor)} {...(alerts[i] && { 'data-alert': alerts[i] })} className="floor-dot">
+              <li key={i} data-floor-marker={i + 1} data-current={String(i + 1 === level.floor)} {...(alerts[i] && { 'data-alert': alerts[i] })} className={clsx('floor-dot', pulse(i + 1) && 'is-fresh')}>
                 {alerts[i] && <span className="sr-only">{`Étage ${i + 1} : ${ALERT_TEXT[alerts[i]!]}`}</span>}
               </li>
             ))}
@@ -91,10 +95,10 @@ export function Floor(props: FloorProps) {
   )
 }
 
-type SceneProps = FloorProps & { angle: number; stage?: FloorStage; children?: ReactNode; floor?: number; floorCount?: number; layers?: FloorLayer[]; dir?: 'up' | 'down' }
+type SceneProps = FloorProps & { angle: number; stage?: FloorStage; children?: ReactNode; floor?: number; floorCount?: number; layers?: FloorLayer[]; dir?: 'up' | 'down'; lifted?: number; arriving?: number }
 
 /** The floor seen at `angle` degrees: pure drawing, the angle and the floor shown are owned by the caller. */
-export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage, children, floor = 1, floorCount = 1, layers, dir }: SceneProps) {
+export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage, children, floor = 1, floorCount = 1, layers, dir, lifted, arriving }: SceneProps) {
   const now = useNow(AGE_TICK_MS)
   const seats = seatModels(snapshot)
   // Une mesure trop ancienne, ou une relecture en échec : jamais de vert sur une donnée périmée.
@@ -200,7 +204,10 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
         </defs>
       </svg>
       {mounted.map((m) => (
-        <div key={m.floor} className="level absolute inset-0" data-level={m.floor} data-role={m.role} data-from={m.from} {...(m.role === 'leaving' && { inert: true, 'aria-hidden': true })}>
+        <div key={m.floor} className="level absolute inset-0" data-level={m.floor} data-role={m.role}
+          // The slide only exists for a floor leaving or the one reached by a move: never at first render, never on a fall back.
+          {...((m.role === 'leaving' || m.floor === lifted) && { 'data-from': m.from })} {...(m.role === 'current' && m.floor === arriving && { 'data-arriving': '' })}
+          {...(m.role === 'leaving' && { inert: true, 'aria-hidden': true })}>
           {m.floor === 1 ? officeLevel : roomLevel(m.floor)}
         </div>
       ))}

@@ -52,7 +52,29 @@
 .floor-dot[data-alert='off'] { background: var(--danger); border-color: var(--danger) }
 .floor-dot[data-alert='unknown'] { background: var(--attention); border-color: var(--attention) }
 .floor-pick button:disabled { opacity: 0.35; cursor: default }
+/* Lift (#36): transform and opacity only, once per move. A floor leaving slides away from the side the move came from; the new one slides in from it. */
+.level { transition: transform 350ms cubic-bezier(0.2, 0.7, 0.2, 1), opacity 350ms }
+.level[data-role='leaving'] { pointer-events: none; opacity: 0 }
+.level[data-role='leaving'][data-from='above'] { transform: translateY(8%) }
+.level[data-role='leaving'][data-from='below'] { transform: translateY(-8%) }
+@starting-style {
+  .level[data-from='above'] { transform: translateY(-8%); opacity: 0 }
+  .level[data-from='below'] { transform: translateY(8%); opacity: 0 }
+  .level[data-from] .rack { transform: translateY(-12px); opacity: 0 }
+}
+/* Racks settle one after the other, then their LEDs light up in the same order; the end state is each rack's own, never a forced green. */
+.rack { transition: transform 300ms cubic-bezier(0.2, 0.7, 0.2, 1), opacity 300ms; transition-delay: calc(var(--i, 0) * 40ms) }
+.level[data-arriving] .led, .level[data-arriving] .led-on, .level[data-arriving] .led-ring { animation: now-led-in 240ms calc(var(--i, 0) * 40ms) backwards }
+@keyframes now-led-in { from { opacity: 0 } }
+.floor-roll { display: inline-block; overflow: hidden; vertical-align: bottom }
+.floor-roll > span { display: inline-block }
+.floor-roll[data-roll='up'] > span { animation: now-roll-up 350ms cubic-bezier(0.2, 0.7, 0.2, 1) }
+.floor-roll[data-roll='down'] > span { animation: now-roll-down 350ms cubic-bezier(0.2, 0.7, 0.2, 1) }
+@keyframes now-roll-up { from { transform: translateY(100%) } }
+@keyframes now-roll-down { from { transform: translateY(-100%) } }
+.floor-dot.is-fresh { animation: now-pip 600ms ease-out 1 }
+@keyframes now-pip { 50% { transform: scale(1.8) } }
 @media (prefers-reduced-motion: reduce) {
-  .desk *, .route *, .ticket, .rack .led, .rack .led-on, .rack .led-ring, .now-fresh { transition: none !important; animation: none !important }
+  .desk *, .route *, .ticket, .rack .led, .rack .led-on, .rack .led-ring, .now-fresh, .level, .rack, .floor-pick * { transition: none !important; animation: none !important }
   .now-fresh { background: rgba(251, 146, 60, 0.05) }
 }

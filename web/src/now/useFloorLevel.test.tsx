@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { LEVEL_MS, resetFloorLevel, useFloorLevel } from './useFloorLevel'
+import { ARRIVE_MS, LEVEL_MS, resetFloorLevel, useFloorLevel } from './useFloorLevel'
 
 const reducedMotion = (on: boolean) => vi.stubGlobal('matchMedia', (q: string) => ({ matches: on && q.includes('reduce'), media: q }))
 
@@ -109,4 +109,37 @@ test('les minuteurs sont nettoyés au démontage', () => {
   act(() => result.current.go(1))
   unmount()
   expect(vi.getTimerCount()).toBe(0)
+})
+
+test('arriving : seulement après un mouvement vers une salle, retiré après la cascade', () => {
+  const { result } = setup(3)
+  expect(result.current.arriving).toBeUndefined()
+  expect(result.current.lifted).toBeUndefined()
+  act(() => result.current.go(1))
+  expect(result.current.arriving).toBe(2)
+  expect(result.current.lifted).toBe(2)
+  act(() => { vi.advanceTimersByTime(ARRIVE_MS - 1) })
+  expect(result.current.arriving).toBe(2)
+  act(() => { vi.advanceTimersByTime(1) })
+  expect(result.current.arriving).toBeUndefined()
+  expect(result.current.lifted).toBe(2) // the lift itself stays the last move
+  act(() => result.current.go(-1)) // back to the office: no racks to cascade
+  expect(result.current.arriving).toBeUndefined()
+  expect(result.current.lifted).toBe(1)
+})
+
+test('arriving : ni au remontage, ni au repli, ni sous mouvement réduit', () => {
+  const first = setup(3)
+  act(() => { first.result.current.go(1); first.result.current.go(1) })
+  act(() => { vi.advanceTimersByTime(ARRIVE_MS) })
+  first.unmount()
+  const again = setup(3)
+  expect(again.result.current).toMatchObject({ arriving: undefined, lifted: undefined })
+  again.rerender({ count: 2, loaded: true })
+  expect(again.result.current).toMatchObject({ floor: 2, arriving: undefined, lifted: undefined })
+  again.unmount()
+  reducedMotion(true)
+  const calm = setup(3)
+  act(() => calm.result.current.go(1))
+  expect(calm.result.current.arriving).toBeUndefined()
 })

@@ -398,6 +398,7 @@ test('les liens des étiquettes ne se laissent pas glisser par le navigateur', (
 
 // --- Étages de baies (#36)
 const twelve = (over: Record<string, NodeState['status']> = {}) => ['cortex', 'synapse', 'artemis', 'helios', 'n5', 'n6', 'n7', 'n8', 'n9', 'n10', 'n11', 'n12'].map((id) => node(id, over[id] ?? 'online'))
+const pickLabel = () => document.querySelector('[data-floor-label]')?.textContent
 const up = () => screen.getByRole('button', { name: 'Monter d\'un étage' })
 const down = () => screen.getByRole('button', { name: 'Descendre d\'un étage' })
 
@@ -413,15 +414,15 @@ test('jusqu\'à 4 nœuds : pas de sélecteur d\'étage, l\'étage 1 est le burea
 
 test('à 12 nœuds : ▲ ▼ nommés, « Étage 1 / 3 », ▼ désactivé en bas', () => {
   render(<Floor snapshot={snap()} nodes={twelve()} />)
-  expect(screen.getByText('Étage 1 / 3')).toBeInTheDocument()
+  expect(pickLabel()).toBe('Étage 1 / 3')
   expect(up()).toBeEnabled(); expect(down()).toBeDisabled()
-  expect(screen.getByText('Étage 1 / 3').closest('[aria-live]')!.getAttribute('aria-live')).toBe('polite')
+  expect(document.querySelector('[data-floor-label]')!.getAttribute('aria-live')).toBe('polite')
 })
 
 test('▲ affiche l\'étage 2 : quatre baies, aucun poste ni table, la table reste dans son coin, légende des nœuds de l\'étage', () => {
   const { container } = render(<Floor snapshot={snap()} nodes={twelve()} />)
   fireEvent.click(up())
-  expect(screen.getByText('Étage 2 / 3')).toBeInTheDocument()
+  expect(pickLabel()).toBe('Étage 2 / 3')
   expect([...container.querySelectorAll('g.rack')].map((r) => r.getAttribute('data-node'))).toEqual(expect.arrayContaining(['n5', 'n6', 'n7', 'n8']))
   expect(container.querySelectorAll('g.rack')).toHaveLength(4)
   expect(container.querySelectorAll('.desk')).toHaveLength(0)
@@ -436,7 +437,7 @@ test('▲ affiche l\'étage 2 : quatre baies, aucun poste ni table, la table res
 test('la dernière salle peut être incomplète : 12 nœuds donnent 4, 10 nœuds donnent 2 baies à l\'étage 3', () => {
   const { container } = render(<Floor snapshot={snap()} nodes={twelve().slice(0, 10)} />)
   fireEvent.click(up()); fireEvent.click(up())
-  expect(screen.getByText('Étage 3 / 3')).toBeInTheDocument()
+  expect(pickLabel()).toBe('Étage 3 / 3')
   expect(container.querySelectorAll('g.rack')).toHaveLength(2)
   expect(screen.getByRole('img', { name: 'Étage 3 de Nexus : salle des serveurs, 2 baies' })).toBeInTheDocument()
   expect(up()).toBeDisabled()
@@ -515,6 +516,65 @@ test('moins de nœuds qu\'avant : l\'étage disparu laisse la place au dernier, 
   const { container, rerender } = render(<Floor snapshot={snap()} nodes={twelve()} />)
   fireEvent.click(up()); fireEvent.click(up())
   rerender(<Floor snapshot={snap()} nodes={twelve().slice(0, 6)} />)
-  expect(screen.getByText('Étage 2 / 2')).toBeInTheDocument()
+  expect(pickLabel()).toBe('Étage 2 / 2')
   expect(container.querySelectorAll('g.rack')).toHaveLength(2)
+})
+
+// --- Mouvement (#36): une réaction ponctuelle, jamais une boucle
+const motion = () => vi.stubGlobal('matchMedia', (q: string) => ({ matches: false, media: q }))
+const animated = (c: HTMLElement) => c.querySelectorAll('[data-arriving], [data-role="leaving"], [data-from], .is-fresh, [data-roll]')
+
+test('aucun attribut ni classe d\'animation au premier rendu, même avec 12 nœuds et une alerte', () => {
+  motion()
+  const { container } = render(<Floor snapshot={snap()} nodes={twelve({ n10: 'offline' })} />)
+  expect(animated(container)).toHaveLength(0)
+})
+
+test('arriver sur une salle : data-arriving sur sa couche, --i sur ses baies, la couche de départ est marquée', () => {
+  motion()
+  vi.useFakeTimers()
+  const { container } = render(<Floor snapshot={snap()} nodes={twelve()} />)
+  fireEvent.click(up())
+  const layers = [...container.querySelectorAll('.level')]
+  expect(layers.map((e) => [e.getAttribute('data-level'), e.getAttribute('data-role')])).toEqual([['1', 'leaving'], ['2', 'current']])
+  const room = container.querySelector('.level[data-level="2"]')!
+  expect(room.hasAttribute('data-arriving')).toBe(true)
+  expect(room.getAttribute('data-from')).toBe('above')
+  expect([...room.querySelectorAll('g.rack')].map((r) => (r as unknown as SVGElement).style.getPropertyValue('--i'))).toEqual(expect.arrayContaining(['0', '1', '2', '3']))
+  const leaving = container.querySelector('.level[data-level="1"]')!
+  expect(leaving.hasAttribute('inert')).toBe(true); expect(leaving.getAttribute('aria-hidden')).toBe('true')
+  expect(leaving.getAttribute('data-from')).toBe('above')
+  act(() => { vi.advanceTimersByTime(600) })
+  expect(container.querySelectorAll('.level')).toHaveLength(1)
+  expect(container.querySelector('[data-arriving]')).toBeNull()
+  vi.useRealTimers()
+})
+
+test('le numéro d\'étage roule une fois, dans le sens du mouvement', () => {
+  motion()
+  const { container } = render(<Floor snapshot={snap()} nodes={twelve()} />)
+  expect(container.querySelector('[data-roll]')).toBeNull()
+  fireEvent.click(up())
+  expect(container.querySelector('[data-roll]')!.getAttribute('data-roll')).toBe('up')
+  fireEvent.click(down())
+  expect(container.querySelector('[data-roll]')!.getAttribute('data-roll')).toBe('down')
+})
+
+test('une alerte qui apparaît sur un autre étage fait pulser son repère, jamais celui de l\'étage affiché', () => {
+  motion()
+  const { container, rerender } = render(<Floor snapshot={snap()} nodes={twelve()} />)
+  expect(container.querySelector('.is-fresh')).toBeNull()
+  rerender(<Floor snapshot={snap()} nodes={twelve({ n10: 'offline' })} />)
+  expect(container.querySelector('[data-floor-marker="3"]')!.classList.contains('is-fresh')).toBe(true)
+  expect(container.querySelectorAll('.is-fresh')).toHaveLength(1)
+  rerender(<Floor snapshot={snap()} nodes={twelve({ n2: 'offline', n10: 'offline' })} />)
+  expect(container.querySelector('[data-floor-marker="1"]')!.classList.contains('is-fresh')).toBe(false) // the floor shown
+})
+
+test('mouvement réduit : ni couche qui part, ni data-arriving, ni is-fresh, ni numéro qui roule', () => {
+  const { container, rerender } = render(<Floor snapshot={snap()} nodes={twelve()} />) // beforeEach: reduced motion
+  fireEvent.click(up())
+  expect(container.querySelectorAll('.level')).toHaveLength(1)
+  rerender(<Floor snapshot={snap()} nodes={twelve({ n10: 'offline' })} />)
+  expect(container.querySelectorAll('[data-arriving], [data-role="leaving"], .is-fresh, [data-roll]')).toHaveLength(0)
 })
