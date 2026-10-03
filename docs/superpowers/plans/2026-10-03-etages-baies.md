@@ -94,3 +94,9 @@ Choix direct d'un étage par clic sur un repère, Home / End, mémoire entre ses
 2. `offline-by-design` sans pastille (proposé), ou pastille neutre.
 3. « TA TABLE » masqué sur les salles des serveurs (proposé), ou gardé dans son coin.
 4. Sélecteur sous les boutons de rotation, en haut à gauche (proposé).
+
+## Décisions de Loïc (2026-10-03), prioritaires sur ce qui précède
+- **Nœud éteint par conception** (`offline_by_design`, ex. Artémis) : pas de pastille sur le sélecteur ; sa baie reste affichée éteinte sur son étage.
+- **Ordre des nœuds = ordre d'importance, défini côté serveur** : le tuple `NODES` de `server/src/nexus/nodes.py` devient cortex, synapse, artemis, helios (commentaire : ordre d'importance, il fixe l'étage de chaque nœud). L'interface garde l'ordre reçu de `/api/nodes`, sans tri par `id`. Un test serveur fige cet ordre ; un test d'interface vérifie que l'ordre reçu est conservé et que l'étage d'un nœud ne dépend pas de son statut. Un nœud absent de la réponse suivante ne décale pas les autres d'étage tant que la liste du serveur est la même (l'ordre vient du serveur, pas de la présence).
+- **« TA TABLE »** : visible à tous les étages (une demande reçue ne disparaît pas parce que l'on regarde les baies).
+- **Sélecteur** : en haut à gauche, sous ↺ ↻ (proposition retenue) ; les captures mesurent la taille de l'étage 1 au-delà de 4 nœuds.
