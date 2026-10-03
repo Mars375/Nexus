@@ -19,6 +19,11 @@ access_log = logging.getLogger("nexus.access")
 
 UNKNOWN_ROUTE = "<route inconnue>"
 MASKED_PATH = "<chemin masqué>"
+UNKNOWN_METHOD = "<méthode inconnue>"
+# Méthodes HTTP standard (RFC 9110, plus PATCH) : toute autre valeur est un jeton reçu.
+HTTP_METHODS = frozenset(
+    {"GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"}
+)
 # Seules routes WebSocket : leur chemin sans paramètres ne porte aucune valeur reçue.
 WEBSOCKET_PATHS = frozenset({"/api/ws"})
 
@@ -58,7 +63,9 @@ class AccessLogMiddleware:
             route = scope.get("route")
             template = getattr(route, "path", None) or UNKNOWN_ROUTE
             elapsed = (time.perf_counter() - started) * 1000
-            access_log.info("%s %s %d %.0f ms", scope["method"], template, status, elapsed)
+            method = scope.get("method")
+            method = method if method in HTTP_METHODS else UNKNOWN_METHOD
+            access_log.info("%s %s %d %.0f ms", method, template, status, elapsed)
 
 
 class WebSocketPathFilter(logging.Filter):

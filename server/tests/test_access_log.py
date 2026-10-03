@@ -293,3 +293,20 @@ def test_the_uvicorn_access_logger_has_no_output_even_if_access_log_is_left_on()
     access = uvicorn_log_config()["loggers"]["uvicorn.access"]
     assert access["handlers"] == []
     assert access["propagate"] is False
+
+
+@pytest.mark.parametrize("method", [SECRET, "get", "PROPFIND", ""])
+def test_an_unknown_http_method_is_never_copied_into_the_log(method, http_scope, caplog):
+    # Avec le parseur h11, n'importe quel jeton devient `scope["method"]` : un secret aussi.
+    caplog.set_level(logging.INFO, logger="nexus.access")
+    http_scope["method"] = method
+
+    async def app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 405, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    asyncio.run(AccessLogMiddleware(app)(http_scope, AsyncMock(), AsyncMock()))
+
+    (line,) = access_lines(caplog)
+    assert line.startswith(f"{logs.UNKNOWN_METHOD} ")
+    assert SECRET not in line
