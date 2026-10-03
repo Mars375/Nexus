@@ -77,7 +77,7 @@ async function expectNoLabelOverlap(page: import('@playwright/test').Page, when:
   }
 }
 
-for (const width of [1440, 1101, 1100, 761]) {
+for (const width of [1440, 1101, 1100, 800, 761]) {
   test(`aucune étiquette de poste n'en recouvre une autre à ${width} px`, async ({ page, request }) => {
     await seedAllAgents(request)
     await page.setViewportSize({ width, height: 900 })
