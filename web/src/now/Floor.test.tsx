@@ -567,7 +567,7 @@ test('une alerte qui apparaît sur un autre étage fait pulser son repère, jama
   rerender(<Floor snapshot={snap()} nodes={twelve({ n10: 'offline' })} />)
   expect(container.querySelector('[data-floor-marker="3"]')!.classList.contains('is-fresh')).toBe(true)
   expect(container.querySelectorAll('.is-fresh')).toHaveLength(1)
-  rerender(<Floor snapshot={snap()} nodes={twelve({ n2: 'offline', n10: 'offline' })} />)
+  rerender(<Floor snapshot={snap()} nodes={twelve({ cortex: 'offline', n10: 'offline' })} />)
   expect(container.querySelector('[data-floor-marker="1"]')!.classList.contains('is-fresh')).toBe(false) // the floor shown
 })
 
