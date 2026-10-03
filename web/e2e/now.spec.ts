@@ -121,16 +121,18 @@ test('flèche gauche puis flèche droite : retour à l\'angle de départ', async
   await expect(stage).toHaveAttribute('data-angle', '0')
 })
 
-test('un glisser sur une étiquette de poste n\'ouvre pas la tâche', async ({ page, request }) => {
+test('un glisser sur une étiquette de poste fait pivoter l\'étage sans ouvrir la tâche', async ({ page, request }) => {
   await seedAllAgents(request)
   await page.goto('/#/maintenant')
   const link = page.locator('a[data-label]').first()
   const b = (await link.boundingBox())!
-  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2)
+  const x = b.x + b.width / 2, y = b.y + b.height / 2
+  await page.mouse.move(x, y)
   await page.mouse.down()
-  await page.mouse.move(b.x + b.width / 2 + 120, b.y + b.height / 2, { steps: 6 })
+  await page.mouse.move(x + 120, y, { steps: 3 }) // 120 px = 48°
+  await page.mouse.move(x + 200, y, { steps: 6 }) // 200 px = 80° : plus de 45°
   await page.mouse.up()
-  await expect(page.locator('[data-stage]')).toHaveAttribute('data-angle', '0') // 48° → 0° : calé
+  await expect(page.locator('[data-stage]')).toHaveAttribute('data-angle', '90')
   expect(page.url()).toContain('#/maintenant')
 })
 

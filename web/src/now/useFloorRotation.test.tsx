@@ -142,3 +142,24 @@ test('démonter en pleine animation ne laisse aucun rappel', () => {
   unmount()
   expect(() => act(() => { vi.advanceTimersByTime(500) })).not.toThrow()
 })
+
+test('un simple clic pendant l\'animation ne fige pas l\'étage à un angle intermédiaire', () => {
+  const { result } = renderHook(() => useFloorRotation())
+  act(() => result.current.rotateBy(90))
+  act(() => { vi.advanceTimersByTime(100) })
+  act(() => result.current.stage.onPointerDown(pointer(50)))
+  act(() => result.current.stage.onPointerUp(pointer(50)))
+  act(() => { vi.advanceTimersByTime(600) })
+  expect(result.current.angle).toBe(90)
+})
+
+test('un second pointeur qui se pose et se lève ne fait pas perdre le calage du premier', () => {
+  const { result } = renderHook(() => useFloorRotation())
+  act(() => result.current.stage.onPointerDown(pointer(0, { pointerId: 1 })))
+  act(() => result.current.stage.onPointerMove(pointer(100, { pointerId: 1 }))) // 40°
+  act(() => result.current.stage.onPointerDown(pointer(300, { pointerId: 2 })))
+  act(() => result.current.stage.onPointerUp(pointer(300, { pointerId: 2 })))
+  act(() => result.current.stage.onPointerUp(pointer(100, { pointerId: 1 })))
+  act(() => { vi.advanceTimersByTime(600) })
+  expect(result.current.angle % 90).toBe(0)
+})

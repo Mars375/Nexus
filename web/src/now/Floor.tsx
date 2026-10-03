@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import type { ReactNode } from 'react'
+import type { DragEvent, ReactNode } from 'react'
 import type { NodeState, NowSnapshot } from '@/api'
 import { age } from '@/format'
 import { isStale } from '@/freshness'
@@ -119,7 +119,7 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
 
   return (
     <div className="@container relative mx-auto w-full select-none focus-visible:outline-2 focus-visible:outline-accent" style={{ aspectRatio: `${l.viewBox.w} / ${l.viewBox.h}`, maxHeight: '100%', touchAction: 'pan-y' }}
-      {...(stage && { ...stage, role: 'group', tabIndex: 0, 'data-stage': '', 'data-angle': Math.round(angle * 10) / 10, 'aria-label': 'Étage : glisser, ou flèches gauche et droite, pour le faire pivoter' })}>
+      {...(stage && { ...stage, onDragStart: (e: DragEvent<HTMLElement>) => e.preventDefault(), role: 'group', tabIndex: 0, 'data-stage': '', 'data-angle': Math.round(angle * 10) / 10, 'aria-label': 'Étage : glisser, ou flèches gauche et droite, pour le faire pivoter' })}>
       <svg viewBox={`${l.viewBox.x} ${l.viewBox.y} ${l.viewBox.w} ${l.viewBox.h}`} className="absolute inset-0 size-full" role="img"
         aria-label="Étage de Nexus : un poste par agent, ta table au centre, la salle des serveurs">
         <defs>
@@ -156,7 +156,7 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
           m.wait ? '[&>span:first-child]:text-attention' : m.block ? '[&>span:first-child]:text-danger' : m.run ? '' : '[&>span:first-child]:text-unknown')
         const style = { left: `${left}%`, top: `${top}%` }
         return target
-          ? <a key={m.agent} href={`#/travail/${target}`} data-label={m.agent} className={clsx(cls, 'cursor-pointer bg-transparent no-underline')} style={style} aria-label={`${displayName(m.agent)}, ${targetTitle} : ouvrir la tâche`}>{name}</a>
+          ? <a key={m.agent} href={`#/travail/${target}`} data-label={m.agent} draggable={false} className={clsx(cls, 'cursor-pointer bg-transparent no-underline')} style={style} aria-label={`${displayName(m.agent)}, ${targetTitle} : ouvrir la tâche`}>{name}</a>
           : <div key={m.agent} data-label={m.agent} className={cls} style={style}>{name}</div>
       })}
 

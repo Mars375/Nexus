@@ -333,3 +333,10 @@ test('le coin de la table garde l\'ambre et le « +N sur la table » quand il y 
   expect(corner.querySelector('span')!.className).toContain('text-attention')
   expect(corner.textContent).toContain('5 demandes · +2 sur la table')
 })
+
+test('les liens des étiquettes ne se laissent pas glisser par le navigateur', () => {
+  const { container } = render(<Floor snapshot={snap()} nodes={[]} />)
+  for (const a of container.querySelectorAll('a[data-label]')) expect(a.getAttribute('draggable')).toBe('false')
+  const notCancelled = fireEvent.dragStart(screen.getByRole('link', { name: /Helios/ }))
+  expect(notCancelled).toBe(false) // dragstart annulé : le glisser reste un glisser de pointeur
+})

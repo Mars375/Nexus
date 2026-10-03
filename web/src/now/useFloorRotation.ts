@@ -69,8 +69,9 @@ export function useFloorRotation(): { angle: number; rotateBy: (delta: number) =
   const stage: FloorStage = {
     onPointerDown: (e) => {
       if (e.button !== 0 || (e.target as Element).closest?.('button')) return
+      if (drag.current?.active) return // a second pointer never takes over a drag in progress
       swallowClick.current = false
-      stopAnimation()
+      // The animation keeps running until the gesture really is a drag: a plain click must not freeze it mid-way.
       drag.current = { id: e.pointerId, startX: e.clientX, startAngle: current.current, active: false }
     },
     onPointerMove: (e) => {
@@ -80,6 +81,8 @@ export function useFloorRotation(): { angle: number; rotateBy: (delta: number) =
       if (!d.active) {
         if (Math.abs(dx) < DRAG_THRESHOLD_PX) return
         d.active = true
+        stopAnimation()
+        d.startAngle = current.current
         // Capture only once it is a drag, so a plain click still reaches the label under the pointer.
         try { e.currentTarget.setPointerCapture?.(d.id) } catch { /* pointer already released */ }
       }
