@@ -74,6 +74,7 @@ Toute décision structurante s'ajoute ici.
 - **Date :** 2026-09-28
 - **Décision :** tous les documents Nexus sont en français (lecture Loïc) ; les identifiants de code, champs, enums et noms de fichiers techniques restent en anglais.
 - **Conséquences :** cohérence avec l'existant (Phases Hexapod/LHY, etc.).
+- **Précision (2026-10-03) :** les commentaires et docstrings du code sont aussi en anglais, sur demande de Loïc ; on traduit ceux qu'un changement touche, sans traduction en masse.
 - **Statut :** accepté.
 
 ## ADR-010 — Frontière par nœud : chaque gardien chez lui
