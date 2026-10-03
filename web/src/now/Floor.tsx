@@ -3,7 +3,7 @@ import type { NodeState, NowSnapshot } from '@/api'
 import { age } from '@/format'
 import { isStale } from '@/freshness'
 import { useNow } from '@/useNow'
-import { DESK, LABEL_LIFT, RACK, box, layoutFloor, toPercent, type Box, type Layout } from './iso'
+import { DESK, LABEL_LIFT, RACK, box, drawOrder, layoutFloor, toPercent, type Box, type Dir, type Layout } from './iso'
 import { AGE_TICK_MS, displayName, rackLabel, rackTone, seatModels, type RackTone, type SeatModel } from './model'
 import { useArrivals } from './useArrivals'
 import './floor.css'
@@ -33,15 +33,34 @@ function Desk({ l, seat, m }: { l: Layout; seat: Layout['seats'][number]; m: Sea
       <ellipse className="pool-att" cx={pool[0]} cy={pool[1]} rx={1.9 * 22.5} ry={1.9 * 13} />
       <Faces b={box(l, x, y, 0, DESK.w, DESK.d, DESK.h)} topClass="desk-top" />
       <Faces b={box(l, x + 0.35, y + 0.15, DESK.h, 2.3, 0.12, 0.95)} />
-      <polygon className="screen" points={screenPts} />
+      {l.sees(0, 1) && <polygon className="screen" points={screenPts} />}
       <g className="beacon"><line x1={bx} y1={by0} x2={bx} y2={by1} /><polygon points={`${bx},${by1 - 7} ${bx + 6},${by1} ${bx},${by1 + 7} ${bx - 6},${by1}`} /></g>
     </g>
   )
 }
 
+const LED_FACES: Dir[] = ['+x', '-x', '+y', '-y']
+const NORMAL: Record<Dir, readonly [number, number]> = { '+x': [1, 0], '-x': [-1, 0], '+y': [0, 1], '-y': [0, -1] }
+
+/** One indicator light on a rack side face, `z` being its top edge. */
+function ledPoints(l: Layout, r: { x: number; y: number }, dir: Dir, z: number): string {
+  const along = [r.x + 0.25, r.x + 1.15], across = [r.y + 0.25, r.y + 1.15]
+  const fixed = dir === '+x' ? r.x + RACK.w : dir === '-x' ? r.x : dir === '+y' ? r.y + RACK.d : r.y
+  const at = (u: number, zz: number) => (dir === '+x' || dir === '-x' ? l.project(fixed, u, zz) : l.project(u, fixed, zz))
+  const [a, b] = dir === '+x' || dir === '-x' ? across : along
+  return [at(a, z), at(b, z), at(b, z - 0.16), at(a, z - 0.16)].map((q) => q.join(',')).join(' ')
+}
+
 type RackView = { node: NodeState; tone: RackTone; text: string }
 
-export function Floor({ snapshot, nodes, nodesFailed = false }: { snapshot: NowSnapshot; nodes: NodeState[] | undefined; nodesFailed?: boolean }) {
+type FloorProps = { snapshot: NowSnapshot; nodes: NodeState[] | undefined; nodesFailed?: boolean }
+
+export function Floor(props: FloorProps) {
+  return <FloorScene {...props} angle={0} />
+}
+
+/** The floor seen at `angle` degrees: pure drawing, the angle is owned by the caller. */
+export function FloorScene({ snapshot, nodes, nodesFailed = false, angle }: FloorProps & { angle: number }) {
   const now = useNow(AGE_TICK_MS)
   const seats = seatModels(snapshot)
   // Une mesure trop ancienne, ou une relecture en échec : jamais de vert sur une donnée périmée.
@@ -49,7 +68,7 @@ export function Floor({ snapshot, nodes, nodesFailed = false }: { snapshot: NowS
     const stale = nodesFailed || isStale(node.measured_at, 'nodes', now)
     return { node, tone: stale ? 'unknown' : rackTone(node), text: `${node.id.toUpperCase()} · ${stale ? 'périmée' : rackLabel(node)}` }
   })
-  const l = layoutFloor(seats.length, nodes === undefined ? 1 : racks.length) // la salle garde sa place pendant la lecture
+  const l = layoutFloor(seats.length, nodes === undefined ? 1 : racks.length, angle) // la salle garde sa place pendant la lecture
   const freshAsks = useArrivals(snapshot.asks.map((q) => q.event))
   const freshRoutes = new Set(snapshot.asks.filter((q) => freshAsks.has(q.event)).map((q) => q.agent))
   const p = l.project
@@ -61,6 +80,32 @@ export function Floor({ snapshot, nodes, nodesFailed = false }: { snapshot: NowS
   const extra = snapshot.asks.length - tickets.length
   const tableLabel = toPercent(l, p(l.table.x + l.table.w + 0.3, l.table.y + 1, 0.4))
   const label = (ask: number) => ask === 0 ? 'aucune demande reçue (7 j)' : `${ask} demande${ask > 1 ? 's' : ''}`
+  // Le point d'ancrage de l'étiquette d'un poste : au-dessus du bureau, à tous les angles.
+  const anchor = (s: Layout['seats'][number]) => p(s.x + DESK.w / 2, s.y + DESK.d / 2, 1.8)
+
+  const dais = (
+    <g key="table" className="dais" data-on={String(snapshot.asks.length > 0)}>
+      <Faces b={box(l, l.table.x, l.table.y, 0, l.table.w, l.table.d, 0.18)} />
+      <Faces b={box(l, l.table.x + 0.9, l.table.y + 0.7, 0.18, l.table.w - 1.8, l.table.d - 1.4, 0.5)} topClass="table-top" />
+      {tickets.map((q, i) => {
+        const tx = l.table.x + 1.3 + i * 0.95
+        const pts = [p(tx, l.table.y + 1.15, 0.69), p(tx + 0.7, l.table.y + 1.15, 0.69), p(tx + 0.7, l.table.y + 1.95, 0.69), p(tx, l.table.y + 1.95, 0.69)].map((q2) => q2.join(',')).join(' ')
+        return <polygon key={q.event} data-ticket={q.event} className={clsx('ticket', freshAsks.has(q.event) && 'is-fresh')} points={pts} />
+      })}
+    </g>
+  )
+  const rackView = (index: number) => {
+    const rv = racks[index]
+    if (!rv) return null
+    const r = l.racks[index], { node: n, tone } = rv
+    const face = LED_FACES.find((d) => l.sees(...NORMAL[d])) ?? '+x'
+    return (
+      <g key={`rack-${n.id}`} className="rack" data-node={n.id} data-tone={tone}>
+        <Faces b={box(l, r.x, r.y, 0, RACK.w, RACK.d, RACK.h)} />
+        {[0, 1, 2, 3, 4].map((j) => <polygon key={j} className="led" data-face={face} points={ledPoints(l, r, face, 2.1 - j * 0.38)} />)}
+      </g>
+    )
+  }
 
   return (
     <div className="@container relative mx-auto w-full" style={{ aspectRatio: `${l.viewBox.w} / ${l.viewBox.h}`, maxHeight: '100%' }}>
@@ -79,38 +124,16 @@ export function Floor({ snapshot, nodes, nodesFailed = false }: { snapshot: NowS
             <path className="r-spark" d={routePath(l, l.seats[i])} pathLength={100} />
           </g>
         ))}
-        <g className="dais" data-on={String(snapshot.asks.length > 0)}>
-          <Faces b={box(l, l.table.x, l.table.y, 0, l.table.w, l.table.d, 0.18)} />
-          <Faces b={box(l, l.table.x + 0.9, l.table.y + 0.7, 0.18, l.table.w - 1.8, l.table.d - 1.4, 0.5)} topClass="table-top" />
-          {tickets.map((q, i) => {
-            const tx = l.table.x + 1.3 + i * 0.95
-            const pts = [p(tx, l.table.y + 1.15, 0.69), p(tx + 0.7, l.table.y + 1.15, 0.69), p(tx + 0.7, l.table.y + 1.95, 0.69), p(tx, l.table.y + 1.95, 0.69)].map((q2) => q2.join(',')).join(' ')
-            return <polygon key={q.event} data-ticket={q.event} className={clsx('ticket', freshAsks.has(q.event) && 'is-fresh')} points={pts} />
-          })}
-        </g>
-        {racks.map(({ node: n, tone }, i) => {
-          const r = l.racks[i]
-          return (
-            <g key={n.id} className="rack" data-node={n.id} data-tone={tone}>
-              <Faces b={box(l, r.x, r.y, 0, RACK.w, RACK.d, RACK.h)} />
-              {[0, 1, 2, 3, 4].map((j) => {
-                const z = 2.1 - j * 0.38, xr = r.x + RACK.w
-                const pts = [p(xr, r.y + 0.25, z), p(xr, r.y + 1.15, z), p(xr, r.y + 1.15, z - 0.16), p(xr, r.y + 0.25, z - 0.16)].map((q) => q.join(',')).join(' ')
-                return <polygon key={j} className="led" points={pts} />
-              })}
-            </g>
-          )
-        })}
-        {seats.map((m, i) => <Desk key={m.agent} l={l} seat={l.seats[i]} m={m} />)}
+        {drawOrder(l).map((o) => o.kind === 'seat' ? <Desk key={seats[o.index].agent} l={l} seat={l.seats[o.index]} m={seats[o.index]} /> : o.kind === 'rack' ? rackView(o.index) : dais)}
         {seats.map((m, i) => {
-          const s = l.seats[i], from = s.back ? p(s.x + 1.5, s.y + 0.2, 1.8) : p(s.x + 1.5, s.y + DESK.d, 0)
-          return <path key={m.agent} className="leader" d={`M${from} L${from[0]} ${from[1] + (s.back ? -LABEL_LIFT : 26)}`} />
+          const from = anchor(l.seats[i])
+          return <path key={m.agent} className="leader" d={`M${from} L${from[0]} ${from[1] - LABEL_LIFT}`} />
         })}
       </svg>
 
       {seats.map((m, i) => {
-        const s = l.seats[i], from = s.back ? p(s.x + 1.5, s.y + 0.2, 1.8) : p(s.x + 1.5, s.y + DESK.d, 0)
-        const [left, top] = toPercent(l, [from[0], from[1] + (s.back ? -LABEL_LIFT : 26)])
+        const from = anchor(l.seats[i])
+        const [left, top] = toPercent(l, [from[0], from[1] - LABEL_LIFT])
         const blocked = snapshot.blocks.find((b) => b.lead_agent === m.agent)
         // Un poste dont l'agent est seulement bloqué ouvre la tâche bloquée.
         const target = m.task ?? (m.block ? blocked?.task ?? null : null)
@@ -119,7 +142,7 @@ export function Floor({ snapshot, nodes, nodesFailed = false }: { snapshot: NowS
         const name = <><span className="block font-orbital-display text-[13px] font-semibold tracking-[0.14em] leading-[14px]">{displayName(m.agent).toUpperCase()}</span>
           {m.title && <span className="mx-auto hidden max-w-[15ch] truncate font-data text-[11px] leading-[13px] text-ink @min-[1150px]:block">{m.title}</span>}
           <span className="hidden font-data text-[11px] leading-[13px] text-muted @min-[800px]:block">{meta}</span></>
-        const cls = clsx('absolute whitespace-nowrap text-center', s.back ? '-translate-x-1/2 -translate-y-full' : '-translate-x-1/2',
+        const cls = clsx('absolute whitespace-nowrap text-center -translate-x-1/2 -translate-y-full',
           m.wait ? '[&>span:first-child]:text-attention' : m.block ? '[&>span:first-child]:text-danger' : m.run ? '' : '[&>span:first-child]:text-unknown')
         const style = { left: `${left}%`, top: `${top}%` }
         return target
@@ -132,10 +155,12 @@ export function Floor({ snapshot, nodes, nodesFailed = false }: { snapshot: NowS
         <span className="block font-data text-[11px] text-muted">{label(snapshot.asks.length)}{extra > 0 && ` · +${extra} sur la table`}</span>
       </div>
 
-      <div className="absolute bottom-0 right-0 flex flex-col gap-1 font-data text-[11px]">
-        {nodes === undefined && <div className="text-muted">{nodesFailed ? 'nœuds illisibles' : 'lecture des nœuds…'}</div>}
-        {racks.map(({ node: n, tone, text }) => <div key={n.id} className={tone === 'ok' ? 'text-ink' : 'text-muted'}>{text}</div>)}
-      </div>
+      <ul data-legend className="pointer-events-none absolute bottom-0 right-0 m-0 flex list-none flex-col gap-1 p-0 font-data text-[11px]">
+        {nodes === undefined && <li className="text-muted">{nodesFailed ? 'nœuds illisibles' : 'lecture des nœuds…'}</li>}
+        {racks.map(({ node: n, tone, text }) => (
+          <li key={n.id} className={clsx('flex items-center gap-2', tone === 'ok' ? 'text-ink' : 'text-muted')}><span className="legend-dot" data-tone={tone} aria-hidden="true" />{text}</li>
+        ))}
+      </ul>
     </div>
   )
 }
