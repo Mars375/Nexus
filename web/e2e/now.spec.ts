@@ -52,26 +52,89 @@ async function seedAllAgents(request: import('@playwright/test').APIRequestConte
   }
 }
 
+async function expectNoLabelOverlap(page: import('@playwright/test').Page, when: string) {
+  const boxes = await page.locator('[data-label]').evaluateAll((els) => els.map((e) => {
+    const r = e.getBoundingClientRect()
+    // le texte compte aussi : une ligne plus large que l'étiquette déborderait sur sa voisine
+    const spans = [...e.querySelectorAll('span')].map((s) => { const range = document.createRange(); range.selectNodeContents(s); return range.getBoundingClientRect() }).filter((q) => q.width > 0)
+    const left = Math.min(r.left, ...spans.map((q) => q.left)), right = Math.max(r.right, ...spans.map((q) => q.right))
+    return { id: e.getAttribute('data-label'), left, right, top: r.top, bottom: r.bottom }
+  }))
+  for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+    const a = boxes[i], b = boxes[j]
+    const hit = a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+    expect(hit, `${when} : ${a.id} recouvre ${b.id} ${JSON.stringify([a, b])}`).toBe(false)
+  }
+  // ni le coin « TA TABLE », ni la légende des baies, ni les boutons de rotation
+  const fixed = await page.locator('[data-table-corner], [data-legend], [data-stage] button').evaluateAll((els) => els.map((e) => {
+    const r = e.getBoundingClientRect()
+    return { id: e.hasAttribute('data-table-corner') ? 'coin TA TABLE' : e.hasAttribute('data-legend') ? 'légende' : `bouton ${e.getAttribute('aria-label')}`, left: r.left, right: r.right, top: r.top, bottom: r.bottom }
+  }))
+  expect(fixed).toHaveLength(4)
+  for (const a of boxes) for (const b of fixed) {
+    const hit = a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+    expect(hit, `${when} : ${a.id} recouvre ${b.id} ${JSON.stringify([a, b])}`).toBe(false)
+  }
+}
+
 for (const width of [1440, 1101, 1100, 761]) {
   test(`aucune étiquette de poste n'en recouvre une autre à ${width} px`, async ({ page, request }) => {
     await seedAllAgents(request)
     await page.setViewportSize({ width, height: 900 })
     await page.goto('/#/maintenant')
     await expect(page.locator('[data-label]')).toHaveCount(8)
-    const boxes = await page.locator('[data-label]').evaluateAll((els) => els.map((e) => {
-      const r = e.getBoundingClientRect()
-      // le texte compte aussi : une ligne plus large que l'étiquette déborderait sur sa voisine
-      const spans = [...e.querySelectorAll('span')].map((s) => { const range = document.createRange(); range.selectNodeContents(s); return range.getBoundingClientRect() }).filter((q) => q.width > 0)
-      const left = Math.min(r.left, ...spans.map((q) => q.left)), right = Math.max(r.right, ...spans.map((q) => q.right))
-      return { id: e.getAttribute('data-label'), left, right, top: r.top, bottom: r.bottom }
-    }))
-    for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
-      const a = boxes[i], b = boxes[j]
-      const hit = a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
-      expect(hit, `${a.id} recouvre ${b.id} ${JSON.stringify([a,b])}`).toBe(false)
+    await expectNoLabelOverlap(page, '0°')
+  })
+
+  test(`après un glisser, l'angle se cale et aucune étiquette n'en recouvre une autre à ${width} px`, async ({ page, request }) => {
+    await seedAllAgents(request)
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto('/#/maintenant')
+    const stage = page.locator('[data-stage]')
+    await expect(page.locator('[data-label]')).toHaveCount(8)
+    await expect(stage).toHaveAttribute('data-angle', '0')
+    const box = (await stage.boundingBox())!
+    const x = box.x + box.width / 2, y = box.y + box.height / 2
+    await page.mouse.move(x, y)
+    await page.mouse.down()
+    await page.mouse.move(x + 100, y, { steps: 5 })
+    await page.mouse.move(x + 200, y, { steps: 5 }) // 80° : pas encore calé
+    await page.mouse.up()
+    await expect(stage).toHaveAttribute('data-angle', '90') // calé après l'animation
+    await expectNoLabelOverlap(page, '90°')
+    for (const quarter of ['180', '270', '360']) {
+      await page.getByRole('button', { name: 'Tourner l\'étage vers la droite' }).click()
+      await expect(stage).toHaveAttribute('data-angle', quarter)
+      await expectNoLabelOverlap(page, `${quarter}°`)
     }
   })
 }
+
+test('flèche gauche puis flèche droite : retour à l\'angle de départ', async ({ page }) => {
+  await page.goto('/#/maintenant')
+  const stage = page.locator('[data-stage]')
+  await expect(stage).toHaveAttribute('data-angle', '0')
+  await stage.focus()
+  await page.keyboard.press('ArrowLeft')
+  await expect(stage).toHaveAttribute('data-angle', '-90')
+  await page.keyboard.press('ArrowRight')
+  await expect(stage).toHaveAttribute('data-angle', '0')
+})
+
+test('un glisser sur une étiquette de poste fait pivoter l\'étage sans ouvrir la tâche', async ({ page, request }) => {
+  await seedAllAgents(request)
+  await page.goto('/#/maintenant')
+  const link = page.locator('a[data-label]').first()
+  const b = (await link.boundingBox())!
+  const x = b.x + b.width / 2, y = b.y + b.height / 2
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  await page.mouse.move(x + 120, y, { steps: 3 }) // 120 px = 48°
+  await page.mouse.move(x + 200, y, { steps: 6 }) // 200 px = 80° : plus de 45°
+  await page.mouse.up()
+  await expect(page.locator('[data-stage]')).toHaveAttribute('data-angle', '90')
+  expect(page.url()).toContain('#/maintenant')
+})
 
 test('mouvement réduit : une demande fraîche garde son fond ambre', async ({ page, request }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' })

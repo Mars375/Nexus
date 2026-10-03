@@ -31,6 +31,10 @@
 .rack[data-tone='ok'] .led { fill: var(--ok) }
 .rack[data-tone='unknown'] .led { fill: none; stroke: var(--unknown); stroke-width: 0.8; stroke-dasharray: 2 2 }
 .rack[data-tone='off'] .led { fill: none; stroke: var(--unknown); stroke-width: 0.8 }
+.legend-dot { box-sizing: border-box; display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; background: #23262d }
+.legend-dot[data-tone='ok'] { background: var(--ok) }
+.legend-dot[data-tone='unknown'] { background: none; border: 1px dashed var(--unknown) }
+.legend-dot[data-tone='off'] { background: none; border: 1px solid var(--unknown) }
 .leader { fill: none; stroke: rgba(244, 244, 245, 0.28) }
 .now-fresh { animation: now-fresh 1800ms ease-out both }
 @keyframes now-fresh { from { background: rgba(251, 146, 60, 0.16) } to { background: rgba(251, 146, 60, 0.05) } }

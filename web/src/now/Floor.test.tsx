@@ -1,7 +1,9 @@
-import { render, screen } from '@testing-library/react'
-import { expect, test } from 'vitest'
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { NodeState, NowSnapshot } from '@/api'
-import { Floor } from './Floor'
+import { Floor, FloorScene } from './Floor'
+import { resetFloorRotation } from './useFloorRotation'
+import { drawOrder, layoutFloor, toPercent } from './iso'
 
 const snap = (over: Partial<NowSnapshot> = {}): NowSnapshot => ({
   source: 'nexus.db', measured_at: new Date().toISOString(), operation: null, auxiliaries: [],
@@ -131,4 +133,210 @@ test('relecture des nœuds en échec : toutes les baies sont inconnues et périm
 test('aucun texte de l\'étage sous 11 px', () => {
   const { container } = render(<Floor snapshot={snap()} nodes={[node('helios', 'online')]} />)
   expect(container.innerHTML).not.toMatch(/text-\[(\d|10)px\]/)
+})
+
+const QUARTERS = [0, 90, 180, 270]
+const scene = (angle: number, nodes: NodeState[] = [node('helios', 'online'), node('synapse', 'unknown'), node('artemis', 'offline-by-design')]) =>
+  render(<FloorScene snapshot={snap()} nodes={nodes} angle={angle} />).container
+
+test('l\'écran d\'un poste n\'est dessiné que s\'il fait face au spectateur', () => {
+  const screens = (a: number) => scene(a).querySelectorAll('.desk .screen').length
+  expect(screens(0)).toBe(3)
+  expect(screens(90)).toBe(0)
+  expect(screens(180)).toBe(0)
+  expect(screens(270)).toBe(3)
+})
+
+test('le dos du moniteur reste dessiné quand l\'écran est caché', () => {
+  const c = scene(180)
+  expect(c.querySelector('.desk .screen')).toBeNull()
+  for (const desk of c.querySelectorAll('.desk')) expect(desk.querySelectorAll('.f-left, .f-right').length).toBeGreaterThanOrEqual(4) // bureau + moniteur
+})
+
+test('les LED d\'une baie sont sur une face visible, la face +x de préférence', () => {
+  const face = { 0: '+x', 90: '+x', 180: '-x', 270: '-x' } as const
+  for (const a of QUARTERS) {
+    const c = scene(a)
+    const l = layoutFloor(3, 3, a)
+    for (const rack of c.querySelectorAll('.rack')) {
+      const leds = [...rack.querySelectorAll('.led')]
+      expect(leds).toHaveLength(5)
+      for (const led of leds) {
+        const dir = led.getAttribute('data-face') as '+x'
+        expect(dir, `à ${a}°`).toBe(face[a as keyof typeof face])
+        const [nx, ny] = { '+x': [1, 0], '-x': [-1, 0], '+y': [0, 1], '-y': [0, -1] }[dir]
+        expect(l.sees(nx, ny)).toBe(true)
+      }
+    }
+  }
+})
+
+test('postes, baies et table sont dessinés du fond vers l\'avant, à chaque quart de tour', () => {
+  for (const a of QUARTERS) {
+    const { container } = render(<FloorScene snapshot={snap()} nodes={[node('helios', 'online'), node('synapse', 'unknown'), node('artemis', 'offline-by-design')]} angle={a} />)
+    const dom = [...container.querySelectorAll('g.desk, g.rack, g.dais')].map((g) => g.getAttribute('data-agent') ?? g.getAttribute('data-node') ?? 'table')
+    const seats = ['helios', 'mnema', 'artemis'], racks = ['helios', 'synapse', 'artemis']
+    const want = drawOrder(layoutFloor(3, 3, a)).map((o) => o.kind === 'seat' ? seats[o.index] : o.kind === 'rack' ? racks[o.index] : 'table')
+    // `helios` et `artemis` existent comme poste et comme baie : on compare le genre aussi
+    const kinds = [...container.querySelectorAll('g.desk, g.rack, g.dais')].map((g) => g.classList[0])
+    const wantKinds = drawOrder(layoutFloor(3, 3, a)).map((o) => o.kind === 'seat' ? 'desk' : o.kind === 'rack' ? 'rack' : 'dais')
+    expect(dom, `à ${a}°`).toEqual(want)
+    expect(kinds).toEqual(wantKinds)
+  }
+})
+
+test('chaque étiquette de poste est du côté que lui donne l\'angle (au-dessus ou en dessous), avec son trait de rappel', () => {
+  for (const a of QUARTERS) {
+    const { container } = render(<FloorScene snapshot={snap()} nodes={[]} angle={a} />)
+    const l = layoutFloor(3, 0, a)
+    const agents = ['helios', 'mnema', 'artemis']
+    agents.forEach((agent, i) => {
+      const lab = l.labels[i], from = lab.anchor
+      const [left, top] = toPercent(l, [lab.x, lab.y])
+      const el = container.querySelector(`[data-label="${agent}"]`) as HTMLElement
+      expect(el.className, agent).toContain(lab.below ? 'translate-y-0' : '-translate-y-full')
+      expect(parseFloat(el.style.left)).toBeCloseTo(left, 3)
+      expect(parseFloat(el.style.top)).toBeCloseTo(top, 3)
+      const leader = container.querySelectorAll('path.leader')[i]
+      expect(leader.getAttribute('d')).toBe(`M${from} L${lab.x} ${lab.y}`)
+    })
+  }
+})
+
+test('un trait de rappel par poste, aucun pour les baies', () => {
+  expect(scene(0).querySelectorAll('path.leader')).toHaveLength(3)
+})
+
+test('la légende des baies est un coin HTML fixe : une pastille au ton de la baie et son texte', () => {
+  for (const a of [0, 135]) {
+    const c = scene(a)
+    const legend = c.querySelector('[data-legend]') as HTMLElement
+    expect(legend.closest('svg')).toBeNull()
+    expect(legend.className).toContain('bottom-0'); expect(legend.className).toContain('right-0')
+    const rows = [...legend.querySelectorAll('li')]
+    expect(rows.map((r) => r.textContent)).toEqual(['HELIOS · en ligne', 'SYNAPSE · unknown', 'ARTEMIS · hors ligne, prévu'])
+    expect(rows.map((r) => r.querySelector('[data-tone]')?.getAttribute('data-tone'))).toEqual(['ok', 'unknown', 'off'])
+    expect(rows.map((r) => r.querySelector('[data-tone]')?.getAttribute('data-tone'))).toEqual(['helios', 'synapse', 'artemis'].map((id) => c.querySelector(`[data-node="${id}"]`)!.getAttribute('data-tone')))
+  }
+})
+
+test('pendant la lecture des nœuds, le message prend la place de la légende', () => {
+  const { container } = render(<FloorScene snapshot={snap()} nodes={undefined} nodesFailed angle={90} />)
+  expect(container.querySelector('[data-legend]')!.textContent).toBe('nœuds illisibles')
+})
+
+test('le sol garde ses trois faces visibles à chaque quart de tour', () => {
+  for (const a of QUARTERS) {
+    const c = scene(a)
+    expect(c.querySelectorAll('.floor-top')).toHaveLength(1)
+    expect(c.querySelectorAll('.floor-left, .floor-right')).toHaveLength(2)
+  }
+})
+
+// --- Rotation : boutons, clavier, glisser (#30)
+class TestPointerEvent extends MouseEvent {
+  pointerId: number
+  constructor(type: string, init: PointerEventInit = {}) { super(type, init); this.pointerId = init.pointerId ?? 1 }
+}
+const stageOf = (c: HTMLElement) => c.querySelector('[data-stage]') as HTMLElement
+const screens = (c: HTMLElement) => c.querySelectorAll('.desk .screen').length
+
+beforeEach(() => { resetFloorRotation(); vi.stubGlobal('PointerEvent', TestPointerEvent); vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('reduce'), media: q })) })
+afterEach(() => { vi.unstubAllGlobals() })
+
+test('la scène est focalisable et porte un nom accessible', () => {
+  render(<Floor snapshot={snap()} nodes={[]} />)
+  const stage = screen.getByRole('group', { name: /pivoter/i })
+  expect(stage.getAttribute('tabindex')).toBe('0')
+  expect(stage.hasAttribute('data-stage')).toBe(true)
+})
+
+test('deux vrais boutons font tourner l\'étage d\'un quart de tour', () => {
+  const { container } = render(<Floor snapshot={snap()} nodes={[]} />)
+  const left = screen.getByRole('button', { name: 'Tourner l\'étage vers la gauche' })
+  const right = screen.getByRole('button', { name: 'Tourner l\'étage vers la droite' })
+  expect(left.tagName).toBe('BUTTON'); expect(left.getAttribute('type')).toBe('button')
+  expect(screens(container)).toBe(3) // 0°
+  fireEvent.click(right) // mouvement réduit : immédiat → 90°, écrans cachés
+  expect(screens(container)).toBe(0)
+  fireEvent.click(left)
+  expect(screens(container)).toBe(3)
+})
+
+test('flèches gauche et droite tournent l\'étage, et reviennent', () => {
+  const { container } = render(<Floor snapshot={snap()} nodes={[]} />)
+  fireEvent.keyDown(stageOf(container), { key: 'ArrowRight' })
+  expect(screens(container)).toBe(0)
+  fireEvent.keyDown(stageOf(container), { key: 'ArrowLeft' })
+  expect(screens(container)).toBe(3)
+})
+
+test('glisser fait pivoter puis cale sur un quart de tour', () => {
+  const { container } = render(<Floor snapshot={snap()} nodes={[]} />)
+  const stage = stageOf(container)
+  fireEvent.pointerDown(stage, { clientX: 0, button: 0 })
+  fireEvent.pointerMove(stage, { clientX: 100 }) // 40°
+  fireEvent.pointerUp(stage, { clientX: 100 })
+  expect(screens(container)).toBe(3) // 40° → 0°
+  fireEvent.pointerDown(stage, { clientX: 0, button: 0 })
+  fireEvent.pointerMove(stage, { clientX: 200 }) // 80°
+  fireEvent.pointerUp(stage, { clientX: 200 })
+  expect(screens(container)).toBe(0) // → 90°
+})
+
+test('un clic sur une étiquette après un glisser n\'ouvre pas la tâche, un clic simple oui', async () => {
+  const { container } = render(<Floor snapshot={snap()} nodes={[]} />)
+  const link = screen.getByRole('link', { name: /Helios/ })
+  const stage = stageOf(container)
+  const clicked = vi.fn((e: Event) => e.preventDefault())
+  link.addEventListener('click', clicked)
+  fireEvent.pointerDown(link, { clientX: 0, button: 0 })
+  fireEvent.pointerMove(link, { clientX: 120 })
+  fireEvent.pointerUp(link, { clientX: 120 })
+  fireEvent.click(link)
+  expect(clicked).not.toHaveBeenCalled()
+  await act(async () => { await new Promise((r) => setTimeout(r, 5)) })
+  fireEvent.pointerDown(stage, { clientX: 0, button: 0 })
+  fireEvent.pointerUp(stage, { clientX: 0 })
+  fireEvent.click(link)
+  expect(clicked).toHaveBeenCalledTimes(1)
+})
+
+test('l\'angle survit au remontage de la vue', () => {
+  const first = render(<Floor snapshot={snap()} nodes={[]} />)
+  fireEvent.click(screen.getByRole('button', { name: /vers la droite/ }))
+  first.unmount()
+  const second = render(<Floor snapshot={snap()} nodes={[]} />)
+  expect(screens(second.container)).toBe(0)
+})
+
+test('la scène expose son angle courant', () => {
+  const { container } = render(<Floor snapshot={snap()} nodes={[]} />)
+  expect(stageOf(container).getAttribute('data-angle')).toBe('0')
+  fireEvent.click(screen.getByRole('button', { name: /vers la gauche/ }))
+  expect(stageOf(container).getAttribute('data-angle')).toBe('-90')
+})
+
+test('« TA TABLE » et son compteur sont dans un coin HTML fixe, bas-gauche, hors du plan', () => {
+  const { container } = render(<Floor snapshot={snap()} nodes={[]} />)
+  const corner = container.querySelector('[data-table-corner]') as HTMLElement
+  expect(corner.closest('svg')).toBeNull()
+  expect(corner.className).toContain('bottom-0'); expect(corner.className).toContain('left-0')
+  expect(corner.textContent).toContain('TA TABLE'); expect(corner.textContent).toContain('aucune demande reçue (7 j)')
+  expect(corner.querySelector('span')!.className).toContain('text-muted')
+})
+
+test('le coin de la table garde l\'ambre et le « +N sur la table » quand il y a des demandes', () => {
+  const ask = (n: number) => ({ event: `nx-evt-${n}`, agent: 'mnema' as const, kind: 'question' as const, subject: 'Q', task: null, at: new Date().toISOString(), received_at: new Date().toISOString() })
+  const { container } = render(<Floor snapshot={snap({ asks: [ask(1), ask(2), ask(3), ask(4), ask(5)] })} nodes={[]} />)
+  const corner = container.querySelector('[data-table-corner]') as HTMLElement
+  expect(corner.querySelector('span')!.className).toContain('text-attention')
+  expect(corner.textContent).toContain('5 demandes · +2 sur la table')
+})
+
+test('les liens des étiquettes ne se laissent pas glisser par le navigateur', () => {
+  const { container } = render(<Floor snapshot={snap()} nodes={[]} />)
+  for (const a of container.querySelectorAll('a[data-label]')) expect(a.getAttribute('draggable')).toBe('false')
+  const notCancelled = fireEvent.dragStart(screen.getByRole('link', { name: /Helios/ }))
+  expect(notCancelled).toBe(false) // dragstart annulé : le glisser reste un glisser de pointeur
 })
