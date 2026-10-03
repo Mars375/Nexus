@@ -27,9 +27,18 @@ class AccessLogMiddleware:
     """Une ligne par requête HTTP : `GET /api/tasks/{task_ref} 404 3 ms`."""
 
     def __init__(self, app: ASGIApp) -> None:
+        """Wrap the ASGI app to record HTTP request summaries."""
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Run the app, passing non-HTTP scopes through without an access entry.
+
+        On HTTP completion or failure, record the method, route template (or
+        UNKNOWN_ROUTE), response status, and elapsed time rounded to milliseconds.
+        The received path and query string are omitted. If no response start was
+        observed, the recorded status is 500. App and send errors propagate after
+        the access entry is attempted.
+        """
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -37,6 +46,7 @@ class AccessLogMiddleware:
         status = 500  # sans réponse émise (exception), c'est une erreur serveur
 
         async def send_wrapper(message: dict) -> None:
+            """Capture the response status and forward the message, propagating send errors."""
             nonlocal status
             if message["type"] == "http.response.start":
                 status = message["status"]
@@ -55,6 +65,12 @@ class WebSocketPathFilter(logging.Filter):
     """Retire les paramètres (et masque un chemin inconnu) des lignes WebSocket d'uvicorn."""
 
     def filter(self, record: logging.LogRecord) -> bool:
+        """Sanitize matching WebSocket records in place and always return True.
+
+        For messages containing '"WebSocket %s"' with arguments, strip query strings
+        from string arguments starting with '/'. Keep paths in WEBSOCKET_PATHS and
+        replace other paths with MASKED_PATH. Other records are left unchanged.
+        """
         if isinstance(record.msg, str) and '"WebSocket %s"' in record.msg and record.args:
             args = list(record.args) if isinstance(record.args, tuple) else [record.args]
             for i, value in enumerate(args):
