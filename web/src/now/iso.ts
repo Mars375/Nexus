@@ -49,7 +49,7 @@ const A = Math.cos(Math.PI / 6) * UNIT
 const B = Math.sin(Math.PI / 6) * UNIT
 const PITCH = 4 // un poste tous les 4 unités sur une rangée
 const ORIGIN = { x: 150, y: 110 } // coin gauche du sol à 0° ; fixe pour que le plan à 0° garde ses coordonnées
-const PAD = 2
+const PAD = 12
 const RACK_START = 0.8
 const RACK_PITCH = 1.85
 const RACK_MARGIN = 0.5
@@ -220,40 +220,17 @@ function fixedFrame(width: number, depth: number, seats: Seat[], racks: { x: num
   const unspread = (a: number) => placeLabels(width, depth, a, seats, projector(a), [])
   let labelTop = Infinity, labelBottom = -Infinity
   for (let a = 0; a < 360; a += SAMPLE_STEP) for (const { box } of unspread(a)) { minX = Math.min(minX, box.x0); maxX = Math.max(maxX, box.x1); labelTop = Math.min(labelTop, box.y0); labelBottom = Math.max(labelBottom, box.y1) }
-  // Content bounds that do not depend on the zones: floor, racks and unspread labels.
-  const baseTop = Math.min(minY, labelTop), baseBottom = Math.max(maxY, labelBottom)
-  const frameOf = (top: number, bottom: number): Frame => ({ x: round(minX - PAD), y: round(top - PAD), w: round(maxX - minX + 2 * PAD), h: round(bottom - top + 2 * PAD) })
-  const spreadExtent = (vb: Frame, step = LABEL_STEP) => {
-    const zones = zonesOf(vb, rackCount)
-    let top = baseTop, bottom = baseBottom
-    for (let a = 0; a < 360; a += step) for (const { box } of placeLabels(width, depth, a, seats, projector(a), zones)) { top = Math.min(top, box.y0); bottom = Math.max(bottom, box.y1) }
-    return { top, bottom }
-  }
-  // Spread labels can go further up or down than that, and the zones depend on the frame: start from the
-  // tight frame and only ever grow it until every spread label fits (shrinking back would oscillate).
-  let vb = frameOf(baseTop, baseBottom)
+  const top0 = Math.min(minY, labelTop) - PAD, bottom0 = Math.max(maxY, labelBottom) + PAD
+  let vb: Frame = { x: round(minX - PAD), y: round(top0), w: round(maxX - minX + 2 * PAD), h: round(bottom0 - top0) }
+  // Spread labels can go further up or down than that; the zones depend on the frame, so settle it in a few passes.
   for (let pass = 0; pass < 8; pass++) {
-    const { top, bottom } = spreadExtent(vb)
+    const zones = zonesOf(vb, rackCount)
+    let top = vb.y + PAD, bottom = vb.y + vb.h - PAD
+    for (let a = 0; a < 360; a += LABEL_STEP) for (const { box } of placeLabels(width, depth, a, seats, projector(a), zones)) { top = Math.min(top, box.y0); bottom = Math.max(bottom, box.y1) }
     if (top >= vb.y + PAD - 0.05 && bottom <= vb.y + vb.h - PAD + 0.05) break
-    const y = round(Math.min(top, vb.y + PAD) - PAD)
-    vb = { ...vb, y, h: round(Math.max(bottom, vb.y + vb.h - PAD) + PAD - y) }
+    const y = round(top - PAD)
+    vb = { ...vb, y, h: round(bottom + PAD - y) }
   }
-  // The growth above overshoots (a label pushed above a corner zone drags the zone up with the frame):
-  // walk each edge back from the content towards the grown frame at coarse steps (angles and edge), then
-  // keep the result only if every angle still fits.
-  const fits = (f: Frame, step: number) => { const e = spreadExtent(f, step); return e.top >= f.y + PAD - 0.05 && e.bottom <= f.y + f.h - PAD + 0.05 }
-  const grown = vb, bottomEdge = grown.y + grown.h
-  let tight = grown
-  for (let top = round(baseTop - PAD); top < grown.y; top = round(top + 3)) {
-    const f = { ...grown, y: top, h: round(bottomEdge - top) }
-    if (fits(f, 3)) { tight = f; break }
-  }
-  const topEdge = tight.y
-  for (let bottom = round(baseBottom + PAD); bottom < bottomEdge; bottom = round(bottom + 3)) {
-    const f = { ...tight, y: topEdge, h: round(bottom - topEdge) }
-    if (fits(f, 3)) { tight = f; break }
-  }
-  if (fits(tight, LABEL_STEP)) vb = tight
   return vb
 }
 

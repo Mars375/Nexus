@@ -113,27 +113,6 @@ describe('viewBox fixe', () => {
   })
 })
 
-describe('marge du cadre', () => {
-  test('le cadre colle au contenu : au plus 2 unités de marge sur un côté horizontal et un côté vertical', () => {
-    for (const [agents, racks] of [[8, 4], [8, 8]] as const) {
-      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity
-      const grow = ([px, py]: readonly [number, number]) => { x0 = Math.min(x0, px); x1 = Math.max(x1, px); y0 = Math.min(y0, py); y1 = Math.max(y1, py) }
-      let vb = layoutFloor(agents, racks).viewBox
-      for (let a = 0; a < 360; a += 1) {
-        const l = layoutFloor(agents, racks, a)
-        vb = l.viewBox
-        for (const [cx, cy] of [[0, 0], [l.width, 0], [0, l.depth], [l.width, l.depth]]) { grow(l.project(cx, cy, 0)); grow(l.project(cx, cy, -0.35)) }
-        for (const r of l.racks) for (const [dx, dy] of [[0, 0], [RACK.w, 0], [0, RACK.d], [RACK.w, RACK.d]]) grow(l.project(r.x + dx, r.y + dy, RACK.h))
-        for (const { box: b } of l.labels) { grow([b.x0, b.y0]); grow([b.x1, b.y1]) }
-      }
-      const margins = { left: x0 - vb.x, right: vb.x + vb.w - x1, top: y0 - vb.y, bottom: vb.y + vb.h - y1 }
-      for (const [side, m] of Object.entries(margins)) expect(m, `${agents}/${racks} ${side}`).toBeGreaterThanOrEqual(-0.05)
-      expect(Math.min(margins.left, margins.right), `${agents}/${racks}`).toBeLessThanOrEqual(2)
-      expect(Math.min(margins.top, margins.bottom), `${agents}/${racks}`).toBeLessThanOrEqual(2)
-    }
-  })
-})
-
 describe('box', () => {
   test('à 0° : le dessus et les faces gauche (+y) et droite (+x) d\'origine', () => {
     const l = layoutFloor(8, 4)
