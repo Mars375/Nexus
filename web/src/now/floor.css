@@ -32,6 +32,7 @@
 .rack .led-ring { fill: none; stroke: var(--unknown); stroke-width: 0.8; opacity: 0; transition: opacity 400ms ease }
 .rack[data-tone='ok'] .led-on { opacity: 1 }
 .rack[data-tone='unknown'] .led, .rack[data-tone='off'] .led { opacity: 0 }
+/* dasharray switches at once between unknown (dashed) and off (solid), both ring-only states: a dash pattern cannot fade */
 .rack[data-tone='unknown'] .led-ring { opacity: 1; stroke-dasharray: 2 2 }
 .rack[data-tone='off'] .led-ring { opacity: 1 }
 .legend-dot { box-sizing: border-box; display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; background: #23262d }
