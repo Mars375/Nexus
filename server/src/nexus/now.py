@@ -87,7 +87,7 @@ def snapshot(session: Session) -> dict:
     # verrait son propre état de la base. Une seule transaction de lecture = un seul instant.
     session.connection().exec_driver_sql("BEGIN")
     measured = now()
-    tasks ={t.id: t for t in session.scalars(select(Task))}
+    tasks = {t.id: t for t in session.scalars(select(Task))}
 
     main = next((t for t in tasks.values()
                  if t.status == "in_progress" and t.operation_role == "main"

@@ -36,6 +36,17 @@ test('les étiquettes disent le nom, la tâche et la durée, sans survol', () =>
   expect(screen.getAllByText('inactif').length).toBeGreaterThan(0)
 })
 
+test('la tâche est dans l\'étiquette à toutes les largeurs : une ligne tronquée sous 800 px, avec la durée au-delà', () => {
+  render(<Floor snapshot={snap()} nodes={[]} />)
+  const short = screen.getByText('nx-task-31')
+  expect(short).toHaveClass('truncate')
+  expect(short.className).toContain('@min-[800px]:hidden') // sous 800 px seulement
+  const long = screen.getByText(/nx-task-31 · 42 min/)
+  expect(long.className).toContain('hidden') // la durée reste réservée à 800 px et plus
+  expect(long.className).toContain('@min-[800px]:block')
+  expect(short.closest('[data-label]')).toBe(long.closest('[data-label]'))
+})
+
 test('ta table dit quand aucune demande n\'est reçue', () => {
   render(<Floor snapshot={snap()} nodes={[]} />)
   expect(screen.getByText('aucune demande reçue (7 j)')).toBeInTheDocument()
@@ -168,6 +179,45 @@ test('les LED d\'une baie sont sur une face visible, la face +x de préférence'
         expect(l.sees(nx, ny)).toBe(true)
       }
     }
+  }
+})
+
+test('les hachures et les LED sont des calques toujours présents : seul l\'état du poste ou de la baie change', () => {
+  const blocks: NowSnapshot['blocks'] = [{ task: 'nx-task-29', title: 'Sauvegarde', cause: 'hors ligne', since: null, follow_up_at: null, lead_agent: 'artemis' }]
+  const { container } = render(<Floor snapshot={snap({ blocks })} nodes={[node('helios', 'online'), node('synapse', 'unknown'), node('artemis', 'offline-by-design')]} />)
+  for (const desk of container.querySelectorAll('g.desk')) expect(desk.querySelectorAll('polygon.desk-hatch'), desk.getAttribute('data-agent')!).toHaveLength(1)
+  expect(container.querySelector('[data-agent="artemis"]')!.getAttribute('data-block')).toBe('true')
+  expect(container.querySelector('[data-agent="helios"]')!.getAttribute('data-block')).toBe('false')
+  for (const rack of container.querySelectorAll('g.rack')) {
+    expect(rack.querySelectorAll('.led-on'), rack.getAttribute('data-node')!).toHaveLength(5)
+    expect(rack.querySelectorAll('.led-ring'), rack.getAttribute('data-node')!).toHaveLength(5)
+  }
+})
+
+test('aucune LED visible n\'est cachée par une autre baie, à chaque quart de tour, jusqu\'à 12 baies', () => {
+  type P = [number, number]
+  const parse = (pts: string): P[] => pts.split(' ').map((q) => q.split(',').map(Number) as P)
+  const inside = ([x, y]: P, poly: P[]) => { // point strictly inside a convex polygon (any winding)
+    let sign = 0
+    for (let i = 0; i < poly.length; i++) {
+      const [ax, ay] = poly[i], [bx, by] = poly[(i + 1) % poly.length]
+      const c = (bx - ax) * (y - ay) - (by - ay) * (x - ax)
+      if (Math.abs(c) < 1e-6) continue
+      if (sign === 0) sign = Math.sign(c); else if (Math.sign(c) !== sign) return false
+    }
+    return sign !== 0
+  }
+  for (const count of [8, 9, 12]) for (const a of QUARTERS) {
+    const nodes = Array.from({ length: count }, (_, i) => node(`n${i}`, 'online'))
+    const racks = [...scene(a, nodes).querySelectorAll('g.rack')]
+    expect(racks).toHaveLength(count)
+    racks.forEach((rack, i) => {
+      for (const led of rack.querySelectorAll('.led')) for (const pt of parse(led.getAttribute('points')!)) {
+        for (const later of racks.slice(i + 1)) for (const face of later.querySelectorAll('polygon:not(.led):not(.led-on):not(.led-ring)')) {
+          expect(inside(pt, parse(face.getAttribute('points')!)), `${count} baies à ${a}° : une LED de ${rack.getAttribute('data-node')} est cachée par ${later.getAttribute('data-node')}`).toBe(false)
+        }
+      }
+    })
   }
 })
 

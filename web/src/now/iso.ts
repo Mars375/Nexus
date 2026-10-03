@@ -50,6 +50,13 @@ const B = Math.sin(Math.PI / 6) * UNIT
 const PITCH = 4 // un poste tous les 4 unités sur une rangée
 const ORIGIN = { x: 150, y: 110 } // coin gauche du sol à 0° ; fixe pour que le plan à 0° garde ses coordonnées
 const PAD = 12
+const RACK_START = 0.8
+const RACK_PITCH = 1.85
+const RACK_MARGIN = 0.5
+const RACK_COLUMN_PITCH = 3.6 // wide enough that the outer column never hides the LED face of the inner one (tested at the quarters)
+const FLOOR_DEPTH = 14
+// Racks per column so the last one still ends RACK_MARGIN before the back edge (7 at depth 14).
+const RACK_PER_COLUMN = Math.floor((FLOOR_DEPTH - RACK_MARGIN - RACK.d - RACK_START) / RACK_PITCH) + 1
 // Room taken by label text around its anchor, in viewBox units (labels keep their px size).
 const LABEL_HALF = 110
 const LABEL_TEXT_H = 42
@@ -81,9 +88,11 @@ function turner(width: number, depth: number, angle: number) {
 export function layoutFloor(agentCount: number, rackCount: number, angle = 0): Layout {
   const perRow = Math.max(4, Math.ceil(agentCount / 2))
   const rowWidth = perRow * PITCH
-  const serverWidth = rackCount > 0 ? 3.2 : 0
+  // Racks fill columns of at most RACK_PER_COLUMN, outermost column first; each extra column widens the floor.
+  const rackColumns = Math.max(1, Math.ceil(rackCount / RACK_PER_COLUMN))
+  const serverWidth = rackCount > 0 ? 3.2 + (rackColumns - 1) * RACK_COLUMN_PITCH : 0
   const width = rowWidth + 1 + serverWidth
-  const depth = 14
+  const depth = FLOOR_DEPTH
   const seats: Seat[] = []
   for (let i = 0; i < agentCount; i++) {
     const back = i < perRow
@@ -93,7 +102,8 @@ export function layoutFloor(agentCount: number, rackCount: number, angle = 0): L
   // table centrée sur l'étendue réelle des postes
   const first = 1.2, last = 1.2 + (perRow - 1) * PITCH + DESK.w
   const table = { w: 5, d: 3.2, x: (first + last) / 2 - 2.5, y: 5.4 }
-  const racks = Array.from({ length: rackCount }, (_, i) => ({ x: width - 2.1, y: 0.8 + i * 1.85 }))
+  const perColumn = Math.ceil(rackCount / rackColumns)
+  const racks = Array.from({ length: rackCount }, (_, i) => ({ x: width - 2.1 - Math.floor(i / perColumn) * RACK_COLUMN_PITCH, y: RACK_START + (i % perColumn) * RACK_PITCH }))
 
   // origine choisie pour que le coin gauche du sol (0, depth) tombe à ORIGIN.x à 0°
   const ox = ORIGIN.x + depth * A

@@ -16,8 +16,8 @@
 .desk .beacon line { stroke: var(--attention); stroke-width: 1.4 }
 .desk .beacon polygon { fill: var(--attention) }
 .desk[data-wait='true'] .beacon { opacity: 1; transform: scaleY(1) }
-.desk .desk-top { transition: fill 300ms }
-.desk[data-block='true'] .desk-top { fill: url(#now-hatch); stroke: var(--danger); stroke-width: 1.2 }
+.desk .desk-hatch { fill: url(#now-hatch); stroke: var(--danger); stroke-width: 1.2; opacity: 0; pointer-events: none; transition: opacity 450ms ease }
+.desk[data-block='true'] .desk-hatch { opacity: 1 }
 .route .r-base { fill: none; stroke: var(--attention); stroke-width: 1.2; stroke-dasharray: 3 5; opacity: 0.85 }
 .route .r-spark { fill: none; stroke: #ffd9b8; stroke-width: 2.4; stroke-linecap: round; stroke-dasharray: 0 100; opacity: 0 }
 .route.is-fresh .r-spark { animation: now-travel 1100ms cubic-bezier(0.3, 0.6, 0.3, 1) 1 both }
@@ -27,10 +27,14 @@
 .ticket { fill: var(--attention); opacity: 0.9 }
 .ticket.is-fresh { animation: now-land 300ms 900ms ease-out both }
 @keyframes now-land { from { opacity: 0 } to { opacity: 0.9 } }
-.rack .led { fill: #23262d; transition: fill 400ms, stroke 400ms }
-.rack[data-tone='ok'] .led { fill: var(--ok) }
-.rack[data-tone='unknown'] .led { fill: none; stroke: var(--unknown); stroke-width: 0.8; stroke-dasharray: 2 2 }
-.rack[data-tone='off'] .led { fill: none; stroke: var(--unknown); stroke-width: 0.8 }
+.rack .led { fill: #23262d; transition: opacity 400ms ease }
+.rack .led-on { fill: var(--ok); opacity: 0; transition: opacity 400ms ease }
+.rack .led-ring { fill: none; stroke: var(--unknown); stroke-width: 0.8; opacity: 0; transition: opacity 400ms ease }
+.rack[data-tone='ok'] .led-on { opacity: 1 }
+.rack[data-tone='unknown'] .led, .rack[data-tone='off'] .led { opacity: 0 }
+/* dasharray switches at once between unknown (dashed) and off (solid), both ring-only states: a dash pattern cannot fade */
+.rack[data-tone='unknown'] .led-ring { opacity: 1; stroke-dasharray: 2 2 }
+.rack[data-tone='off'] .led-ring { opacity: 1 }
 .legend-dot { box-sizing: border-box; display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; background: #23262d }
 .legend-dot[data-tone='ok'] { background: var(--ok) }
 .legend-dot[data-tone='unknown'] { background: none; border: 1px dashed var(--unknown) }
@@ -39,6 +43,6 @@
 .now-fresh { animation: now-fresh 1800ms ease-out both }
 @keyframes now-fresh { from { background: rgba(251, 146, 60, 0.16) } to { background: rgba(251, 146, 60, 0.05) } }
 @media (prefers-reduced-motion: reduce) {
-  .desk *, .route *, .ticket, .rack .led, .now-fresh { transition: none !important; animation: none !important }
+  .desk *, .route *, .ticket, .rack .led, .rack .led-on, .rack .led-ring, .now-fresh { transition: none !important; animation: none !important }
   .now-fresh { background: rgba(251, 146, 60, 0.05) }
 }

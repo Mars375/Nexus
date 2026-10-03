@@ -29,6 +29,7 @@ function routePath(l: Layout, s: { x: number; y: number; back: boolean }): strin
 /** One seat: desk, monitor (its screen only when it faces the viewer), light pool and beacon showing its state. */
 function Desk({ l, seat, m }: { l: Layout; seat: Layout['seats'][number]; m: SeatModel }) {
   const { x, y } = seat, p = l.project
+  const deskBox = box(l, x, y, 0, DESK.w, DESK.d, DESK.h)
   const pool = p(x + DESK.w / 2, y + 2.3)
   const [bx, by0] = p(x + 0.55, y + 0.27, 1.66), [, by1] = p(x + 0.55, y + 0.27, 2.75)
   const screenPts = [p(x + 0.45, y + 0.28, 1.63), p(x + 2.55, y + 0.28, 1.63), p(x + 2.55, y + 0.28, 0.86), p(x + 0.45, y + 0.28, 0.86)].map((q) => q.join(',')).join(' ')
@@ -36,7 +37,8 @@ function Desk({ l, seat, m }: { l: Layout; seat: Layout['seats'][number]; m: Sea
     <g className="desk" data-agent={m.agent} data-run={String(m.run)} data-wait={String(m.wait)} data-block={String(m.block)}>
       <ellipse className="pool" cx={pool[0]} cy={pool[1]} rx={2.4 * 22.5} ry={2.4 * 13} />
       <ellipse className="pool-att" cx={pool[0]} cy={pool[1]} rx={1.9 * 22.5} ry={1.9 * 13} />
-      <Faces b={box(l, x, y, 0, DESK.w, DESK.d, DESK.h)} topClass="desk-top" />
+      <Faces b={deskBox} topClass="desk-top" />
+      <polygon className="desk-hatch" points={deskBox.top} />
       <Faces b={box(l, x + 0.35, y + 0.15, DESK.h, 2.3, 0.12, 0.95)} />
       {l.sees(0, 1) && <polygon className="screen" points={screenPts} />}
       <g className="beacon"><line x1={bx} y1={by0} x2={bx} y2={by1} /><polygon points={`${bx},${by1 - 7} ${bx + 6},${by1} ${bx},${by1 + 7} ${bx - 6},${by1}`} /></g>
@@ -115,7 +117,11 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
     return (
       <g key={`rack-${n.id}`} className="rack" data-node={n.id} data-tone={tone}>
         <Faces b={box(l, r.x, r.y, 0, RACK.w, RACK.d, RACK.h)} />
-        {[0, 1, 2, 3, 4].map((j) => <polygon key={j} className="led" data-face={face} points={ledPoints(l, r, face, 2.1 - j * 0.38)} />)}
+        {[0, 1, 2, 3, 4].map((j) => {
+          // Three stacked layers whose opacity follows the tone, so a change fades instead of jumping.
+          const pts = ledPoints(l, r, face, 2.1 - j * 0.38)
+          return <g key={j}><polygon className="led" data-face={face} points={pts} /><polygon className="led-on" points={pts} /><polygon className="led-ring" points={pts} /></g>
+        })}
       </g>
     )
   }
@@ -152,8 +158,11 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
         const target = m.task ?? (m.block ? blocked?.task ?? null : null)
         const targetTitle = m.title ?? blocked?.title ?? target
         const meta = m.task ? `${m.task} · ${m.since ? age(m.since, now).replace(/^il y a /, '') : 'durée inconnue'}` : m.block ? (blocked ? `${blocked.task} · bloquée` : 'tâche bloquée') : 'inactif'
+        // Narrow floor (< 800 px): the task alone on one line, cut with « … »; the duration comes back from 800 px.
+        const brief = m.task ?? (m.block ? (blocked?.task ?? 'tâche bloquée') : 'inactif')
         const name = <><span className="block font-orbital-display text-[13px] font-semibold tracking-[0.14em] leading-[14px]">{displayName(m.agent).toUpperCase()}</span>
           {m.title && <span className="mx-auto hidden max-w-[15ch] truncate font-data text-[11px] leading-[13px] text-ink @min-[1150px]:block">{m.title}</span>}
+          <span className="mx-auto block max-w-[16ch] truncate font-data text-[11px] leading-[13px] text-muted @min-[800px]:hidden">{brief}</span>
           <span className="hidden font-data text-[11px] leading-[13px] text-muted @min-[800px]:block">{meta}</span></>
         const cls = clsx('absolute whitespace-nowrap text-center -translate-x-1/2', l.labels[i].below ? 'translate-y-0' : '-translate-y-full',
           m.wait ? '[&>span:first-child]:text-attention' : m.block ? '[&>span:first-child]:text-danger' : m.run ? '' : '[&>span:first-child]:text-unknown')
