@@ -42,6 +42,16 @@
 .leader { fill: none; stroke: rgba(244, 244, 245, 0.28) }
 .now-fresh { animation: now-fresh 1800ms ease-out both }
 @keyframes now-fresh { from { background: rgba(251, 146, 60, 0.16) } to { background: rgba(251, 146, 60, 0.05) } }
+/* Server rooms and the floor selector (#36) */
+.aisle-hot { fill: rgba(251, 146, 60, 0.07); stroke: none }
+.aisle-cold { fill: rgba(125, 211, 252, 0.08); stroke: rgba(125, 211, 252, 0.18); stroke-width: 0.8 }
+.floor-marker { fill: rgba(244, 244, 245, 0.5); font-family: var(--font-orbital-display, inherit); font-weight: 600; letter-spacing: 0.14em }
+.cable-tray .f-top { fill: #262a31 }
+.floor-dot { box-sizing: border-box; width: 8px; height: 8px; border-radius: 50%; border: 1px solid var(--unknown); background: none }
+.floor-dot[data-current='true'] { background: var(--ink, #f4f4f5); border-color: var(--ink, #f4f4f5) }
+.floor-dot[data-alert='off'] { background: var(--danger); border-color: var(--danger) }
+.floor-dot[data-alert='unknown'] { background: var(--attention); border-color: var(--attention) }
+.floor-pick button:disabled { opacity: 0.35; cursor: default }
 @media (prefers-reduced-motion: reduce) {
   .desk *, .route *, .ticket, .rack .led, .rack .led-on, .rack .led-ring, .now-fresh { transition: none !important; animation: none !important }
   .now-fresh { background: rgba(251, 146, 60, 0.05) }

@@ -1,21 +1,19 @@
 import clsx from 'clsx'
-import type { DragEvent, ReactNode } from 'react'
+import type { DragEvent, KeyboardEvent, ReactNode } from 'react'
 import type { NodeState, NowSnapshot } from '@/api'
 import { age } from '@/format'
 import { isStale } from '@/freshness'
 import { useNow } from '@/useNow'
-import { DESK, RACK, box, drawOrder, layoutFloor, toPercent, type Box, type Dir, type Layout } from './iso'
-import { AGE_TICK_MS, displayName, rackLabel, rackTone, seatModels, type RackTone, type SeatModel } from './model'
+import { DESK, box, drawOrder, layoutFloor, toPercent, type Dir, type Layout } from './iso'
+import { AGE_TICK_MS, displayName, floorAlert, nodeFloors, rackLabel, rackTone, seatModels, type FloorAlert, type RackTone, type SeatModel } from './model'
+import { Faces, Rack } from './Rack'
+import { ServerRoom } from './ServerRoom'
 import { useArrivals } from './useArrivals'
+import { useFloorLevel, type FloorLayer } from './useFloorLevel'
 import { useFloorRotation, type FloorStage } from './useFloorRotation'
 import './floor.css'
 
 const MAX_TICKETS = 3
-
-/** Top face and visible side faces of one box. */
-function Faces({ b, topClass }: { b: Box; topClass?: string }) {
-  return (<><polygon className={clsx('f-top', topClass)} points={b.top} />{b.sides.map((s) => <polygon key={s.dir} className={s.shade} points={s.points} />)}</>)
-}
 
 /** Path of a request thread from a seat to the table, along the floor in right angles. */
 function routePath(l: Layout, s: { x: number; y: number; back: boolean }): string {
@@ -49,54 +47,77 @@ function Desk({ l, seat, m }: { l: Layout; seat: Layout['seats'][number]; m: Sea
 const LED_FACES: Dir[] = ['+x', '-x', '+y', '-y']
 const NORMAL: Record<Dir, readonly [number, number]> = { '+x': [1, 0], '-x': [-1, 0], '+y': [0, 1], '-y': [0, -1] }
 
-/** One indicator light on a rack side face, `z` being its top edge. */
-function ledPoints(l: Layout, r: { x: number; y: number }, dir: Dir, z: number): string {
-  const along = [r.x + 0.25, r.x + 1.15], across = [r.y + 0.25, r.y + 1.15]
-  const fixed = dir === '+x' ? r.x + RACK.w : dir === '-x' ? r.x : dir === '+y' ? r.y + RACK.d : r.y
-  const at = (u: number, zz: number) => (dir === '+x' || dir === '-x' ? l.project(fixed, u, zz) : l.project(u, fixed, zz))
-  const [a, b] = dir === '+x' || dir === '-x' ? across : along
-  return [at(a, z), at(b, z), at(b, z - 0.16), at(a, z - 0.16)].map((q) => q.join(',')).join(' ')
-}
-
 type RackView = { node: NodeState; tone: RackTone; text: string }
 
 type FloorProps = { snapshot: NowSnapshot; nodes: NodeState[] | undefined; nodesFailed?: boolean }
 
 const ROTATE_BUTTON = 'pointer-events-auto grid size-9 place-items-center rounded-md border border-line bg-surface/80 text-base text-ink hover:bg-sunken focus-visible:outline-2 focus-visible:outline-accent'
+const ALERT_TEXT: Record<FloorAlert, string> = { off: 'un nœud hors ligne', unknown: 'un nœud en état inconnu' }
 
-/** The floor with its rotation: drag, arrow keys and two buttons; the angle settles on quarter turns. */
+/** The floor with its rotation and its floors: drag, arrow keys, PageUp / PageDown and buttons; the angle settles on quarter turns. */
 export function Floor(props: FloorProps) {
+  const { nodes, nodesFailed = false } = props
   const { angle, rotateBy, stage } = useFloorRotation()
+  const level = useFloorLevel(nodeFloors(nodes).length, { loaded: nodes !== undefined })
+  const now = useNow(AGE_TICK_MS)
+  const floors = nodeFloors(nodes)
+  const alerts = floors.map((f) => floorAlert(f, (n) => nodesFailed || isStale(n.measured_at, 'nodes', now)))
+  const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+    stage.onKeyDown(e)
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || level.count < 2) return
+    if (e.key === 'PageUp' || e.key === 'PageDown') { e.preventDefault(); level.go(e.key === 'PageUp' ? 1 : -1) }
+  }
   return (
-    <FloorScene {...props} angle={angle} stage={stage}>
+    <FloorScene {...props} angle={angle} stage={{ ...stage, onKeyDown }} floor={level.floor} floorCount={level.count} layers={level.layers} dir={level.dir}>
       <div className="absolute left-0 top-0 flex gap-1">
         <button type="button" className={ROTATE_BUTTON} aria-label="Tourner l'étage vers la gauche" onClick={() => rotateBy(-90)}><span aria-hidden="true">↺</span></button>
         <button type="button" className={ROTATE_BUTTON} aria-label="Tourner l'étage vers la droite" onClick={() => rotateBy(90)}><span aria-hidden="true">↻</span></button>
       </div>
+      {level.count > 1 && (
+        <div className="floor-pick pointer-events-none absolute left-0 top-10 flex items-center gap-1">
+          <button type="button" className={ROTATE_BUTTON} aria-label="Monter d'un étage" disabled={level.floor >= level.count} onClick={() => level.go(1)}><span aria-hidden="true">▲</span></button>
+          <span aria-live="polite" className="whitespace-nowrap font-data text-[11px] text-ink">Étage {level.floor} / {level.count}</span>
+          <button type="button" className={ROTATE_BUTTON} aria-label="Descendre d'un étage" disabled={level.floor <= 1} onClick={() => level.go(-1)}><span aria-hidden="true">▼</span></button>
+          <ol className="m-0 flex h-9 list-none flex-col flex-wrap content-start justify-end gap-[3px] p-0">
+            {floors.map((_, i) => floors.length - 1 - i).map((i) => (
+              <li key={i} data-floor-marker={i + 1} data-current={String(i + 1 === level.floor)} {...(alerts[i] && { 'data-alert': alerts[i] })} className="floor-dot">
+                {alerts[i] && <span className="sr-only">{`Étage ${i + 1} : ${ALERT_TEXT[alerts[i]!]}`}</span>}
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
     </FloorScene>
   )
 }
 
-/** The floor seen at `angle` degrees: pure drawing, the angle is owned by the caller. */
-export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage, children }: FloorProps & { angle: number; stage?: FloorStage; children?: ReactNode }) {
+type SceneProps = FloorProps & { angle: number; stage?: FloorStage; children?: ReactNode; floor?: number; floorCount?: number; layers?: FloorLayer[]; dir?: 'up' | 'down' }
+
+/** The floor seen at `angle` degrees: pure drawing, the angle and the floor shown are owned by the caller. */
+export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage, children, floor = 1, floorCount = 1, layers, dir }: SceneProps) {
   const now = useNow(AGE_TICK_MS)
   const seats = seatModels(snapshot)
   // Une mesure trop ancienne, ou une relecture en échec : jamais de vert sur une donnée périmée.
-  const racks: RackView[] = (nodes ?? []).map((node) => {
+  const racksOf = (list: NodeState[]): RackView[] => list.map((node) => {
     const stale = nodesFailed || isStale(node.measured_at, 'nodes', now)
     return { node, tone: stale ? 'unknown' : rackTone(node), text: `${node.id.toUpperCase()} · ${stale ? 'périmée' : rackLabel(node)}` }
   })
-  const l = layoutFloor(seats.length, nodes === undefined ? 1 : racks.length, angle) // la salle garde sa place pendant la lecture
+  const floors = nodeFloors(nodes)
+  const shown = racksOf(floors[Math.min(floor, floors.length) - 1] ?? [])
+  const office = racksOf(floors[0])
+  // Floor 1 sets the frame (the room is drawn inside it): it keeps its place while nodes are read.
+  const l = layoutFloor(seats.length, nodes === undefined ? 1 : office.length, angle, floorCount)
   const freshAsks = useArrivals(snapshot.asks.map((q) => q.event))
   const freshRoutes = new Set(snapshot.asks.filter((q) => freshAsks.has(q.event)).map((q) => q.agent))
   const p = l.project
-  const floor = box(l, 0, 0, -0.35, l.width, l.depth, 0.35)
+  const slab = box(l, 0, 0, -0.35, l.width, l.depth, 0.35)
   let grid = ''
   for (let i = 1; i < l.width; i++) grid += `M${p(i, 0)} L${p(i, l.depth)} `
   for (let j = 1; j < l.depth; j++) grid += `M${p(0, j)} L${p(l.width, j)} `
   const tickets = snapshot.asks.slice(0, MAX_TICKETS)
   const extra = snapshot.asks.length - tickets.length
   const label = (ask: number) => ask === 0 ? 'aucune demande reçue (7 j)' : `${ask} demande${ask > 1 ? 's' : ''}`
+  const mounted: FloorLayer[] = layers ?? [{ floor, role: 'current', from: 'above' }]
 
   const dais = (
     <g key="table" className="dais" data-on={String(snapshot.asks.length > 0)}>
@@ -109,34 +130,38 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
       })}
     </g>
   )
-  const rackView = (index: number) => {
-    const rv = racks[index]
+  const officeRack = (index: number) => {
+    const rv = office[index]
     if (!rv) return null
-    const r = l.racks[index], { node: n, tone } = rv
     const face = LED_FACES.find((d) => l.sees(...NORMAL[d])) ?? '+x'
-    return (
-      <g key={`rack-${n.id}`} className="rack" data-node={n.id} data-tone={tone}>
-        <Faces b={box(l, r.x, r.y, 0, RACK.w, RACK.d, RACK.h)} />
-        {[0, 1, 2, 3, 4].map((j) => {
-          // Three stacked layers whose opacity follows the tone, so a change fades instead of jumping.
-          const pts = ledPoints(l, r, face, 2.1 - j * 0.38)
-          return <g key={j}><polygon className="led" data-face={face} points={pts} /><polygon className="led-on" points={pts} /><polygon className="led-ring" points={pts} /></g>
-        })}
-      </g>
-    )
+    return <Rack key={`rack-${rv.node.id}`} l={l} at={l.racks[index]} node={rv.node} tone={rv.tone} face={face} index={index} />
   }
+  const viewBox = `${l.viewBox.x} ${l.viewBox.y} ${l.viewBox.w} ${l.viewBox.h}`
+  const labels = seats.map((m, i) => {
+    const [left, top] = toPercent(l, [l.labels[i].x, l.labels[i].y])
+    const blocked = snapshot.blocks.find((b) => b.lead_agent === m.agent)
+    // Un poste dont l'agent est seulement bloqué ouvre la tâche bloquée.
+    const target = m.task ?? (m.block ? blocked?.task ?? null : null)
+    const targetTitle = m.title ?? blocked?.title ?? target
+    const meta = m.task ? `${m.task} · ${m.since ? age(m.since, now).replace(/^il y a /, '') : 'durée inconnue'}` : m.block ? (blocked ? `${blocked.task} · bloquée` : 'tâche bloquée') : 'inactif'
+    // Narrow floor (< 800 px): the task alone on one line, cut with « … »; the duration comes back from 800 px.
+    const brief = m.task ?? (m.block ? (blocked?.task ?? 'tâche bloquée') : 'inactif')
+    const name = <><span className="block font-orbital-display text-[13px] font-semibold tracking-[0.14em] leading-[14px]">{displayName(m.agent).toUpperCase()}</span>
+      {m.title && <span className="mx-auto hidden max-w-[15ch] truncate font-data text-[11px] leading-[13px] text-ink @min-[1150px]:block">{m.title}</span>}
+      <span className="mx-auto block max-w-[16ch] truncate font-data text-[11px] leading-[13px] text-muted @min-[800px]:hidden">{brief}</span>
+      <span className="hidden font-data text-[11px] leading-[13px] text-muted @min-[800px]:block">{meta}</span></>
+    const cls = clsx('absolute whitespace-nowrap text-center -translate-x-1/2', l.labels[i].below ? 'translate-y-0' : '-translate-y-full',
+      m.wait ? '[&>span:first-child]:text-attention' : m.block ? '[&>span:first-child]:text-danger' : m.run ? '' : '[&>span:first-child]:text-unknown')
+    const style = { left: `${left}%`, top: `${top}%` }
+    return target
+      ? <a key={m.agent} href={`#/travail/${target}`} data-label={m.agent} draggable={false} className={clsx(cls, 'cursor-pointer bg-transparent no-underline')} style={style} aria-label={`${displayName(m.agent)}, ${targetTitle} : ouvrir la tâche`}>{name}</a>
+      : <div key={m.agent} data-label={m.agent} className={cls} style={style}>{name}</div>
+  })
 
-  return (
-    <div className="@container relative mx-auto w-full select-none focus-visible:outline-2 focus-visible:outline-accent" style={{ aspectRatio: `${l.viewBox.w} / ${l.viewBox.h}`, maxHeight: '100%', touchAction: 'pan-y' }}
-      {...(stage && { ...stage, onDragStart: (e: DragEvent<HTMLElement>) => e.preventDefault(), role: 'group', tabIndex: 0, 'data-stage': '', 'data-angle': Math.round(angle * 10) / 10, 'aria-label': 'Étage : glisser, ou flèches gauche et droite, pour le faire pivoter' })}>
-      <svg viewBox={`${l.viewBox.x} ${l.viewBox.y} ${l.viewBox.w} ${l.viewBox.h}`} className="absolute inset-0 size-full" role="img"
-        aria-label="Étage de Nexus : un poste par agent, ta table au centre, la salle des serveurs">
-        <defs>
-          <radialGradient id="now-run"><stop offset="0" stopColor="#5eead4" stopOpacity=".30" /><stop offset="1" stopColor="#5eead4" stopOpacity="0" /></radialGradient>
-          <radialGradient id="now-att"><stop offset="0" stopColor="#fb923c" stopOpacity=".26" /><stop offset="1" stopColor="#fb923c" stopOpacity="0" /></radialGradient>
-          <pattern id="now-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="#f87171" strokeOpacity=".55" strokeWidth="1.4" /></pattern>
-        </defs>
-        <polygon className="floor-top" points={floor.top} />{floor.sides.map((s) => <polygon key={s.dir} className={s.shade === 'f-left' ? 'floor-left' : 'floor-right'} points={s.points} />)}
+  const officeLevel = (
+    <>
+      <svg viewBox={viewBox} className="absolute inset-0 size-full" role="img" aria-label="Étage de Nexus : un poste par agent, ta table au centre, la salle des serveurs">
+        <polygon className="floor-top" points={slab.top} />{slab.sides.map((s) => <polygon key={s.dir} className={s.shade === 'f-left' ? 'floor-left' : 'floor-right'} points={s.points} />)}
         <path className="floor-grid" d={grid.trim()} />
         {seats.map((m, i) => m.wait && (
           <g key={m.agent} className={clsx('route', freshRoutes.has(m.agent) && 'is-fresh')} data-route={m.agent}>
@@ -144,33 +169,41 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
             <path className="r-spark" d={routePath(l, l.seats[i])} pathLength={100} />
           </g>
         ))}
-        {drawOrder(l).map((o) => o.kind === 'seat' ? <Desk key={seats[o.index].agent} l={l} seat={l.seats[o.index]} m={seats[o.index]} /> : o.kind === 'rack' ? rackView(o.index) : dais)}
+        {drawOrder(l).map((o) => o.kind === 'seat' ? <Desk key={seats[o.index].agent} l={l} seat={l.seats[o.index]} m={seats[o.index]} /> : o.kind === 'rack' ? officeRack(o.index) : dais)}
         {seats.map((m, i) => {
           const end = l.labels[i]
           return <path key={m.agent} className="leader" d={`M${end.anchor} L${end.x} ${end.y}`} />
         })}
       </svg>
+      {labels}
+    </>
+  )
+  const roomLevel = (n: number) => {
+    const racks = racksOf(floors[n - 1] ?? [])
+    return (
+      <svg viewBox={viewBox} className="absolute inset-0 size-full" role="img" aria-label={`Étage ${n} de Nexus : salle des serveurs, ${racks.length} baie${racks.length > 1 ? 's' : ''}`}>
+        <ServerRoom l={l} floor={n} racks={racks} />
+      </svg>
+    )
+  }
 
-      {seats.map((m, i) => {
-        const [left, top] = toPercent(l, [l.labels[i].x, l.labels[i].y])
-        const blocked = snapshot.blocks.find((b) => b.lead_agent === m.agent)
-        // Un poste dont l'agent est seulement bloqué ouvre la tâche bloquée.
-        const target = m.task ?? (m.block ? blocked?.task ?? null : null)
-        const targetTitle = m.title ?? blocked?.title ?? target
-        const meta = m.task ? `${m.task} · ${m.since ? age(m.since, now).replace(/^il y a /, '') : 'durée inconnue'}` : m.block ? (blocked ? `${blocked.task} · bloquée` : 'tâche bloquée') : 'inactif'
-        // Narrow floor (< 800 px): the task alone on one line, cut with « … »; the duration comes back from 800 px.
-        const brief = m.task ?? (m.block ? (blocked?.task ?? 'tâche bloquée') : 'inactif')
-        const name = <><span className="block font-orbital-display text-[13px] font-semibold tracking-[0.14em] leading-[14px]">{displayName(m.agent).toUpperCase()}</span>
-          {m.title && <span className="mx-auto hidden max-w-[15ch] truncate font-data text-[11px] leading-[13px] text-ink @min-[1150px]:block">{m.title}</span>}
-          <span className="mx-auto block max-w-[16ch] truncate font-data text-[11px] leading-[13px] text-muted @min-[800px]:hidden">{brief}</span>
-          <span className="hidden font-data text-[11px] leading-[13px] text-muted @min-[800px]:block">{meta}</span></>
-        const cls = clsx('absolute whitespace-nowrap text-center -translate-x-1/2', l.labels[i].below ? 'translate-y-0' : '-translate-y-full',
-          m.wait ? '[&>span:first-child]:text-attention' : m.block ? '[&>span:first-child]:text-danger' : m.run ? '' : '[&>span:first-child]:text-unknown')
-        const style = { left: `${left}%`, top: `${top}%` }
-        return target
-          ? <a key={m.agent} href={`#/travail/${target}`} data-label={m.agent} draggable={false} className={clsx(cls, 'cursor-pointer bg-transparent no-underline')} style={style} aria-label={`${displayName(m.agent)}, ${targetTitle} : ouvrir la tâche`}>{name}</a>
-          : <div key={m.agent} data-label={m.agent} className={cls} style={style}>{name}</div>
-      })}
+  return (
+    <div className="@container relative mx-auto w-full select-none focus-visible:outline-2 focus-visible:outline-accent" style={{ aspectRatio: `${l.viewBox.w} / ${l.viewBox.h}`, maxHeight: '100%', touchAction: 'pan-y' }}
+      {...(stage && { ...stage, onDragStart: (e: DragEvent<HTMLElement>) => e.preventDefault(), role: 'group', tabIndex: 0, 'data-stage': '', 'data-angle': Math.round(angle * 10) / 10, 'aria-label': 'Étage : glisser, ou flèches gauche et droite, pour le faire pivoter' })}
+      data-floor={floor} data-floor-count={floorCount} {...(dir && { 'data-floor-dir': dir })}>
+      {/* Gradients and hatching live once here: every floor layer refers to them by id. */}
+      <svg width="0" height="0" className="absolute" aria-hidden="true" focusable="false">
+        <defs>
+          <radialGradient id="now-run"><stop offset="0" stopColor="#5eead4" stopOpacity=".30" /><stop offset="1" stopColor="#5eead4" stopOpacity="0" /></radialGradient>
+          <radialGradient id="now-att"><stop offset="0" stopColor="#fb923c" stopOpacity=".26" /><stop offset="1" stopColor="#fb923c" stopOpacity="0" /></radialGradient>
+          <pattern id="now-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="#f87171" strokeOpacity=".55" strokeWidth="1.4" /></pattern>
+        </defs>
+      </svg>
+      {mounted.map((m) => (
+        <div key={m.floor} className="level absolute inset-0" data-level={m.floor} data-role={m.role} data-from={m.from} {...(m.role === 'leaving' && { inert: true, 'aria-hidden': true })}>
+          {m.floor === 1 ? officeLevel : roomLevel(m.floor)}
+        </div>
+      ))}
 
       <div data-table-corner className="pointer-events-none absolute bottom-0 left-0 whitespace-nowrap">
         <span className={clsx('block font-orbital-display text-[13px] font-semibold tracking-[0.14em]', snapshot.asks.length ? 'text-attention' : 'text-muted')}>TA TABLE</span>
@@ -179,7 +212,7 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
 
       <ul data-legend className="pointer-events-none absolute bottom-0 right-0 m-0 flex list-none flex-col gap-1 p-0 font-data text-[11px]">
         {nodes === undefined && <li className="text-muted">{nodesFailed ? 'nœuds illisibles' : 'lecture des nœuds…'}</li>}
-        {racks.map(({ node: n, tone, text }) => (
+        {shown.map(({ node: n, tone, text }) => (
           <li key={n.id} className={clsx('flex items-center gap-2', tone === 'ok' ? 'text-ink' : 'text-muted')}><span className="legend-dot" data-tone={tone} aria-hidden="true" />{text}</li>
         ))}
       </ul>

@@ -43,18 +43,16 @@ export function useFloorLevel(count: number, { loaded }: { loaded: boolean }): F
   const timers = useRef<number[]>([])
   const floor = Math.min(target, count)
 
-  countRef.current = count
-  useEffect(() => { shown.current = floor })
+  // A floor that no longer exists: fall back at once (not an action, so no lift)...
+  if (loaded && target > count) setTarget(count)
+  useEffect(() => { countRef.current = count; shown.current = floor })
   useEffect(() => () => { for (const t of timers.current) window.clearTimeout(t) }, [])
-
-  // A floor that no longer exists: fall back at once (not an action, so no lift), and remember it only
-  // once the nodes were really read, so a read still in flight on remount does not erase floor 3.
+  // ...and remember it only once the nodes were really read, so a read still in flight on remount does not erase floor 3.
   useEffect(() => {
-    if (!loaded || floor === target) return
+    if (!loaded) return
     asked.current = floor
     requested = floor
-    setTarget(floor)
-  }, [loaded, floor, target])
+  }, [loaded, floor])
 
   const go = useCallback((delta: number) => {
     const base = Math.min(asked.current, countRef.current)

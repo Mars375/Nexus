@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { NodeState, NowSnapshot } from '@/api'
 import { Floor, FloorScene } from './Floor'
 import { resetFloorRotation } from './useFloorRotation'
+import { resetFloorLevel } from './useFloorLevel'
 import { drawOrder, layoutFloor, toPercent } from './iso'
 
 const snap = (over: Partial<NowSnapshot> = {}): NowSnapshot => ({
@@ -194,7 +195,7 @@ test('les hachures et les LED sont des calques toujours présents : seul l\'éta
   }
 })
 
-test('aucune LED visible n\'est cachée par une autre baie, à chaque quart de tour, jusqu\'à 12 baies', () => {
+test('aucune LED visible n\'est cachée par une autre baie ni par le chemin de câbles, à chaque quart de tour, étage par étage (jusqu\'à 12 nœuds)', () => {
   type P = [number, number]
   const parse = (pts: string): P[] => pts.split(' ').map((q) => q.split(',').map(Number) as P)
   const inside = ([x, y]: P, poly: P[]) => { // point strictly inside a convex polygon (any winding)
@@ -207,15 +208,19 @@ test('aucune LED visible n\'est cachée par une autre baie, à chaque quart de t
     }
     return sign !== 0
   }
-  for (const count of [8, 9, 12]) for (const a of QUARTERS) {
+  for (const count of [4, 8, 9, 12]) for (let floor = 1; floor <= Math.ceil(count / 4); floor++) for (const a of QUARTERS) {
     const nodes = Array.from({ length: count }, (_, i) => node(`n${i}`, 'online'))
-    const racks = [...scene(a, nodes).querySelectorAll('g.rack')]
-    expect(racks).toHaveLength(count)
+    const c = render(<FloorScene snapshot={snap()} nodes={nodes} angle={a} floor={floor} floorCount={Math.ceil(count / 4)} />).container
+    const racks = [...c.querySelectorAll('g.rack')]
+    expect(racks).toHaveLength(Math.min(4, count - (floor - 1) * 4))
+    // drawn after the racks it could hide: a rack's LEDs may only be covered by later racks or the tray
+    const tray = [...c.querySelectorAll('.cable-tray polygon')]
     racks.forEach((rack, i) => {
       for (const led of rack.querySelectorAll('.led')) for (const pt of parse(led.getAttribute('points')!)) {
         for (const later of racks.slice(i + 1)) for (const face of later.querySelectorAll('polygon:not(.led):not(.led-on):not(.led-ring)')) {
-          expect(inside(pt, parse(face.getAttribute('points')!)), `${count} baies à ${a}° : une LED de ${rack.getAttribute('data-node')} est cachée par ${later.getAttribute('data-node')}`).toBe(false)
+          expect(inside(pt, parse(face.getAttribute('points')!)), `${count} nœuds, étage ${floor} à ${a}° : une LED de ${rack.getAttribute('data-node')} est cachée par ${later.getAttribute('data-node')}`).toBe(false)
         }
+        for (const face of tray) expect(inside(pt, parse(face.getAttribute('points')!)), `${count} nœuds, étage ${floor} à ${a}° : une LED de ${rack.getAttribute('data-node')} est sous le chemin de câbles`).toBe(false)
       }
     })
   }
@@ -291,7 +296,7 @@ class TestPointerEvent extends MouseEvent {
 const stageOf = (c: HTMLElement) => c.querySelector('[data-stage]') as HTMLElement
 const screens = (c: HTMLElement) => c.querySelectorAll('.desk .screen').length
 
-beforeEach(() => { resetFloorRotation(); vi.stubGlobal('PointerEvent', TestPointerEvent); vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('reduce'), media: q })) })
+beforeEach(() => { resetFloorRotation(); resetFloorLevel(); vi.stubGlobal('PointerEvent', TestPointerEvent); vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('reduce'), media: q })) })
 afterEach(() => { vi.unstubAllGlobals() })
 
 test('la scène est focalisable et porte un nom accessible', () => {
@@ -389,4 +394,127 @@ test('les liens des étiquettes ne se laissent pas glisser par le navigateur', (
   for (const a of container.querySelectorAll('a[data-label]')) expect(a.getAttribute('draggable')).toBe('false')
   const notCancelled = fireEvent.dragStart(screen.getByRole('link', { name: /Helios/ }))
   expect(notCancelled).toBe(false) // dragstart annulé : le glisser reste un glisser de pointeur
+})
+
+// --- Étages de baies (#36)
+const twelve = (over: Record<string, NodeState['status']> = {}) => ['cortex', 'synapse', 'artemis', 'helios', 'n5', 'n6', 'n7', 'n8', 'n9', 'n10', 'n11', 'n12'].map((id) => node(id, over[id] ?? 'online'))
+const up = () => screen.getByRole('button', { name: 'Monter d\'un étage' })
+const down = () => screen.getByRole('button', { name: 'Descendre d\'un étage' })
+
+test('jusqu\'à 4 nœuds : pas de sélecteur d\'étage, l\'étage 1 est le bureau', () => {
+  for (const n of [0, 1, 4]) {
+    const { container, unmount } = render(<Floor snapshot={snap()} nodes={twelve().slice(0, n)} />)
+    expect(screen.queryByRole('button', { name: 'Monter d\'un étage' })).toBeNull()
+    expect(container.querySelector('[data-floor-count]')!.getAttribute('data-floor-count')).toBe('1')
+    expect(container.querySelectorAll('.desk')).toHaveLength(3)
+    unmount()
+  }
+})
+
+test('à 12 nœuds : ▲ ▼ nommés, « Étage 1 / 3 », ▼ désactivé en bas', () => {
+  render(<Floor snapshot={snap()} nodes={twelve()} />)
+  expect(screen.getByText('Étage 1 / 3')).toBeInTheDocument()
+  expect(up()).toBeEnabled(); expect(down()).toBeDisabled()
+  expect(screen.getByText('Étage 1 / 3').closest('[aria-live]')!.getAttribute('aria-live')).toBe('polite')
+})
+
+test('▲ affiche l\'étage 2 : quatre baies, aucun poste ni table, la table reste dans son coin, légende des nœuds de l\'étage', () => {
+  const { container } = render(<Floor snapshot={snap()} nodes={twelve()} />)
+  fireEvent.click(up())
+  expect(screen.getByText('Étage 2 / 3')).toBeInTheDocument()
+  expect([...container.querySelectorAll('g.rack')].map((r) => r.getAttribute('data-node'))).toEqual(expect.arrayContaining(['n5', 'n6', 'n7', 'n8']))
+  expect(container.querySelectorAll('g.rack')).toHaveLength(4)
+  expect(container.querySelectorAll('.desk')).toHaveLength(0)
+  expect(container.querySelectorAll('g.dais')).toHaveLength(0)
+  expect(container.querySelectorAll('[data-label]')).toHaveLength(0)
+  expect(screen.getByText('TA TABLE')).toBeInTheDocument() // a request does not vanish because we look at the racks
+  expect([...container.querySelectorAll('[data-legend] li')].map((li) => li.textContent)).toEqual(['N5 · en ligne', 'N6 · en ligne', 'N7 · en ligne', 'N8 · en ligne'])
+  expect(container.querySelector('[data-stage]')!.getAttribute('data-floor')).toBe('2')
+  expect(screen.getByRole('img', { name: 'Étage 2 de Nexus : salle des serveurs, 4 baies' })).toBeInTheDocument()
+})
+
+test('la dernière salle peut être incomplète : 12 nœuds donnent 4, 10 nœuds donnent 2 baies à l\'étage 3', () => {
+  const { container } = render(<Floor snapshot={snap()} nodes={twelve().slice(0, 10)} />)
+  fireEvent.click(up()); fireEvent.click(up())
+  expect(screen.getByText('Étage 3 / 3')).toBeInTheDocument()
+  expect(container.querySelectorAll('g.rack')).toHaveLength(2)
+  expect(screen.getByRole('img', { name: 'Étage 3 de Nexus : salle des serveurs, 2 baies' })).toBeInTheDocument()
+  expect(up()).toBeDisabled()
+})
+
+test('l\'ordre reçu fixe les étages : ni l\'id ni le statut ne déplacent un nœud', () => {
+  const received = ['zeta', 'alpha', 'mid', 'omega', 'beta']
+  const { container, rerender } = render(<Floor snapshot={snap()} nodes={received.map((id) => node(id, 'online'))} />)
+  expect([...container.querySelectorAll('g.rack')].map((r) => r.getAttribute('data-node'))).toEqual(['zeta', 'alpha', 'mid', 'omega'])
+  rerender(<Floor snapshot={snap()} nodes={received.map((id) => node(id, id === 'zeta' ? 'offline' : 'unknown'))} />)
+  expect([...container.querySelectorAll('g.rack')].map((r) => r.getAttribute('data-node'))).toEqual(['zeta', 'alpha', 'mid', 'omega'])
+})
+
+test('changer d\'étage garde l\'angle de la vue', () => {
+  const { container } = render(<Floor snapshot={snap()} nodes={twelve()} />)
+  fireEvent.click(screen.getByRole('button', { name: /vers la droite/ }))
+  expect(stageOf(container).getAttribute('data-angle')).toBe('90')
+  fireEvent.click(up())
+  expect(stageOf(container).getAttribute('data-angle')).toBe('90')
+  fireEvent.click(down())
+  expect(stageOf(container).getAttribute('data-angle')).toBe('90')
+})
+
+test('data-floor-dir est absent au premier rendu, puis up, puis down', () => {
+  const { container } = render(<Floor snapshot={snap()} nodes={twelve()} />)
+  expect(stageOf(container).hasAttribute('data-floor-dir')).toBe(false)
+  fireEvent.click(up())
+  expect(stageOf(container).getAttribute('data-floor-dir')).toBe('up')
+  fireEvent.click(down())
+  expect(stageOf(container).getAttribute('data-floor-dir')).toBe('down')
+})
+
+test('PageUp et PageDown changent d\'étage sur la scène, les flèches tournent toujours', () => {
+  const { container } = render(<Floor snapshot={snap()} nodes={twelve()} />)
+  const stage = stageOf(container)
+  expect(fireEvent.keyDown(stage, { key: 'PageUp' })).toBe(false) // preventDefault: the page does not scroll
+  expect(stage.getAttribute('data-floor')).toBe('2')
+  fireEvent.keyDown(stage, { key: 'PageUp' }); fireEvent.keyDown(stage, { key: 'PageUp' })
+  expect(stage.getAttribute('data-floor')).toBe('3')
+  fireEvent.keyDown(stage, { key: 'PageDown' })
+  expect(stage.getAttribute('data-floor')).toBe('2')
+  fireEvent.keyDown(stage, { key: 'ArrowRight' })
+  expect(stage.getAttribute('data-angle')).toBe('90')
+  expect(stage.getAttribute('data-floor')).toBe('2')
+  expect(fireEvent.keyDown(stage, { key: 'PageUp', shiftKey: true })).toBe(true) // modifiers left to the browser
+})
+
+test('un nœud hors ligne rend le repère de son étage rouge, avec un texte lu', () => {
+  const { container } = render(<Floor snapshot={snap()} nodes={twelve({ n10: 'offline' })} />)
+  const markers = [...container.querySelectorAll('[data-floor-marker]')]
+  expect(markers.map((m) => m.getAttribute('data-floor-marker'))).toEqual(['3', '2', '1']) // the highest on top
+  expect(container.querySelector('[data-floor-marker="3"]')!.getAttribute('data-alert')).toBe('off')
+  expect(container.querySelector('[data-floor-marker="3"]')!.textContent).toBe('Étage 3 : un nœud hors ligne')
+  expect(container.querySelector('[data-floor-marker="2"]')!.hasAttribute('data-alert')).toBe(false)
+  expect(container.querySelector('[data-floor-marker="2"]')!.textContent).toBe('')
+})
+
+test('un nœud inconnu, périmé ou une relecture en échec donne l\'ambre ; hors ligne prévu ne donne rien', () => {
+  const old = new Date(Date.now() - 10 * 60_000).toISOString()
+  const a = render(<Floor snapshot={snap()} nodes={twelve({ n6: 'unknown' })} />)
+  expect(a.container.querySelector('[data-floor-marker="2"]')!.getAttribute('data-alert')).toBe('unknown')
+  a.unmount()
+  const b = render(<Floor snapshot={snap()} nodes={twelve().map((n) => n.id === 'n11' ? { ...n, measured_at: old } : n)} />)
+  expect(b.container.querySelector('[data-floor-marker="3"]')!.getAttribute('data-alert')).toBe('unknown')
+  b.unmount()
+  const c = render(<Floor snapshot={snap()} nodes={twelve()} nodesFailed />)
+  for (const m of c.container.querySelectorAll('[data-floor-marker]')) expect(m.getAttribute('data-alert')).toBe('unknown')
+  c.unmount()
+  const d = render(<Floor snapshot={snap()} nodes={twelve({ artemis: 'offline-by-design' })} />)
+  expect(d.container.querySelector('[data-floor-marker="1"]')!.hasAttribute('data-alert')).toBe(false)
+  fireEvent.click(up()); fireEvent.click(down())
+  expect(d.container.querySelector('[data-node="artemis"]')!.getAttribute('data-tone')).toBe('off') // its rack stays shown, off
+})
+
+test('moins de nœuds qu\'avant : l\'étage disparu laisse la place au dernier, sans erreur', () => {
+  const { container, rerender } = render(<Floor snapshot={snap()} nodes={twelve()} />)
+  fireEvent.click(up()); fireEvent.click(up())
+  rerender(<Floor snapshot={snap()} nodes={twelve().slice(0, 6)} />)
+  expect(screen.getByText('Étage 2 / 2')).toBeInTheDocument()
+  expect(container.querySelectorAll('g.rack')).toHaveLength(2)
 })
