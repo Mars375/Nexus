@@ -185,16 +185,16 @@ test('postes, baies et table sont dessinés du fond vers l\'avant, à chaque qua
   }
 })
 
-test('chaque étiquette de poste est au-dessus de son bureau, quel que soit l\'angle', () => {
+test('chaque étiquette de poste est du côté que lui donne l\'angle (au-dessus ou en dessous), avec son trait de rappel', () => {
   for (const a of QUARTERS) {
     const { container } = render(<FloorScene snapshot={snap()} nodes={[]} angle={a} />)
     const l = layoutFloor(3, 0, a)
     const agents = ['helios', 'mnema', 'artemis']
     agents.forEach((agent, i) => {
-      const s = l.seats[i], from = l.project(s.x + 1.5, s.y + 0.75, 1.8), lab = l.labels[i]
+      const lab = l.labels[i], from = lab.anchor
       const [left, top] = toPercent(l, [lab.x, lab.y])
       const el = container.querySelector(`[data-label="${agent}"]`) as HTMLElement
-      expect(el.className, agent).toContain('-translate-y-full')
+      expect(el.className, agent).toContain(lab.below ? 'translate-y-0' : '-translate-y-full')
       expect(parseFloat(el.style.left)).toBeCloseTo(left, 3)
       expect(parseFloat(el.style.top)).toBeCloseTo(top, 3)
       const leader = container.querySelectorAll('path.leader')[i]

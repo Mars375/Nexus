@@ -92,8 +92,6 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
   const tickets = snapshot.asks.slice(0, MAX_TICKETS)
   const extra = snapshot.asks.length - tickets.length
   const label = (ask: number) => ask === 0 ? 'aucune demande reçue (7 j)' : `${ask} demande${ask > 1 ? 's' : ''}`
-  // Le point d'ancrage de l'étiquette d'un poste : au-dessus du bureau, à tous les angles.
-  const anchor = (s: Layout['seats'][number]) => p(s.x + DESK.w / 2, s.y + DESK.d / 2, 1.8)
 
   const dais = (
     <g key="table" className="dais" data-on={String(snapshot.asks.length > 0)}>
@@ -139,8 +137,8 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
         ))}
         {drawOrder(l).map((o) => o.kind === 'seat' ? <Desk key={seats[o.index].agent} l={l} seat={l.seats[o.index]} m={seats[o.index]} /> : o.kind === 'rack' ? rackView(o.index) : dais)}
         {seats.map((m, i) => {
-          const from = anchor(l.seats[i]), end = l.labels[i]
-          return <path key={m.agent} className="leader" d={`M${from} L${end.x} ${end.y}`} />
+          const end = l.labels[i]
+          return <path key={m.agent} className="leader" d={`M${end.anchor} L${end.x} ${end.y}`} />
         })}
       </svg>
 
@@ -154,7 +152,7 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
         const name = <><span className="block font-orbital-display text-[13px] font-semibold tracking-[0.14em] leading-[14px]">{displayName(m.agent).toUpperCase()}</span>
           {m.title && <span className="mx-auto hidden max-w-[15ch] truncate font-data text-[11px] leading-[13px] text-ink @min-[1150px]:block">{m.title}</span>}
           <span className="hidden font-data text-[11px] leading-[13px] text-muted @min-[800px]:block">{meta}</span></>
-        const cls = clsx('absolute whitespace-nowrap text-center -translate-x-1/2 -translate-y-full',
+        const cls = clsx('absolute whitespace-nowrap text-center -translate-x-1/2', l.labels[i].below ? 'translate-y-0' : '-translate-y-full',
           m.wait ? '[&>span:first-child]:text-attention' : m.block ? '[&>span:first-child]:text-danger' : m.run ? '' : '[&>span:first-child]:text-unknown')
         const style = { left: `${left}%`, top: `${top}%` }
         return target

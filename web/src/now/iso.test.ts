@@ -212,6 +212,13 @@ describe('spreadLabels', () => {
     for (let i = 0; i < placed.length; i++) for (let j = i + 1; j < placed.length; j++) expect(hit(placed[i], placed[j])).toBe(false)
     for (const v of lifts) expect(v).toBeGreaterThanOrEqual(0)
   })
+  test('une étiquette du bas est décalée vers le bas, loin du bureau', () => {
+    const boxes = [rect(0, 100, 100, 146), rect(40, 110, 140, 156)]
+    const shifts = spreadLabels(boxes, [], [true, true])
+    expect(shifts[0]).toBe(0)
+    expect(shifts[1]).toBeGreaterThan(0) // décalage « loin du bureau » : vers le bas ici
+    expect(boxes[1].y0 + shifts[1]).toBeGreaterThanOrEqual(boxes[0].y1)
+  })
   test('déterministe : même entrée, même sortie', () => {
     const boxes = [rect(0, 0, 100, 40), rect(20, 10, 120, 50), rect(40, 20, 140, 60)]
     expect(spreadLabels(boxes, [])).toEqual(spreadLabels(boxes, []))
@@ -239,13 +246,37 @@ describe('étiquettes du plan', () => {
       for (const { box: b } of l.labels) { expect(b.y0, `${agents} à ${a}°`).toBeGreaterThanOrEqual(y); expect(b.y1).toBeLessThanOrEqual(y + h); expect(b.x0).toBeGreaterThanOrEqual(x); expect(b.x1).toBeLessThanOrEqual(x + w) }
     }
   })
-  test('le bas de l\'étiquette est relevé d\'autant que son trait de rappel', () => {
-    const l = layoutFloor(8, 4, 0)
-    l.labels.forEach((lab, i) => {
-      const s = l.seats[i], from = l.project(s.x + DESK.w / 2, s.y + DESK.d / 2, 1.8)
-      expect(lab.y).toBeLessThanOrEqual(from[1] - 40 + 1e-9)
-      expect(lab.x).toBe(from[0])
-      expect(lab.box.y1).toBeCloseTo(lab.y, 5)
-    })
+  test('la rangée la plus éloignée a son étiquette au-dessus, la plus proche en dessous, à chaque quart de tour', () => {
+    const farRow = (a: number) => (a === 0 || a === 270 ? 'back' : 'front') // rangée éloignée du spectateur : celle qui est au-dessus
+    for (const agents of [8, 12]) for (const a of QUARTERS) {
+      const l = layoutFloor(agents, 4, a)
+      l.seats.forEach((s, i) => {
+        const above = (s.back ? 'back' : 'front') === farRow(a)
+        expect(l.labels[i].below, `poste ${i}, ${agents} agents à ${a}°`).toBe(!above)
+      })
+    }
+  })
+  test('à tout angle, la règle suit la profondeur de la rangée par rapport au centre du sol', () => {
+    for (let a = 0; a < 360; a += 7) {
+      const l = layoutFloor(8, 4, a)
+      l.seats.forEach((s, i) => {
+        const rowDepth = l.depthOf(l.width / 2, s.y + DESK.d / 2) - l.depthOf(l.width / 2, l.depth / 2)
+        if (Math.abs(rowDepth) > 1e-6) expect(l.labels[i].below, `à ${a}°`).toBe(rowDepth > 0)
+      })
+    }
+  })
+  test('le trait de rappel part du bureau, va du côté de l\'étiquette et reste court', () => {
+    let longest = 0
+    for (const agents of [8, 12]) for (const a of QUARTERS) {
+      const l = layoutFloor(agents, 4, a)
+      l.labels.forEach((lab) => {
+        const len = Math.abs(lab.y - lab.anchor[1])
+        longest = Math.max(longest, len)
+        expect(lab.x).toBe(lab.anchor[0])
+        if (lab.below) { expect(lab.y).toBeGreaterThanOrEqual(lab.anchor[1] + 26 - 1e-9); expect(lab.box.y0).toBeCloseTo(lab.y, 5) }
+        else { expect(lab.y).toBeLessThanOrEqual(lab.anchor[1] - 40 + 1e-9); expect(lab.box.y1).toBeCloseTo(lab.y, 5) }
+      })
+    }
+    expect(longest).toBeLessThanOrEqual(130)
   })
 })

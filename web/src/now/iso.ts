@@ -31,14 +31,19 @@ export type Layout = {
 }
 /** Axis-aligned box in viewBox units. */
 export type Rect = { x0: number; y0: number; x1: number; y1: number }
-/** Estimated label of a seat: (x, y) is the bottom-centre, where its leader line ends. */
-export type SeatLabel = { x: number; y: number; box: Rect }
+/**
+ * Estimated label of a seat. The leader runs from `anchor` (on the desk) to (x, y), the edge of the
+ * box nearest the desk: its bottom when the label is above the desk, its top when `below`.
+ */
+export type SeatLabel = { x: number; y: number; anchor: Pt; below: boolean; box: Rect }
 export type DrawItem = { kind: 'seat' | 'rack' | 'table'; index: number; x: number; y: number; w: number; d: number }
 
 export const DESK = { w: 3, d: 1.5, h: 0.75 }
 export const RACK = { w: 1.4, d: 1.4, h: 2.4 }
 // Offset (screen units) between a desk's label anchor and its label: clears the neighbouring monitor.
 export const LABEL_LIFT = 40
+// Same, for the row nearest the viewer: label under the desk.
+export const LABEL_DROP = 26
 const UNIT = 26
 const A = Math.cos(Math.PI / 6) * UNIT
 const B = Math.sin(Math.PI / 6) * UNIT
@@ -47,7 +52,7 @@ const ORIGIN = { x: 150, y: 110 } // coin gauche du sol à 0° ; fixe pour que l
 const PAD = 12
 // Room taken by label text around its anchor, in viewBox units (labels keep their px size).
 const LABEL_HALF = 110
-const LABEL_TEXT_H = 46
+const LABEL_TEXT_H = 42
 const GAP = 6
 const SAMPLE_STEP = 5
 const LABEL_STEP = 1
@@ -129,39 +134,61 @@ function zonesOf(vb: Frame, rackCount: number): Rect[] {
   ]
 }
 
-const overlaps = (a: Rect, b: Rect) => a.x0 < b.x1 + GAP && b.x0 < a.x1 + GAP && a.y0 < b.y1 + GAP && b.y0 < a.y1 + GAP
+const EPS = 0.01 // boxes that only touch at the gap are not overlapping
+const overlaps = (a: Rect, b: Rect) => a.x0 < b.x1 + GAP - EPS && b.x0 < a.x1 + GAP - EPS && a.y0 < b.y1 + GAP - EPS && b.y0 < a.y1 + GAP - EPS
 
 /**
- * Extra lift for each label box, in order (back of the scene first): a box touching a fixed zone or
- * an earlier label moves up until it touches nothing. Boxes that touch nothing stay put.
+ * Shift of each label box away from its desk, in order (back of the scene first): up for a label above
+ * its desk, down for a label below (`below[i]`). A box touching a fixed zone or an earlier label moves
+ * the least that clears it; boxes that touch nothing stay put.
  */
-export function spreadLabels(boxes: Rect[], fixed: Rect[]): number[] {
+export function spreadLabels(boxes: Rect[], fixed: Rect[], below: boolean[] = []): number[] {
   const placed = [...fixed]
-  return boxes.map((b) => {
-    let lift = 0, cur = b
+  return boxes.map((b, i) => {
+    let shift = 0, cur = b
     for (let guard = 0; guard < 500; guard++) {
       const hit = placed.find((p) => overlaps(cur, p))
       if (!hit) break
-      const dy = cur.y1 - (hit.y0 - GAP)
-      lift += dy
-      cur = { ...cur, y0: cur.y0 - dy, y1: cur.y1 - dy }
+      const dy = below[i] ? hit.y1 + GAP - cur.y0 : cur.y1 - (hit.y0 - GAP) // distance to clear it, away from the desk
+      shift += dy
+      const move = below[i] ? dy : -dy
+      cur = { ...cur, y0: cur.y0 + move, y1: cur.y1 + move }
     }
     placed.push(cur)
-    return lift
+    return shift
   })
+}
+
+/** A seat's label sits under its desk when its row is nearer the viewer than the floor centre. */
+function labelBelow(width: number, depth: number, angle: number, seat: Seat): boolean {
+  const { turn } = turner(width, depth, angle)
+  const [u, v] = turn(width / 2, seat.y + DESK.d / 2), [cu, cv] = turn(width / 2, depth / 2)
+  return u + v - (cu + cv) > 1e-9
 }
 
 function placeLabels(width: number, depth: number, angle: number, seats: Seat[], project: Layout['project'], zones: Rect[]): SeatLabel[] {
   const { turn } = turner(width, depth, angle)
-  const anchors = seats.map((s) => project(s.x + DESK.w / 2, s.y + DESK.d / 2, 1.8))
+  const below = seats.map((s) => labelBelow(width, depth, angle, s))
+  const anchors = seats.map((s, i): Pt => {
+    const cx = s.x + DESK.w / 2, cy = s.y + DESK.d / 2
+    if (!below[i]) return project(cx, cy, 1.8)
+    // lowest point of the desk footprint on screen, under its centre
+    const low = Math.max(...[[s.x, s.y], [s.x + DESK.w, s.y], [s.x, s.y + DESK.d], [s.x + DESK.w, s.y + DESK.d]].map(([x, y]) => project(x, y, 0)[1]))
+    return [project(cx, cy, 0)[0], low]
+  })
   const order = seats.map((s, i) => [i, (([u, v]) => u + v)(turn(s.x + DESK.w / 2, s.y + DESK.d / 2))] as const).sort((a, b) => a[1] - b[1] || a[0] - b[0]).map(([i]) => i)
-  const boxes = order.map((i): Rect => ({ x0: anchors[i][0] - LABEL_HALF, x1: anchors[i][0] + LABEL_HALF, y0: anchors[i][1] - LABEL_LIFT - LABEL_TEXT_H, y1: anchors[i][1] - LABEL_LIFT }))
-  const lifts = spreadLabels(boxes, zones)
+  const boxes = order.map((i): Rect => {
+    const [ax, ay] = anchors[i]
+    return below[i]
+      ? { x0: ax - LABEL_HALF, x1: ax + LABEL_HALF, y0: ay + LABEL_DROP, y1: ay + LABEL_DROP + LABEL_TEXT_H }
+      : { x0: ax - LABEL_HALF, x1: ax + LABEL_HALF, y0: ay - LABEL_LIFT - LABEL_TEXT_H, y1: ay - LABEL_LIFT }
+  })
+  const shifts = spreadLabels(boxes, zones, order.map((i) => below[i]))
   const out: SeatLabel[] = new Array(seats.length)
   order.forEach((i, k) => {
-    const b = boxes[k], l = lifts[k]
-    const box = { x0: b.x0, x1: b.x1, y0: round(b.y0 - l), y1: round(b.y1 - l) }
-    out[i] = { x: anchors[i][0], y: box.y1, box }
+    const b = boxes[k], d = below[i] ? shifts[k] : -shifts[k]
+    const box = { x0: b.x0, x1: b.x1, y0: round(b.y0 + d), y1: round(b.y1 + d) }
+    out[i] = { x: anchors[i][0], y: below[i] ? box.y0 : box.y1, anchor: anchors[i], below: below[i], box }
   })
   return out
 }
@@ -177,18 +204,18 @@ function fixedFrame(width: number, depth: number, seats: Seat[], racks: { x: num
   }
   // label boxes unspread give the horizontal extent and a first top
   const unspread = (a: number) => placeLabels(width, depth, a, seats, projector(a), [])
-  let labelTop = Infinity
-  for (let a = 0; a < 360; a += SAMPLE_STEP) for (const { box } of unspread(a)) { minX = Math.min(minX, box.x0); maxX = Math.max(maxX, box.x1); labelTop = Math.min(labelTop, box.y0) }
-  let vb: Frame = { x: round(minX - PAD), y: round(Math.min(minY, labelTop) - PAD), w: round(maxX - minX + 2 * PAD), h: 0 }
-  vb.h = round(maxY + PAD - vb.y)
-  // Spread labels can rise above that; the zones depend on the frame, so settle it in a few passes.
+  let labelTop = Infinity, labelBottom = -Infinity
+  for (let a = 0; a < 360; a += SAMPLE_STEP) for (const { box } of unspread(a)) { minX = Math.min(minX, box.x0); maxX = Math.max(maxX, box.x1); labelTop = Math.min(labelTop, box.y0); labelBottom = Math.max(labelBottom, box.y1) }
+  const top0 = Math.min(minY, labelTop) - PAD, bottom0 = Math.max(maxY, labelBottom) + PAD
+  let vb: Frame = { x: round(minX - PAD), y: round(top0), w: round(maxX - minX + 2 * PAD), h: round(bottom0 - top0) }
+  // Spread labels can go further up or down than that; the zones depend on the frame, so settle it in a few passes.
   for (let pass = 0; pass < 8; pass++) {
     const zones = zonesOf(vb, rackCount)
-    let top = vb.y + PAD
-    for (let a = 0; a < 360; a += LABEL_STEP) for (const { box } of placeLabels(width, depth, a, seats, projector(a), zones)) top = Math.min(top, box.y0)
-    if (top >= vb.y + PAD - 0.05) break
+    let top = vb.y + PAD, bottom = vb.y + vb.h - PAD
+    for (let a = 0; a < 360; a += LABEL_STEP) for (const { box } of placeLabels(width, depth, a, seats, projector(a), zones)) { top = Math.min(top, box.y0); bottom = Math.max(bottom, box.y1) }
+    if (top >= vb.y + PAD - 0.05 && bottom <= vb.y + vb.h - PAD + 0.05) break
     const y = round(top - PAD)
-    vb = { ...vb, y, h: round(vb.h + (vb.y - y)) }
+    vb = { ...vb, y, h: round(bottom + PAD - y) }
   }
   return vb
 }
