@@ -16,7 +16,7 @@
 - Toute tâche qui touche une migration, l'authentification, les secrets, la concurrence ou un invariant passe par `architect` avant `implementer`.
 - Après deux échecs de test sur la même tâche, relancer avec `model: opus` au lieu de réessayer à l'identique.
 - Toute PR passe d'abord par `reviewer`, puis par la relecture Antigravity (lancée par Loïc depuis sa machine : le skill et la CLI ne sont pas disponibles en session cloud), CodeRabbit (automatique sur la PR), et `@codex review` en dernier.
-- Les recherches larges en lecture seule vont à `explorer`, pas au modèle principal.
+- Les recherches larges en lecture seule vont à `explorer`, pas au modèle principal : recherche d'un motif dans le code, vérification d'une remarque de relecture contre la doc officielle ou le code (étapes 4 et 5 de `docs/agents/review-checklist.md`).
 
 ## Agent skills
 
