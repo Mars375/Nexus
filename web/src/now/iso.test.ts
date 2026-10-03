@@ -308,3 +308,45 @@ describe('étiquettes du plan', () => {
     expect(longest).toBeLessThanOrEqual(130)
   })
 })
+
+describe('étage 1 : zones et cadre (#36)', () => {
+  // Frames of `master`, measured before the floors existed: with at most 4 nodes floor 1 must not move.
+  test('le cadre de l\'étage 1 jusqu\'à 4 baies est celui de master', () => {
+    expect(layoutFloor(1, 0).viewBox).toEqual({ x: 136.3, y: -28.3, w: 725.5, h: 648.8 })
+    expect(layoutFloor(8, 4).viewBox).toEqual({ x: 131.4, y: -12.3, w: 807.2, h: 821.3 })
+    expect(layoutFloor(12, 4).viewBox).toEqual({ x: 108.8, y: -7.5, w: 1032.6, h: 905.9 })
+    expect(layoutFloor(8, 4, 0, 1).viewBox).toEqual(layoutFloor(8, 4).viewBox)
+  })
+  test('la légende ne dépasse pas 4 lignes, quel que soit le nombre de nœuds', () => {
+    const legend = (n: number) => { const l = layoutFloor(8, n), z = l.zones[0]; return (z.y1 - z.y0) / (l.viewBox.w / 529) }
+    expect(legend(4)).toBeCloseTo(80, 5)
+    for (const n of [5, 8, 12]) expect(legend(n)).toBeCloseTo(80, 5)
+    expect(legend(2)).toBeCloseTo(40, 5)
+    expect(legend(0)).toBeCloseTo(20, 5)
+  })
+  test('avec plusieurs étages, la zone haut-gauche réserve la place du sélecteur sous les boutons', () => {
+    const top = (floors: number) => { const l = layoutFloor(8, 4, 0, floors), z = l.zones[2], k = l.viewBox.w / 529; return { w: (z.x1 - z.x0) / k, h: (z.y1 - z.y0) / k } }
+    expect(top(1)).toEqual({ w: expect.closeTo(80, 5), h: expect.closeTo(40, 5) })
+    expect(top(2).w).toBeGreaterThanOrEqual(170 - 1e-6)
+    expect(top(2).h).toBeGreaterThanOrEqual(80 - 1e-6)
+  })
+  test('avec plusieurs étages, aucune étiquette ne touche une zone fixe à chaque quart de tour (8 et 12 agents)', () => {
+    for (const agents of [8, 12]) for (const a of QUARTERS) {
+      const l = layoutFloor(agents, 4, a, 3)
+      for (let i = 0; i < agents; i++) {
+        for (const z of l.zones) expect(hit(l.labels[i].box, z), `étiquette ${i}, ${agents} agents à ${a}°`).toBe(false)
+        for (let j = i + 1; j < agents; j++) expect(hit(l.labels[i].box, l.labels[j].box), `étiquettes ${i} et ${j}, ${agents} agents à ${a}°`).toBe(false)
+      }
+    }
+  })
+  test('avec plusieurs étages, le cadre reste fixe à tous les angles et contient les étiquettes', () => {
+    for (const agents of [8, 12]) {
+      const ref = layoutFloor(agents, 4, 0, 2).viewBox
+      for (let a = 0; a < 360; a += 5) {
+        const l = layoutFloor(agents, 4, a, 2), { x, y, w, h } = l.viewBox
+        expect(l.viewBox).toEqual(ref)
+        for (const { box: b } of l.labels) { expect(b.y0).toBeGreaterThanOrEqual(y); expect(b.y1).toBeLessThanOrEqual(y + h); expect(b.x0).toBeGreaterThanOrEqual(x); expect(b.x1).toBeLessThanOrEqual(x + w) }
+      }
+    }
+  })
+})

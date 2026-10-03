@@ -72,6 +72,10 @@ const MIN_FLOOR_PX = 529
 const LEGEND = { w: 210, row: 20 }
 const TABLE_CORNER = { w: 270, h: 40 }
 const BUTTONS = { w: 80, h: 40 }
+// Floor selector (up/down buttons, « Étage n / N », floor markers), under the rotation buttons once there are several floors.
+const SELECTOR = { w: 170, h: 40 }
+// The legend lists the racks of the floor shown: four at most, however many nodes there are.
+const LEGEND_MAX_ROWS = 4
 
 const round = (v: number) => Math.round(v * 10) / 10
 const radians = (deg: number) => (deg * Math.PI) / 180
@@ -85,7 +89,7 @@ function turner(width: number, depth: number, angle: number) {
 }
 
 /** Plan of the floor for `agentCount` seats and `rackCount` racks, projected at `angle` degrees inside a frame that does not depend on the angle. */
-export function layoutFloor(agentCount: number, rackCount: number, angle = 0): Layout {
+export function layoutFloor(agentCount: number, rackCount: number, angle = 0, floorCount = 1): Layout {
   const perRow = Math.max(4, Math.ceil(agentCount / 2))
   const rowWidth = perRow * PITCH
   // Racks fill columns of at most RACK_PER_COLUMN, outermost column first; each extra column widens the floor.
@@ -116,14 +120,16 @@ export function layoutFloor(agentCount: number, rackCount: number, angle = 0): L
     }
   }
 
-  const key = `${agentCount}:${rackCount}`
+  const legendRows = Math.max(1, Math.min(rackCount, LEGEND_MAX_ROWS))
+  const selector = floorCount > 1
+  const key = `${agentCount}:${rackCount}:${selector}`
   let vb = frames.get(key)
   if (!vb) {
-    vb = fixedFrame(width, depth, seats, racks, rackCount, projector)
+    vb = fixedFrame(width, depth, seats, racks, legendRows, selector, projector)
     frames.set(key, vb)
   }
   const viewBox = vb
-  const zones = zonesOf(viewBox, rackCount)
+  const zones = zonesOf(viewBox, legendRows, selector)
   const labels = placeLabels(width, depth, angle, seats, projector(angle), zones)
 
   const { turn, normal } = turner(width, depth, angle)
@@ -137,13 +143,13 @@ type Projector = (a: number) => Layout['project']
 const frames = new Map<string, Frame>()
 
 /** Screen corners kept free for the legend, « TA TABLE » and the rotation buttons, in plan units at the smallest render. */
-function zonesOf(vb: Frame, rackCount: number): Rect[] {
+function zonesOf(vb: Frame, legendRows: number, selector: boolean): Rect[] {
   const k = vb.w / MIN_FLOOR_PX // plan units per px at the smallest render
   const right = vb.x + vb.w, bottom = vb.y + vb.h
   return [
-    { x0: right - LEGEND.w * k, y0: bottom - Math.max(1, rackCount) * LEGEND.row * k, x1: right, y1: bottom },
+    { x0: right - LEGEND.w * k, y0: bottom - legendRows * LEGEND.row * k, x1: right, y1: bottom },
     { x0: vb.x, y0: bottom - TABLE_CORNER.h * k, x1: vb.x + TABLE_CORNER.w * k, y1: bottom },
-    { x0: vb.x, y0: vb.y, x1: vb.x + BUTTONS.w * k, y1: vb.y + BUTTONS.h * k },
+    { x0: vb.x, y0: vb.y, x1: vb.x + (selector ? Math.max(BUTTONS.w, SELECTOR.w) : BUTTONS.w) * k, y1: vb.y + (BUTTONS.h + (selector ? SELECTOR.h : 0)) * k },
   ]
 }
 
@@ -208,7 +214,7 @@ function placeLabels(width: number, depth: number, angle: number, seats: Seat[],
 }
 
 /** Fixed frame: bounds over every angle (floor, racks, labels once spread), so nothing jumps while turning. */
-function fixedFrame(width: number, depth: number, seats: Seat[], racks: { x: number; y: number }[], rackCount: number, projector: Projector): Frame {
+function fixedFrame(width: number, depth: number, seats: Seat[], racks: { x: number; y: number }[], legendRows: number, selector: boolean, projector: Projector): Frame {
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
   const grow = (p: Pt) => { minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]); minY = Math.min(minY, p[1]); maxY = Math.max(maxY, p[1]) }
   for (let a = 0; a < 360; a += SAMPLE_STEP) {
@@ -224,7 +230,7 @@ function fixedFrame(width: number, depth: number, seats: Seat[], racks: { x: num
   let vb: Frame = { x: round(minX - PAD), y: round(top0), w: round(maxX - minX + 2 * PAD), h: round(bottom0 - top0) }
   // Spread labels can go further up or down than that; the zones depend on the frame, so settle it in a few passes.
   for (let pass = 0; pass < 8; pass++) {
-    const zones = zonesOf(vb, rackCount)
+    const zones = zonesOf(vb, legendRows, selector)
     let top = vb.y + PAD, bottom = vb.y + vb.h - PAD
     for (let a = 0; a < 360; a += LABEL_STEP) for (const { box } of placeLabels(width, depth, a, seats, projector(a), zones)) { top = Math.min(top, box.y0); bottom = Math.max(bottom, box.y1) }
     if (top >= vb.y + PAD - 0.05 && bottom <= vb.y + vb.h - PAD + 0.05) break
