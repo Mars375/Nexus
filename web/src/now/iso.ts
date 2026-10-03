@@ -20,11 +20,19 @@ export type Layout = {
   /** Fixed frame: the same for every angle, so nothing jumps while the floor turns. */
   viewBox: { x: number; y: number; w: number; h: number }
   project: (x: number, y: number, z?: number) => Pt
+  /** One per seat, spread apart so none touches another label or a fixed corner. */
+  labels: SeatLabel[]
+  /** Fixed HTML corners (rack legend, table corner, rotate buttons), estimated for the smallest render. */
+  zones: Rect[]
   /** Depth of a floor point once rotated (x' + y'): larger is nearer to the viewer. */
   depthOf: (x: number, y: number) => number
   /** True when a face with this outward floor normal looks towards the viewer. */
   sees: (nx: number, ny: number) => boolean
 }
+/** Axis-aligned box in viewBox units. */
+export type Rect = { x0: number; y0: number; x1: number; y1: number }
+/** Estimated label of a seat: (x, y) is the bottom-centre, where its leader line ends. */
+export type SeatLabel = { x: number; y: number; box: Rect }
 export type DrawItem = { kind: 'seat' | 'rack' | 'table'; index: number; x: number; y: number; w: number; d: number }
 
 export const DESK = { w: 3, d: 1.5, h: 0.75 }
@@ -40,8 +48,18 @@ const PAD = 12
 // Room taken by label text around its anchor, in viewBox units (labels keep their px size).
 const LABEL_HALF = 110
 const LABEL_TEXT_H = 46
-const TABLE_LABEL_W = 170
+const GAP = 6
 const SAMPLE_STEP = 5
+const LABEL_STEP = 1
+
+/*
+ * Fixed HTML corners keep their size in px while the plan shrinks: their footprint in plan units
+ * is computed for the smallest render, a container of MIN_FLOOR_PX (761 px window - menu - gutters).
+ */
+const MIN_FLOOR_PX = 529
+const LEGEND = { w: 210, row: 20 }
+const TABLE_CORNER = { w: 270, h: 40 }
+const BUTTONS = { w: 80, h: 40 }
 
 const round = (v: number) => Math.round(v * 10) / 10
 const radians = (deg: number) => (deg * Math.PI) / 180
@@ -81,28 +99,98 @@ export function layoutFloor(agentCount: number, rackCount: number, angle = 0): L
     }
   }
 
-  // Cadre fixe : bornes sur tous les angles (échantillonnés), étiquettes et salle comprises.
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
-  const grow = (p: Pt, left = 0, right = 0, up = 0) => {
-    minX = Math.min(minX, p[0] - left); maxX = Math.max(maxX, p[0] + right)
-    minY = Math.min(minY, p[1] - up); maxY = Math.max(maxY, p[1])
+  const key = `${agentCount}:${rackCount}`
+  let vb = frames.get(key)
+  if (!vb) {
+    vb = fixedFrame(width, depth, seats, racks, rackCount, projector)
+    frames.set(key, vb)
   }
-  for (let a = 0; a < 360; a += SAMPLE_STEP) {
-    const p = projector(a)
-    for (const [cx, cy] of [[0, 0], [width, 0], [0, depth], [width, depth]]) { grow(p(cx, cy, -0.35)); grow(p(cx, cy, 0)) }
-    for (const r of racks) for (const [dx, dy] of [[0, 0], [RACK.w, 0], [0, RACK.d], [RACK.w, RACK.d]]) grow(p(r.x + dx, r.y + dy, RACK.h))
-    for (const s of seats) {
-      const [px, py] = p(s.x + DESK.w / 2, s.y + DESK.d / 2, 1.8)
-      grow([px, py - LABEL_LIFT], LABEL_HALF, LABEL_HALF, LABEL_TEXT_H)
-    }
-    grow(p(table.x + table.w + 0.3, table.y + 1, 0.4), 0, TABLE_LABEL_W, 14)
-  }
-  const viewBox = { x: round(minX - PAD), y: round(minY - PAD), w: round(maxX - minX + 2 * PAD), h: round(maxY - minY + 2 * PAD) }
+  const viewBox = vb
+  const zones = zonesOf(viewBox, rackCount)
+  const labels = placeLabels(width, depth, angle, seats, projector(angle), zones)
 
   const { turn, normal } = turner(width, depth, angle)
   const sees = (nx: number, ny: number) => { const [u, v] = normal(nx, ny); return u + v > 1e-9 }
   const depthOf = (x: number, y: number) => { const [u, v] = turn(x, y); return u + v }
-  return { width, depth, angle, seats, table, racks, viewBox, project: projector(angle), depthOf, sees }
+  return { width, depth, angle, seats, table, racks, viewBox, project: projector(angle), labels, zones, depthOf, sees }
+}
+
+type Frame = Layout['viewBox']
+type Projector = (a: number) => Layout['project']
+const frames = new Map<string, Frame>()
+
+function zonesOf(vb: Frame, rackCount: number): Rect[] {
+  const k = vb.w / MIN_FLOOR_PX // plan units per px at the smallest render
+  const right = vb.x + vb.w, bottom = vb.y + vb.h
+  return [
+    { x0: right - LEGEND.w * k, y0: bottom - Math.max(1, rackCount) * LEGEND.row * k, x1: right, y1: bottom },
+    { x0: vb.x, y0: bottom - TABLE_CORNER.h * k, x1: vb.x + TABLE_CORNER.w * k, y1: bottom },
+    { x0: vb.x, y0: vb.y, x1: vb.x + BUTTONS.w * k, y1: vb.y + BUTTONS.h * k },
+  ]
+}
+
+const overlaps = (a: Rect, b: Rect) => a.x0 < b.x1 + GAP && b.x0 < a.x1 + GAP && a.y0 < b.y1 + GAP && b.y0 < a.y1 + GAP
+
+/**
+ * Extra lift for each label box, in order (back of the scene first): a box touching a fixed zone or
+ * an earlier label moves up until it touches nothing. Boxes that touch nothing stay put.
+ */
+export function spreadLabels(boxes: Rect[], fixed: Rect[]): number[] {
+  const placed = [...fixed]
+  return boxes.map((b) => {
+    let lift = 0, cur = b
+    for (let guard = 0; guard < 500; guard++) {
+      const hit = placed.find((p) => overlaps(cur, p))
+      if (!hit) break
+      const dy = cur.y1 - (hit.y0 - GAP)
+      lift += dy
+      cur = { ...cur, y0: cur.y0 - dy, y1: cur.y1 - dy }
+    }
+    placed.push(cur)
+    return lift
+  })
+}
+
+function placeLabels(width: number, depth: number, angle: number, seats: Seat[], project: Layout['project'], zones: Rect[]): SeatLabel[] {
+  const { turn } = turner(width, depth, angle)
+  const anchors = seats.map((s) => project(s.x + DESK.w / 2, s.y + DESK.d / 2, 1.8))
+  const order = seats.map((s, i) => [i, (([u, v]) => u + v)(turn(s.x + DESK.w / 2, s.y + DESK.d / 2))] as const).sort((a, b) => a[1] - b[1] || a[0] - b[0]).map(([i]) => i)
+  const boxes = order.map((i): Rect => ({ x0: anchors[i][0] - LABEL_HALF, x1: anchors[i][0] + LABEL_HALF, y0: anchors[i][1] - LABEL_LIFT - LABEL_TEXT_H, y1: anchors[i][1] - LABEL_LIFT }))
+  const lifts = spreadLabels(boxes, zones)
+  const out: SeatLabel[] = new Array(seats.length)
+  order.forEach((i, k) => {
+    const b = boxes[k], l = lifts[k]
+    const box = { x0: b.x0, x1: b.x1, y0: round(b.y0 - l), y1: round(b.y1 - l) }
+    out[i] = { x: anchors[i][0], y: box.y1, box }
+  })
+  return out
+}
+
+/** Fixed frame: bounds over every angle (floor, racks, labels once spread), so nothing jumps while turning. */
+function fixedFrame(width: number, depth: number, seats: Seat[], racks: { x: number; y: number }[], rackCount: number, projector: Projector): Frame {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+  const grow = (p: Pt) => { minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]); minY = Math.min(minY, p[1]); maxY = Math.max(maxY, p[1]) }
+  for (let a = 0; a < 360; a += SAMPLE_STEP) {
+    const p = projector(a)
+    for (const [cx, cy] of [[0, 0], [width, 0], [0, depth], [width, depth]]) { grow(p(cx, cy, -0.35)); grow(p(cx, cy, 0)) }
+    for (const r of racks) for (const [dx, dy] of [[0, 0], [RACK.w, 0], [0, RACK.d], [RACK.w, RACK.d]]) grow(p(r.x + dx, r.y + dy, RACK.h))
+  }
+  // label boxes unspread give the horizontal extent and a first top
+  const unspread = (a: number) => placeLabels(width, depth, a, seats, projector(a), [])
+  let labelTop = Infinity
+  for (let a = 0; a < 360; a += SAMPLE_STEP) for (const { box } of unspread(a)) { minX = Math.min(minX, box.x0); maxX = Math.max(maxX, box.x1); labelTop = Math.min(labelTop, box.y0) }
+  let vb: Frame = { x: round(minX - PAD), y: round(Math.min(minY, labelTop) - PAD), w: round(maxX - minX + 2 * PAD), h: 0 }
+  vb.h = round(maxY + PAD - vb.y)
+  // Spread labels can rise above that; the zones depend on the frame, so settle it in a few passes.
+  for (let pass = 0; pass < 8; pass++) {
+    const zones = zonesOf(vb, rackCount)
+    let top = vb.y + PAD
+    for (let a = 0; a < 360; a += LABEL_STEP) for (const { box } of placeLabels(width, depth, a, seats, projector(a), zones)) top = Math.min(top, box.y0)
+    if (top >= vb.y + PAD - 0.05) break
+    const y = round(top - PAD)
+    vb = { ...vb, y, h: round(vb.h + (vb.y - y)) }
+  }
+  return vb
 }
 
 const pts = (list: Pt[]) => list.map((p) => `${p[0]},${p[1]}`).join(' ')

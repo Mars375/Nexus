@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { DESK, LABEL_LIFT, RACK, box, drawOrder, layoutFloor, nearestQuarter, toPercent } from './iso'
+import { DESK, RACK, box, drawOrder, layoutFloor, nearestQuarter, spreadLabels, toPercent, type Rect } from './iso'
 
 const ANGLES = Array.from({ length: 72 }, (_, i) => i * 5)
 const QUARTERS = [0, 90, 180, 270]
@@ -82,7 +82,7 @@ describe('viewBox fixe', () => {
       }
       for (const [cx, cy] of [[0, 0], [l.width, 0], [0, l.depth], [l.width, l.depth]]) { inside(l.project(cx, cy, 0), 'sol'); inside(l.project(cx, cy, -0.35), 'sol') }
       for (const r of l.racks) for (const [dx, dy] of [[0, 0], [RACK.w, 0], [0, RACK.d], [RACK.w, RACK.d]]) { inside(l.project(r.x + dx, r.y + dy, 0), 'baie'); inside(l.project(r.x + dx, r.y + dy, RACK.h), 'baie') }
-      for (const s of l.seats) { const p = l.project(s.x + DESK.w / 2, s.y + DESK.d / 2, 1.8); inside([p[0], p[1] - LABEL_LIFT], 'étiquette') }
+      for (const { box: b } of l.labels) for (const c of [[b.x0, b.y0], [b.x1, b.y0], [b.x0, b.y1], [b.x1, b.y1]] as const) inside(c, 'étiquette')
     }
   })
 })
@@ -187,4 +187,65 @@ test('toPercent place un point du viewBox en pourcentage', () => {
   const l = layoutFloor(8, 4)
   const [px, py] = toPercent(l, [l.viewBox.x + l.viewBox.w / 2, l.viewBox.y + l.viewBox.h / 4])
   expect(px).toBeCloseTo(50); expect(py).toBeCloseTo(25)
+})
+
+const hit = (a: Rect, b: Rect) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
+const rect = (x0: number, y0: number, x1: number, y1: number): Rect => ({ x0, y0, x1, y1 })
+
+describe('spreadLabels', () => {
+  test('ne bouge pas des étiquettes qui ne se touchent pas', () => {
+    expect(spreadLabels([rect(0, 0, 10, 10), rect(50, 0, 60, 10)], [rect(0, 100, 10, 110)])).toEqual([0, 0])
+  })
+  test('relève vers le haut l\'étiquette qui en touche une autre, la première (le fond) reste', () => {
+    const boxes = [rect(0, 100, 100, 146), rect(40, 110, 140, 156)]
+    const lifts = spreadLabels(boxes, [])
+    expect(lifts[0]).toBe(0)
+    expect(lifts[1]).toBeGreaterThan(0)
+    expect(boxes[1].y1 - lifts[1]).toBeLessThanOrEqual(boxes[0].y0)
+  })
+  test('évite les zones fixes et ne s\'arrête que lorsque plus rien ne touche', () => {
+    const fixed = [rect(0, 80, 200, 120)]
+    const boxes = [rect(10, 90, 60, 130), rect(30, 130, 80, 170), rect(20, 60, 70, 100)]
+    const lifts = spreadLabels(boxes, fixed)
+    const placed = boxes.map((b, i) => rect(b.x0, b.y0 - lifts[i], b.x1, b.y1 - lifts[i]))
+    for (const p of placed) expect(hit(p, fixed[0])).toBe(false)
+    for (let i = 0; i < placed.length; i++) for (let j = i + 1; j < placed.length; j++) expect(hit(placed[i], placed[j])).toBe(false)
+    for (const v of lifts) expect(v).toBeGreaterThanOrEqual(0)
+  })
+  test('déterministe : même entrée, même sortie', () => {
+    const boxes = [rect(0, 0, 100, 40), rect(20, 10, 120, 50), rect(40, 20, 140, 60)]
+    expect(spreadLabels(boxes, [])).toEqual(spreadLabels(boxes, []))
+  })
+})
+
+describe('étiquettes du plan', () => {
+  test('à chaque quart de tour, pour 8 et 12 agents, aucune étiquette ne touche une autre ni une zone fixe', () => {
+    for (const agents of [8, 12]) for (const a of QUARTERS) {
+      const l = layoutFloor(agents, 4, a)
+      expect(l.labels).toHaveLength(agents)
+      expect(l.zones.length).toBeGreaterThanOrEqual(3) // légende, coin de la table, boutons
+      for (let i = 0; i < agents; i++) {
+        for (const z of l.zones) expect(hit(l.labels[i].box, z), `étiquette ${i} touche une zone fixe, ${agents} agents à ${a}°`).toBe(false)
+        for (let j = i + 1; j < agents; j++) expect(hit(l.labels[i].box, l.labels[j].box), `étiquettes ${i} et ${j}, ${agents} agents à ${a}°`).toBe(false)
+      }
+    }
+  })
+  test('le résultat est stable : mêmes entrées, mêmes étiquettes', () => {
+    expect(layoutFloor(12, 4, 90).labels).toEqual(layoutFloor(12, 4, 90).labels)
+  })
+  test('à chaque angle, les étiquettes relevées tiennent dans le cadre fixe', () => {
+    for (const agents of [1, 8, 12]) for (let a = 0; a < 360; a += 3) {
+      const l = layoutFloor(agents, 4, a), { x, y, w, h } = l.viewBox
+      for (const { box: b } of l.labels) { expect(b.y0, `${agents} à ${a}°`).toBeGreaterThanOrEqual(y); expect(b.y1).toBeLessThanOrEqual(y + h); expect(b.x0).toBeGreaterThanOrEqual(x); expect(b.x1).toBeLessThanOrEqual(x + w) }
+    }
+  })
+  test('le bas de l\'étiquette est relevé d\'autant que son trait de rappel', () => {
+    const l = layoutFloor(8, 4, 0)
+    l.labels.forEach((lab, i) => {
+      const s = l.seats[i], from = l.project(s.x + DESK.w / 2, s.y + DESK.d / 2, 1.8)
+      expect(lab.y).toBeLessThanOrEqual(from[1] - 40 + 1e-9)
+      expect(lab.x).toBe(from[0])
+      expect(lab.box.y1).toBeCloseTo(lab.y, 5)
+    })
+  })
 })

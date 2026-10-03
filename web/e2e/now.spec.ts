@@ -65,6 +65,16 @@ async function expectNoLabelOverlap(page: import('@playwright/test').Page, when:
     const hit = a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
     expect(hit, `${when} : ${a.id} recouvre ${b.id} ${JSON.stringify([a, b])}`).toBe(false)
   }
+  // ni le coin « TA TABLE », ni la légende des baies, ni les boutons de rotation
+  const fixed = await page.locator('[data-table-corner], [data-legend], [data-stage] button').evaluateAll((els) => els.map((e) => {
+    const r = e.getBoundingClientRect()
+    return { id: e.hasAttribute('data-table-corner') ? 'coin TA TABLE' : e.hasAttribute('data-legend') ? 'légende' : `bouton ${e.getAttribute('aria-label')}`, left: r.left, right: r.right, top: r.top, bottom: r.bottom }
+  }))
+  expect(fixed).toHaveLength(4)
+  for (const a of boxes) for (const b of fixed) {
+    const hit = a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+    expect(hit, `${when} : ${a.id} recouvre ${b.id} ${JSON.stringify([a, b])}`).toBe(false)
+  }
 }
 
 for (const width of [1440, 1101, 1100, 761]) {

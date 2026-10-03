@@ -4,7 +4,7 @@ import type { NodeState, NowSnapshot } from '@/api'
 import { age } from '@/format'
 import { isStale } from '@/freshness'
 import { useNow } from '@/useNow'
-import { DESK, LABEL_LIFT, RACK, box, drawOrder, layoutFloor, toPercent, type Box, type Dir, type Layout } from './iso'
+import { DESK, RACK, box, drawOrder, layoutFloor, toPercent, type Box, type Dir, type Layout } from './iso'
 import { AGE_TICK_MS, displayName, rackLabel, rackTone, seatModels, type RackTone, type SeatModel } from './model'
 import { useArrivals } from './useArrivals'
 import { useFloorRotation, type FloorStage } from './useFloorRotation'
@@ -91,7 +91,6 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
   for (let j = 1; j < l.depth; j++) grid += `M${p(0, j)} L${p(l.width, j)} `
   const tickets = snapshot.asks.slice(0, MAX_TICKETS)
   const extra = snapshot.asks.length - tickets.length
-  const tableLabel = toPercent(l, p(l.table.x + l.table.w + 0.3, l.table.y + 1, 0.4))
   const label = (ask: number) => ask === 0 ? 'aucune demande reçue (7 j)' : `${ask} demande${ask > 1 ? 's' : ''}`
   // Le point d'ancrage de l'étiquette d'un poste : au-dessus du bureau, à tous les angles.
   const anchor = (s: Layout['seats'][number]) => p(s.x + DESK.w / 2, s.y + DESK.d / 2, 1.8)
@@ -140,14 +139,13 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
         ))}
         {drawOrder(l).map((o) => o.kind === 'seat' ? <Desk key={seats[o.index].agent} l={l} seat={l.seats[o.index]} m={seats[o.index]} /> : o.kind === 'rack' ? rackView(o.index) : dais)}
         {seats.map((m, i) => {
-          const from = anchor(l.seats[i])
-          return <path key={m.agent} className="leader" d={`M${from} L${from[0]} ${from[1] - LABEL_LIFT}`} />
+          const from = anchor(l.seats[i]), end = l.labels[i]
+          return <path key={m.agent} className="leader" d={`M${from} L${end.x} ${end.y}`} />
         })}
       </svg>
 
       {seats.map((m, i) => {
-        const from = anchor(l.seats[i])
-        const [left, top] = toPercent(l, [from[0], from[1] - LABEL_LIFT])
+        const [left, top] = toPercent(l, [l.labels[i].x, l.labels[i].y])
         const blocked = snapshot.blocks.find((b) => b.lead_agent === m.agent)
         // Un poste dont l'agent est seulement bloqué ouvre la tâche bloquée.
         const target = m.task ?? (m.block ? blocked?.task ?? null : null)
@@ -164,7 +162,7 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
           : <div key={m.agent} data-label={m.agent} className={cls} style={style}>{name}</div>
       })}
 
-      <div className="absolute -translate-y-1/2 whitespace-nowrap pl-2" style={{ left: `${tableLabel[0]}%`, top: `${tableLabel[1]}%` }}>
+      <div data-table-corner className="pointer-events-none absolute bottom-0 left-0 whitespace-nowrap">
         <span className={clsx('block font-orbital-display text-[13px] font-semibold tracking-[0.14em]', snapshot.asks.length ? 'text-attention' : 'text-muted')}>TA TABLE</span>
         <span className="block font-data text-[11px] text-muted">{label(snapshot.asks.length)}{extra > 0 && ` · +${extra} sur la table`}</span>
       </div>

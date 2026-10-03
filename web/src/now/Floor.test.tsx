@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { NodeState, NowSnapshot } from '@/api'
 import { Floor, FloorScene } from './Floor'
 import { resetFloorRotation } from './useFloorRotation'
-import { LABEL_LIFT, drawOrder, layoutFloor, toPercent } from './iso'
+import { drawOrder, layoutFloor, toPercent } from './iso'
 
 const snap = (over: Partial<NowSnapshot> = {}): NowSnapshot => ({
   source: 'nexus.db', measured_at: new Date().toISOString(), operation: null, auxiliaries: [],
@@ -191,14 +191,14 @@ test('chaque étiquette de poste est au-dessus de son bureau, quel que soit l\'a
     const l = layoutFloor(3, 0, a)
     const agents = ['helios', 'mnema', 'artemis']
     agents.forEach((agent, i) => {
-      const s = l.seats[i], from = l.project(s.x + 1.5, s.y + 0.75, 1.8)
-      const [left, top] = toPercent(l, [from[0], from[1] - LABEL_LIFT])
+      const s = l.seats[i], from = l.project(s.x + 1.5, s.y + 0.75, 1.8), lab = l.labels[i]
+      const [left, top] = toPercent(l, [lab.x, lab.y])
       const el = container.querySelector(`[data-label="${agent}"]`) as HTMLElement
       expect(el.className, agent).toContain('-translate-y-full')
       expect(parseFloat(el.style.left)).toBeCloseTo(left, 3)
       expect(parseFloat(el.style.top)).toBeCloseTo(top, 3)
       const leader = container.querySelectorAll('path.leader')[i]
-      expect(leader.getAttribute('d')).toBe(`M${from} L${from[0]} ${from[1] - LABEL_LIFT}`)
+      expect(leader.getAttribute('d')).toBe(`M${from} L${lab.x} ${lab.y}`)
     })
   }
 })
@@ -315,4 +315,21 @@ test('la scène expose son angle courant', () => {
   expect(stageOf(container).getAttribute('data-angle')).toBe('0')
   fireEvent.click(screen.getByRole('button', { name: /vers la gauche/ }))
   expect(stageOf(container).getAttribute('data-angle')).toBe('-90')
+})
+
+test('« TA TABLE » et son compteur sont dans un coin HTML fixe, bas-gauche, hors du plan', () => {
+  const { container } = render(<Floor snapshot={snap()} nodes={[]} />)
+  const corner = container.querySelector('[data-table-corner]') as HTMLElement
+  expect(corner.closest('svg')).toBeNull()
+  expect(corner.className).toContain('bottom-0'); expect(corner.className).toContain('left-0')
+  expect(corner.textContent).toContain('TA TABLE'); expect(corner.textContent).toContain('aucune demande reçue (7 j)')
+  expect(corner.querySelector('span')!.className).toContain('text-muted')
+})
+
+test('le coin de la table garde l\'ambre et le « +N sur la table » quand il y a des demandes', () => {
+  const ask = (n: number) => ({ event: `nx-evt-${n}`, agent: 'mnema' as const, kind: 'question' as const, subject: 'Q', task: null, at: new Date().toISOString(), received_at: new Date().toISOString() })
+  const { container } = render(<Floor snapshot={snap({ asks: [ask(1), ask(2), ask(3), ask(4), ask(5)] })} nodes={[]} />)
+  const corner = container.querySelector('[data-table-corner]') as HTMLElement
+  expect(corner.querySelector('span')!.className).toContain('text-attention')
+  expect(corner.textContent).toContain('5 demandes · +2 sur la table')
 })
