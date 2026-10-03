@@ -32,12 +32,13 @@ class NodeSpec:
     offline_by_design: bool = False
 
 
-# DATA-MODEL §2.1. Helios est la machine locale (Self dans Tailscale).
+# DATA-MODEL §2.1. Helios is the local machine (Self in Tailscale).
+# Order of importance: it fixes the floor of each node on the Now view (4 racks per floor).
 NODES: tuple[NodeSpec, ...] = (
-    NodeSpec("helios", "workstation", "helios", "helios"),
     NodeSpec("cortex", "homelab", "mnema", "cortex"),
     NodeSpec("synapse", "homelab", "aether", "synapse"),
     NodeSpec("artemis", "content-factory", "artemis", "artemis", offline_by_design=True),
+    NodeSpec("helios", "workstation", "helios", "helios"),
 )
 
 
