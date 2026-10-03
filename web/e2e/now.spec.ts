@@ -66,11 +66,12 @@ async function expectNoLabelOverlap(page: import('@playwright/test').Page, when:
     expect(hit, `${when} : ${a.id} recouvre ${b.id} ${JSON.stringify([a, b])}`).toBe(false)
   }
   // ni le coin « TA TABLE », ni la légende des baies, ni les boutons de rotation
-  const fixed = await page.locator('[data-table-corner], [data-legend], [data-stage] button').evaluateAll((els) => els.map((e) => {
+  const fixed = await page.locator('[data-table-corner], [data-legend], [data-stage] button, .floor-pick').evaluateAll((els) => els.map((e) => {
     const r = e.getBoundingClientRect()
-    return { id: e.hasAttribute('data-table-corner') ? 'coin TA TABLE' : e.hasAttribute('data-legend') ? 'légende' : `bouton ${e.getAttribute('aria-label')}`, left: r.left, right: r.right, top: r.top, bottom: r.bottom }
+    return { id: e.hasAttribute('data-table-corner') ? 'coin TA TABLE' : e.hasAttribute('data-legend') ? 'légende' : e.classList.contains('floor-pick') ? 'sélecteur d\'étage' : `bouton ${e.getAttribute('aria-label')}`, left: r.left, right: r.right, top: r.top, bottom: r.bottom }
   }))
-  expect(fixed).toHaveLength(4)
+  // table corner, legend, the rotation buttons, and with several floors the selector and its two buttons
+  expect(fixed).toHaveLength(2 + (await page.locator('[data-stage] button').count()) + (await page.locator('.floor-pick').count()))
   for (const a of boxes) for (const b of fixed) {
     const hit = a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
     expect(hit, `${when} : ${a.id} recouvre ${b.id} ${JSON.stringify([a, b])}`).toBe(false)
@@ -145,4 +146,70 @@ test('mouvement réduit : une demande fraîche garde son fond ambre', async ({ p
   const row = page.locator('.now-fresh', { hasText: 'Question mouvement réduit' })
   await expect(row).toBeVisible()
   await expect(row).toHaveCSS('background-color', 'rgba(251, 146, 60, 0.05)')
+})
+
+// --- Étages de baies (#36) : le serveur ne connaît que 4 nœuds, la réponse en simule 12 (ou 10)
+const NODE_IDS = ['cortex', 'synapse', 'artemis', 'helios', 'n5', 'n6', 'n7', 'n8', 'n9', 'n10', 'n11', 'n12']
+async function serveNodes(page: import('@playwright/test').Page, count = 12, offline: string[] = []) {
+  await page.route('**/api/nodes', (route) => route.fulfill({
+    json: NODE_IDS.slice(0, count).map((id) => ({ id, kind: 'homelab', guardian_agent: 'aether', status: offline.includes(id) ? 'offline' : 'online', last_seen: null, detail: null, source: 'tailscale', measured_at: new Date().toISOString() })),
+  }))
+}
+
+for (const width of [1440, 1100, 800]) {
+  test(`12 nœuds : aucune étiquette ne recouvre une autre, un coin fixe ni le sélecteur d'étage à ${width} px`, async ({ page, request }) => {
+    await seedAllAgents(request)
+    await serveNodes(page)
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto('/#/maintenant')
+    await expect(page.locator('[data-label]')).toHaveCount(8)
+    await expect(page.getByRole('button', { name: 'Monter d\'un étage' })).toBeVisible()
+    await expectNoLabelOverlap(page, '0°')
+    for (const quarter of ['90', '180', '270']) {
+      await page.getByRole('button', { name: 'Tourner l\'étage vers la droite' }).click()
+      await expect(page.locator('[data-stage]')).toHaveAttribute('data-angle', quarter)
+      await expectNoLabelOverlap(page, `${quarter}°`)
+    }
+  })
+}
+
+test('étage 1 à 3 au clavier (PageUp) puis retour aux boutons', async ({ page }) => {
+  await serveNodes(page)
+  await page.goto('/#/maintenant')
+  const stage = page.locator('[data-stage]')
+  await expect(page.getByRole('button', { name: 'Monter d\'un étage' })).toBeVisible()
+  await stage.focus()
+  await page.keyboard.press('PageUp')
+  await page.keyboard.press('PageUp')
+  await expect(stage).toHaveAttribute('data-floor', '3')
+  await expect(page.locator('.level')).toHaveCount(1)
+  await expect(page.locator('g.rack')).toHaveCount(4)
+  await expect(page.getByText('TA TABLE')).toBeVisible()
+  await page.getByRole('button', { name: 'Descendre d\'un étage' }).click()
+  await page.getByRole('button', { name: 'Descendre d\'un étage' }).click()
+  await expect(stage).toHaveAttribute('data-floor', '1')
+  await expect(page.locator('.desk').first()).toBeVisible()
+})
+
+test('un nœud de l\'étage 3 hors ligne : le repère de l\'étage 3 est visible et alerte', async ({ page }) => {
+  await serveNodes(page, 12, ['n10'])
+  await page.goto('/#/maintenant')
+  const marker = page.locator('[data-floor-marker="3"]')
+  await expect(marker).toBeVisible()
+  await expect(marker).toHaveAttribute('data-alert', 'off')
+  await expect(marker).toHaveCSS('background-color', 'rgb(248, 113, 113)')
+})
+
+test('deux clics rapides sur ▲ : étage 3, puis une seule couche pleinement opaque, rien de figé', async ({ page }) => {
+  await serveNodes(page)
+  await page.goto('/#/maintenant')
+  const upButton = page.getByRole('button', { name: 'Monter d\'un étage' })
+  await expect(upButton).toBeVisible()
+  await upButton.click({ clickCount: 2, delay: 20 })
+  const stage = page.locator('[data-stage]')
+  await expect(stage).toHaveAttribute('data-floor', '3')
+  await page.waitForTimeout(400)
+  await expect(page.locator('.level')).toHaveCount(1)
+  await expect(page.locator('.level')).toHaveCSS('opacity', '1')
+  await expect(page.locator('.level')).toHaveCSS('transform', 'none')
 })
