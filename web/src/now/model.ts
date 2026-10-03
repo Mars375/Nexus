@@ -25,6 +25,35 @@ export function rackTone(n: NodeState): RackTone {
   return 'off'
 }
 
+/** Racks per server-room floor; floor 1 is the office with the first four. */
+export const RACKS_PER_FLOOR = 4
+
+/**
+ * Nodes grouped by floor, in the order received from the server (it fixes each node's floor, so
+ * neither `status` nor presence reorders anyone). Always at least one floor; `undefined` = not read yet.
+ */
+export function nodeFloors(nodes: readonly NodeState[] | undefined): NodeState[][] {
+  const list = nodes ?? []
+  const floors: NodeState[][] = []
+  for (let i = 0; i < list.length; i += RACKS_PER_FLOOR) floors.push(list.slice(i, i + RACKS_PER_FLOOR))
+  return floors.length > 0 ? floors : [[]]
+}
+
+export type FloorAlert = 'off' | 'unknown'
+
+/**
+ * Alert shown on a floor marker: red when a fresh node is offline, amber when one is unknown or stale
+ * (`stale` also covers a failed re-read), nothing otherwise. An offline-by-design node never alerts.
+ */
+export function floorAlert(nodes: readonly NodeState[], stale: (n: NodeState) => boolean): FloorAlert | null {
+  let amber = false
+  for (const n of nodes) {
+    if (stale(n) || n.status === 'unknown') amber = true
+    else if (n.status === 'offline') return 'off'
+  }
+  return amber ? 'unknown' : null
+}
+
 const LABEL: Record<NodeState['status'], string> = {
   online: 'en ligne', unknown: 'unknown', offline: 'hors ligne', 'offline-by-design': 'hors ligne, prévu',
 }

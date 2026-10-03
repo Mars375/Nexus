@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import type { NodeState, NowSnapshot } from '@/api'
-import { rackLabel, rackTone, seatModels } from './model'
+import { RACKS_PER_FLOOR, floorAlert, nodeFloors, rackLabel, rackTone, seatModels } from './model'
 
 const base: NowSnapshot = {
   source: 'nexus.db', measured_at: '2026-10-01T10:00:00+02:00', operation: null, auxiliaries: [],
@@ -32,4 +32,36 @@ test('état des baies : jamais vert sans preuve', () => {
   expect(rackTone(node('offline-by-design'))).toBe('off')
   expect(rackLabel(node('offline-by-design'))).toBe('hors ligne, prévu')
   expect(rackLabel(node('unknown'))).toBe('unknown')
+})
+
+const nodeOf = (id: string, status: NodeState['status'] = 'online'): NodeState => ({ id, kind: 'homelab', guardian_agent: 'aether', status, last_seen: null, detail: null, source: 'tailscale', measured_at: '2026-10-01T10:00:00+02:00' })
+const many = (n: number) => Array.from({ length: n }, (_, i) => nodeOf(`n${i + 1}`))
+
+test('étages : paquets de 4 dans l\'ordre reçu, au moins un étage', () => {
+  expect(RACKS_PER_FLOOR).toBe(4)
+  expect([0, 1, 4, 5, 8, 9, 12].map((n) => nodeFloors(many(n)).length)).toEqual([1, 1, 1, 2, 2, 3, 3])
+  expect(nodeFloors(many(0))).toEqual([[]])
+  expect(nodeFloors(undefined)).toEqual([[]])
+  for (const f of nodeFloors(many(9))) expect(f.length).toBeLessThanOrEqual(4)
+  expect(nodeFloors(many(9)).map((f) => f.map((n) => n.id))).toEqual([['n1', 'n2', 'n3', 'n4'], ['n5', 'n6', 'n7', 'n8'], ['n9']])
+})
+
+test('étages : l\'ordre reçu est gardé, jamais trié par id ni par statut', () => {
+  const received = [nodeOf('cortex'), nodeOf('synapse'), nodeOf('artemis', 'offline-by-design'), nodeOf('helios'), nodeOf('zeta'), nodeOf('alpha')]
+  expect(nodeFloors(received).map((f) => f.map((n) => n.id))).toEqual([['cortex', 'synapse', 'artemis', 'helios'], ['zeta', 'alpha']])
+  const changed = received.map((n) => ({ ...n, status: n.id === 'cortex' ? 'offline' as const : 'unknown' as const }))
+  expect(nodeFloors(changed).map((f) => f.map((n) => n.id))).toEqual(nodeFloors(received).map((f) => f.map((n) => n.id)))
+})
+
+test('alerte d\'étage : hors ligne rouge, inconnu ou périmé ambre, hors ligne prévu rien', () => {
+  const fresh = () => false
+  expect(floorAlert([nodeOf('a'), nodeOf('b', 'offline')], fresh)).toBe('off')
+  expect(floorAlert([nodeOf('a', 'unknown')], fresh)).toBe('unknown')
+  expect(floorAlert([nodeOf('a', 'offline'), nodeOf('b', 'unknown')], fresh)).toBe('off')
+  expect(floorAlert([nodeOf('a', 'offline-by-design'), nodeOf('b')], fresh)).toBeNull()
+  expect(floorAlert([nodeOf('a')], fresh)).toBeNull()
+  // a stale offline node is not trusted: amber, not red
+  expect(floorAlert([nodeOf('a', 'offline')], () => true)).toBe('unknown')
+  expect(floorAlert([nodeOf('a')], (n) => n.id === 'a')).toBe('unknown')
+  expect(floorAlert([], fresh)).toBeNull()
 })
