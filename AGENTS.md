@@ -7,8 +7,15 @@
 - A pre-commit hook (`.husky/pre-commit`) blocks test artefacts and local databases, runs gitleaks on staged changes (config: `.gitleaks.toml`), lints staged files, then typechecks and runs the fast tests. Never bypass it with `--no-verify`; fix the cause instead. Build fake secrets in tests at runtime (`"ghp_" + "A" * 36`).
 - Schema changes go through a new Alembic migration in `server/src/nexus/migrations/versions/`; the server applies migrations on startup.
 - The UI only talks to the FastAPI API — no browser-only APIs, so the same UI can ship inside Tauri later (ADR-017).
-- Product docs and user-facing text are in French (ADR-009); identifiers stay in English.
+- Product docs and user-facing text are in French (ADR-009); identifiers, code comments and docstrings stay in English.
 - Before opening a PR, walk through `docs/agents/review-checklist.md` (secrets, validation, concurrency, invariants, provenance, UI with changing data) and note in the PR body what was checked. Plan edge cases first and write their tests before the code.
+
+## Branches et PR
+
+- Une branche par issue ou par sujet, créée depuis `master` à jour : `feat/<n>-<sujet>`, `fix/<n>-<sujet>` ou `docs/<sujet>`. Jamais deux sujets sur une même branche, jamais de push direct sur `master`, et pas de push forcé sauf `--force-with-lease` sur sa propre branche.
+- Une PR par branche, fusionnée en squash seulement après l'accord explicite de Loïc ; GitHub supprime la branche distante à la fusion, la branche locale se supprime aussi.
+- Le corps de la PR ferme son issue avec le mot-clé anglais `Closes #<n>` : GitHub ne reconnaît pas « Ferme #<n> ».
+- Ne pas pousser de correction tant qu'une relecture demandée (CodeRabbit, Antigravity) n'est pas terminée ; chaque remarque se vérifie à la source avant d'être appliquée, et chaque fil reçoit une réponse avant d'être résolu.
 
 ## Model routing
 
