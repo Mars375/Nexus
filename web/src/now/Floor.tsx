@@ -29,6 +29,7 @@ function routePath(l: Layout, s: { x: number; y: number; back: boolean }): strin
 /** One seat: desk, monitor (its screen only when it faces the viewer), light pool and beacon showing its state. */
 function Desk({ l, seat, m }: { l: Layout; seat: Layout['seats'][number]; m: SeatModel }) {
   const { x, y } = seat, p = l.project
+  const deskBox = box(l, x, y, 0, DESK.w, DESK.d, DESK.h)
   const pool = p(x + DESK.w / 2, y + 2.3)
   const [bx, by0] = p(x + 0.55, y + 0.27, 1.66), [, by1] = p(x + 0.55, y + 0.27, 2.75)
   const screenPts = [p(x + 0.45, y + 0.28, 1.63), p(x + 2.55, y + 0.28, 1.63), p(x + 2.55, y + 0.28, 0.86), p(x + 0.45, y + 0.28, 0.86)].map((q) => q.join(',')).join(' ')
@@ -36,7 +37,8 @@ function Desk({ l, seat, m }: { l: Layout; seat: Layout['seats'][number]; m: Sea
     <g className="desk" data-agent={m.agent} data-run={String(m.run)} data-wait={String(m.wait)} data-block={String(m.block)}>
       <ellipse className="pool" cx={pool[0]} cy={pool[1]} rx={2.4 * 22.5} ry={2.4 * 13} />
       <ellipse className="pool-att" cx={pool[0]} cy={pool[1]} rx={1.9 * 22.5} ry={1.9 * 13} />
-      <Faces b={box(l, x, y, 0, DESK.w, DESK.d, DESK.h)} topClass="desk-top" />
+      <Faces b={deskBox} topClass="desk-top" />
+      <polygon className="desk-hatch" points={deskBox.top} />
       <Faces b={box(l, x + 0.35, y + 0.15, DESK.h, 2.3, 0.12, 0.95)} />
       {l.sees(0, 1) && <polygon className="screen" points={screenPts} />}
       <g className="beacon"><line x1={bx} y1={by0} x2={bx} y2={by1} /><polygon points={`${bx},${by1 - 7} ${bx + 6},${by1} ${bx},${by1 + 7} ${bx - 6},${by1}`} /></g>
@@ -115,7 +117,11 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
     return (
       <g key={`rack-${n.id}`} className="rack" data-node={n.id} data-tone={tone}>
         <Faces b={box(l, r.x, r.y, 0, RACK.w, RACK.d, RACK.h)} />
-        {[0, 1, 2, 3, 4].map((j) => <polygon key={j} className="led" data-face={face} points={ledPoints(l, r, face, 2.1 - j * 0.38)} />)}
+        {[0, 1, 2, 3, 4].map((j) => {
+          // Three stacked layers whose opacity follows the tone, so a change fades instead of jumping.
+          const pts = ledPoints(l, r, face, 2.1 - j * 0.38)
+          return <g key={j}><polygon className="led" data-face={face} points={pts} /><polygon className="led-on" points={pts} /><polygon className="led-ring" points={pts} /></g>
+        })}
       </g>
     )
   }

@@ -182,6 +182,18 @@ test('les LED d\'une baie sont sur une face visible, la face +x de préférence'
   }
 })
 
+test('les hachures et les LED sont des calques toujours présents : seul l\'état du poste ou de la baie change', () => {
+  const blocks: NowSnapshot['blocks'] = [{ task: 'nx-task-29', title: 'Sauvegarde', cause: 'hors ligne', since: null, follow_up_at: null, lead_agent: 'artemis' }]
+  const { container } = render(<Floor snapshot={snap({ blocks })} nodes={[node('helios', 'online'), node('synapse', 'unknown'), node('artemis', 'offline-by-design')]} />)
+  for (const desk of container.querySelectorAll('g.desk')) expect(desk.querySelectorAll('polygon.desk-hatch'), desk.getAttribute('data-agent')!).toHaveLength(1)
+  expect(container.querySelector('[data-agent="artemis"]')!.getAttribute('data-block')).toBe('true')
+  expect(container.querySelector('[data-agent="helios"]')!.getAttribute('data-block')).toBe('false')
+  for (const rack of container.querySelectorAll('g.rack')) {
+    expect(rack.querySelectorAll('.led-on'), rack.getAttribute('data-node')!).toHaveLength(5)
+    expect(rack.querySelectorAll('.led-ring'), rack.getAttribute('data-node')!).toHaveLength(5)
+  }
+})
+
 test('postes, baies et table sont dessinés du fond vers l\'avant, à chaque quart de tour', () => {
   for (const a of QUARTERS) {
     const { container } = render(<FloorScene snapshot={snap()} nodes={[node('helios', 'online'), node('synapse', 'unknown'), node('artemis', 'offline-by-design')]} angle={a} />)
