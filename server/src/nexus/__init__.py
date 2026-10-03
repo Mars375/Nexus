@@ -7,9 +7,14 @@ def main() -> None:
 
     from nexus.app import create_app
     from nexus.config import Settings
+    from nexus.logs import uvicorn_log_config
 
     settings = Settings.from_env()
-    uvicorn.run(create_app(settings), host=settings.host, port=settings.port)
+    # Journal d'accès d'uvicorn coupé : il recopie les URL reçues (ADR-006) ; Nexus écrit le sien.
+    uvicorn.run(
+        create_app(settings), host=settings.host, port=settings.port,
+        access_log=False, log_config=uvicorn_log_config(),
+    )
 
 
 def dev() -> None:
@@ -17,6 +22,7 @@ def dev() -> None:
     import uvicorn
 
     from nexus.config import Settings
+    from nexus.logs import uvicorn_log_config
 
     settings = Settings.from_env()
     uvicorn.run(
@@ -25,4 +31,6 @@ def dev() -> None:
         reload=True,
         host=settings.host,
         port=settings.port,
+        access_log=False,
+        log_config=uvicorn_log_config(),
     )

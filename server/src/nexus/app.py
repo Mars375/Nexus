@@ -22,6 +22,7 @@ from nexus.config import Settings
 from nexus.db import make_engine
 from nexus.events import api as events_api
 from nexus.events.service import EventNotFound
+from nexus.logs import AccessLogMiddleware
 from nexus.tasks import api as tasks_api
 from nexus.tasks.rules import RuleViolation
 from nexus.tasks.service import TaskNotFound
@@ -35,6 +36,17 @@ FIRST_NODES_READ_SECONDS = 1.0
 def create_app(
     settings: Settings | None = None, nodes_runner: nodes.Runner | None = None
 ) -> FastAPI:
+    """Return the Nexus API with route-template access logging and managed startup.
+
+    Omitted settings are read from the environment; invalid values raise ValueError.
+    The optional nodes_runner takes no arguments and returns Tailscale status JSON;
+    by default, the configured Tailscale executable supplies it.
+
+    The app's lifespan creates the data directory, migrates and backs up the database,
+    and starts periodic backups and node refreshes. Startup filesystem, migration,
+    and backup errors propagate; expected Tailscale failures yield unknown node states.
+    Shutdown cancels the periodic tasks and disposes of the database engine.
+    """
     settings = settings or Settings.from_env()
     nodes_runner = nodes_runner or partial(nodes.run_tailscale, settings.tailscale_bin)
 
@@ -101,6 +113,8 @@ def create_app(
             app.state.engine.dispose()
 
     app = FastAPI(title="Nexus", version=version("nexus"), lifespan=lifespan)
+    # Journal d'accès sans valeur reçue (ADR-006) : gabarit de route, jamais le chemin réel.
+    app.add_middleware(AccessLogMiddleware)
     app.state.settings = settings
     app.include_router(tasks_api.router)
     app.include_router(events_api.router)
