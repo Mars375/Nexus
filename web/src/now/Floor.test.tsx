@@ -592,3 +592,13 @@ test('au dernier étage, ▲ garde le focus (aria-disabled, pas disabled) et Pag
   fireEvent.keyDown(stageOf(container), { key: 'PageDown' })
   expect(stageOf(container).getAttribute('data-floor')).toBe('2')
 })
+
+test('repli quand l\'étage disparaît après un mouvement : instantané, sans numéro qui roule ni couche qui glisse', () => {
+  motion()
+  const { container, rerender } = render(<Floor snapshot={snap()} nodes={twelve()} />)
+  fireEvent.click(up()); fireEvent.click(up())
+  rerender(<Floor snapshot={snap()} nodes={twelve().slice(0, 6)} />)
+  expect(pickLabel()).toBe('Étage 2 / 2')
+  expect(container.querySelectorAll('[data-roll], [data-from], [data-arriving], [data-role="leaving"]')).toHaveLength(0)
+  expect(container.querySelectorAll('.level')).toHaveLength(1)
+})

@@ -50,7 +50,10 @@ export function useFloorLevel(count: number, { loaded }: { loaded: boolean }): F
   const floor = Math.min(target, count)
 
   // A floor that no longer exists: fall back at once (not an action, so no lift)...
-  if (loaded && target > count) setTarget(count)
+  if (loaded && target > count) {
+    setTarget(count)
+    setMotion((m) => ({ ...m, lifted: undefined, arriving: undefined, leaving: [] })) // nothing slides, rolls or cascades
+  }
   useEffect(() => { countRef.current = count; shown.current = floor })
   useEffect(() => () => { for (const t of timers.current) window.clearTimeout(t) }, [])
   // ...and remember it only once the nodes were really read, so a read still in flight on remount does not erase floor 3.

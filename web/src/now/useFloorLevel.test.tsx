@@ -143,3 +143,12 @@ test('arriving : ni au remontage, ni au repli, ni sous mouvement réduit', () =>
   act(() => calm.result.current.go(1))
   expect(calm.result.current.arriving).toBeUndefined()
 })
+
+test('repli après un mouvement : plus de lifted ni de couche qui part, rien ne glisse ni ne roule', () => {
+  const { result, rerender } = setup(3)
+  act(() => { result.current.go(1); result.current.go(1) })
+  expect(result.current.lifted).toBe(3)
+  rerender({ count: 2, loaded: true })
+  expect(result.current).toMatchObject({ floor: 2, lifted: undefined, arriving: undefined })
+  expect(result.current.layers).toEqual([{ floor: 2, role: 'current', from: 'above' }])
+})
