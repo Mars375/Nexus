@@ -213,3 +213,27 @@ test('deux clics rapides sur ▲ : étage 3, puis une seule couche pleinement op
   await expect(page.locator('.level')).toHaveCSS('opacity', '1')
   await expect(page.locator('.level')).toHaveCSS('transform', 'none')
 })
+
+test('▲ puis ▼ presque aussitôt : retour à l\'étage 1, une seule couche pleine, aucune image à opacité nulle', async ({ page }) => {
+  await serveNodes(page)
+  await page.goto('/#/maintenant')
+  const upButton = page.getByRole('button', { name: 'Monter d\'un étage' })
+  await expect(upButton).toBeVisible()
+  await page.evaluate(() => {
+    const w = window as unknown as { __opacities: number[]; __sampling: boolean }
+    w.__opacities = []; w.__sampling = true
+    const tick = () => { const el = document.querySelector('.level[data-level="1"]'); if (el) w.__opacities.push(Number(getComputedStyle(el).opacity)); if (w.__sampling) requestAnimationFrame(tick) }
+    requestAnimationFrame(tick)
+  })
+  await upButton.click()
+  await page.waitForTimeout(60)
+  await page.getByRole('button', { name: 'Descendre d\'un étage' }).click()
+  await expect(page.locator('[data-stage]')).toHaveAttribute('data-floor', '1')
+  await page.waitForTimeout(500)
+  const seen = await page.evaluate(() => { const w = window as unknown as { __opacities: number[]; __sampling: boolean }; w.__sampling = false; return w.__opacities })
+  expect(seen.length).toBeGreaterThan(10)
+  expect(Math.min(...seen)).toBeGreaterThan(0.3)
+  await expect(page.locator('.level')).toHaveCount(1)
+  await expect(page.locator('.level')).toHaveCSS('opacity', '1')
+  await expect(page.locator('.level')).toHaveCSS('transform', 'none')
+})

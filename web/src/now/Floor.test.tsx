@@ -602,3 +602,22 @@ test('repli quand l\'étage disparaît après un mouvement : instantané, sans n
   expect(container.querySelectorAll('[data-roll], [data-from], [data-arriving], [data-role="leaving"]')).toHaveLength(0)
   expect(container.querySelectorAll('.level')).toHaveLength(1)
 })
+
+test('aller-retour rapide 1 → 2 → 1 : les couches gardent leur ordre dans le DOM, aucune n\'est détachée puis rattachée', () => {
+  motion()
+  vi.useFakeTimers()
+  const { container } = render(<Floor snapshot={snap()} nodes={twelve()} />)
+  const stage = container.querySelector('.levels')!
+  const office = container.querySelector('.level[data-level="1"]')
+  const watch = new MutationObserver(() => {}); watch.observe(stage, { childList: true })
+  fireEvent.click(up())
+  expect([...container.querySelectorAll('.level')].map((e) => e.getAttribute('data-level'))).toEqual(['1', '2'])
+  fireEvent.click(down())
+  expect([...container.querySelectorAll('.level')].map((e) => e.getAttribute('data-level'))).toEqual(['1', '2'])
+  expect(container.querySelector('.level[data-level="1"]')).toBe(office)
+  expect(container.querySelector('.level[data-level="1"]')!.getAttribute('data-role')).toBe('current')
+  // a node moved by insertBefore shows up as removed and re-added
+  expect(watch.takeRecords().flatMap((r) => [...r.removedNodes]).filter((n) => n === office)).toHaveLength(0)
+  watch.disconnect()
+  vi.useRealTimers()
+})

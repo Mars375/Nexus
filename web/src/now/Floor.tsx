@@ -203,7 +203,9 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
           <pattern id="now-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="#f87171" strokeOpacity=".55" strokeWidth="1.4" /></pattern>
         </defs>
       </svg>
-      {mounted.map((m) => (
+      {/* Layers keep a fixed DOM order (by floor): moving a node would cancel its transition. The one shown is raised by CSS. */}
+      <div className="levels absolute inset-0">
+      {[...mounted].sort((a, b) => a.floor - b.floor).map((m) => (
         <div key={m.floor} className="level absolute inset-0" data-level={m.floor} data-role={m.role}
           // The slide only exists for a floor leaving or the one reached by a move: never at first render, never on a fall back.
           {...((m.role === 'leaving' || m.floor === lifted) && { 'data-from': m.from })} {...(m.role === 'current' && m.floor === arriving && { 'data-arriving': '' })}
@@ -211,6 +213,7 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
           {m.floor === 1 ? officeLevel : roomLevel(m.floor)}
         </div>
       ))}
+      </div>
 
       <div data-table-corner className="pointer-events-none absolute bottom-0 left-0 whitespace-nowrap">
         <span className={clsx('block font-orbital-display text-[13px] font-semibold tracking-[0.14em]', snapshot.asks.length ? 'text-attention' : 'text-muted')}>TA TABLE</span>
