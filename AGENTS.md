@@ -10,6 +10,14 @@
 - Product docs and user-facing text are in French (ADR-009); identifiers stay in English.
 - Before opening a PR, walk through `docs/agents/review-checklist.md` (secrets, validation, concurrency, invariants, provenance, UI with changing data) and note in the PR body what was checked. Plan edge cases first and write their tests before the code.
 
+## Model routing
+
+- Le modèle principal est `opusplan` (`.claude/settings.json`) : Opus planifie, Sonnet exécute. Les subagents de `.claude/agents/` portent le modèle adapté à leur rôle (`explorer` Haiku, `implementer` Sonnet, `architect` et `reviewer` Opus). Ne pas forcer un modèle unique avec `CLAUDE_CODE_SUBAGENT_MODEL_FORCE`.
+- Toute tâche qui touche une migration, l'authentification, les secrets, la concurrence ou un invariant passe par `architect` avant `implementer`.
+- Après deux échecs de test sur la même tâche, relancer avec `model: opus` au lieu de réessayer à l'identique.
+- Toute PR passe par `reviewer` avant la relecture Antigravity, puis `@codex review` en dernier.
+- Les recherches larges en lecture seule vont à `explorer`, pas au modèle principal.
+
 ## Agent skills
 
 ### Issue tracker
