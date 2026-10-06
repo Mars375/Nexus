@@ -1,0 +1,127 @@
+"""Direct service calls by an adapter (no HTTP layer): containers must be normalised or refused."""
+
+from datetime import datetime
+
+import pytest
+
+from nexus.events import service
+from nexus.events.rules import Envelope
+from nexus.models import Event
+from nexus.tasks.rules import RuleViolation
+
+AT = datetime.fromisoformat("2026-09-28T09:05:00+02:00")
+
+
+def make_task(client, **fields):
+    body = {"title": "Pont lecture", "objective": "Lire les runs"} | fields
+    return client.post("/api/tasks", json=body).json()["id"]
+
+
+def direct(client, envelope, id):
+    """Publish through the service on its own session, as an adapter would."""
+    with client.app.state.sessionmaker() as session:
+        event, created = service.publish(session, envelope, id, AT)
+        session.commit()
+        return event.id, created
+
+
+def question(ref=None, **fields):
+    base = {"actor": "helios", "kind": "question", "subject": "Où est la clé ?", "task": ref,
+            "needs": ["loic"]}
+    return Envelope(**(base | fields))
+
+
+def test_needs_tuple_resent_identically_is_a_read_back(client):
+    first = direct(client, question(needs=("loic",)), "evt_a")
+    second = direct(client, question(needs=("loic",)), "evt_a")
+
+    assert first[1] is True
+    assert second == (first[0], False)
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [(("loic",), ("loic",)), (["loic"], ("loic",)), (("loic",), ["loic"])],
+)
+def test_same_fact_with_needs_tuple_under_another_id_is_noise(client, first, second):
+    ref = make_task(client)
+    direct(client, question(ref, needs=first), "evt_a")
+
+    with pytest.raises(RuleViolation) as exc:
+        direct(client, question(ref, needs=second), "evt_b")
+
+    assert exc.value.code == "noise"
+
+
+def test_needs_and_evidence_tuples_are_stored_as_lists(client):
+    with client.app.state.sessionmaker() as session:
+        event, _ = service.publish(
+            session, question(needs=("loic",), evidence=("commit:abc",)), "evt_a", AT
+        )
+        assert type(event.needs) is list
+        assert type(event.evidence) is list
+
+
+def test_handoff_with_needs_tuple_resent_is_a_read_back(client):
+    ref = make_task(client, next_action="x")
+    envelope = dict(kind="handoff", subject="À toi", needs=("aether",),
+                    payload={"next_action": "poser la clé"})
+    first = direct(client, question(ref, **envelope), "evt_a")
+    second = direct(client, question(ref, **envelope), "evt_a")
+
+    assert second == (first[0], False)
+    task = client.get(f"/api/tasks/{ref}").json()
+    assert task["lead_agent"] == "aether"
+    history = client.get(f"/api/tasks/{ref}/history").json()
+    assert [h["action"] for h in history].count("updated") == 1
+
+
+def test_nested_tuples_in_payload_keep_idempotency_and_noise(client):
+    ref = make_task(client)
+    payload = {"steps": (("a", 1), ("b", 2))}
+    first = direct(client, question(ref, payload=payload), "evt_a")
+    assert direct(client, question(ref, payload=payload), "evt_a") == (first[0], False)
+
+    with pytest.raises(RuleViolation) as exc:
+        direct(client, question(ref, payload=payload), "evt_b")
+    assert exc.value.code == "noise"
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "code"),
+    [
+        ("needs", None, "invalid_needs"),
+        ("needs", "loic", "invalid_needs"),
+        ("needs", [["loic"]], "invalid_needs"),
+        ("needs", [1], "invalid_needs"),
+        ("evidence", None, "invalid_evidence"),
+        ("evidence", "commit:abc", "invalid_evidence"),
+        ("evidence", [1], "invalid_evidence"),
+        ("payload", None, "invalid_payload"),
+        ("payload", [1], "invalid_payload"),
+        ("payload", (("a", 1),), "invalid_payload"),
+    ],
+)
+def test_malformed_containers_from_an_adapter_are_refused_not_crash(client, field, value, code):
+    envelope = question(**{field: value})
+
+    with pytest.raises(RuleViolation) as exc:
+        direct(client, envelope, "evt_a")
+
+    assert exc.value.code == code
+    if isinstance(value, str):
+        assert value not in exc.value.message  # the received value is never echoed
+    with client.app.state.sessionmaker() as session:
+        assert session.query(Event).count() == 0
+
+
+def test_evidence_string_never_reaches_the_task_char_by_char(client):
+    ref = make_task(client, next_action="x")
+    direct(client, question(ref, kind="working", subject="r1", payload={"run_ref": "r1"}), "evt_a")
+
+    with pytest.raises(RuleViolation):
+        direct(client, question(ref, kind="review", subject="fini", run="r1",
+                                evidence="commit:abc"), "evt_b")
+
+    assert client.get(f"/api/tasks/{ref}").json()["evidence"] == []
+    assert client.get("/api/events").status_code == 200

@@ -81,6 +81,151 @@ def test_handoff_changes_lead_and_next_action(client):
     assert (t["lead_agent"], t["next_action"]) == ("aether", "poser la clé")
 
 
+def _history(client, ref):
+    return client.get(f"/api/tasks/{ref}/history").json()
+
+
+def _handoff(client, ref, next_action="poser la clé", lead="aether", **fields):
+    return publish(client, "handoff", "À toi", task=ref, needs=[lead],
+                   payload={"next_action": next_action}, **fields)
+
+
+def test_handoff_that_changes_nothing_is_not_applied(client):
+    ref = task(client, lead_agent="aether", next_action="poser la clé")
+    before = client.get(f"/api/tasks/{ref}").json()
+    history = len(_history(client, ref))
+
+    effects = _handoff(client, ref).json()["effects"]
+
+    assert [(e["action"], e["applied"]) for e in effects] == [("handoff", False)]
+    assert "aether" in effects[0]["reason"] and "déjà" in effects[0]["reason"]
+    after = client.get(f"/api/tasks/{ref}").json()
+    assert after["updated_at"] == before["updated_at"]
+    assert len(_history(client, ref)) == history
+
+
+def test_handoff_same_next_action_up_to_spaces_is_not_applied(client):
+    ref = task(client, lead_agent="aether", next_action="poser la clé")
+
+    effects = _handoff(client, ref, next_action="  poser la clé  ").json()["effects"]
+
+    assert effects[0]["applied"] is False
+    assert client.get(f"/api/tasks/{ref}").json()["next_action"] == "poser la clé"
+
+
+def test_handoff_to_current_lead_records_only_the_new_next_action(client):
+    ref = task(client, lead_agent="aether", next_action="poser la clé")
+    before = client.get(f"/api/tasks/{ref}").json()
+
+    effects = _handoff(client, ref, next_action="tester la clé").json()["effects"]
+
+    assert effects[0]["applied"] is True
+    assert _history(client, ref)[-1]["changes"] == {
+        "next_action": ["poser la clé", "tester la clé"]
+    }
+    assert client.get(f"/api/tasks/{ref}").json()["updated_at"] != before["updated_at"]
+
+
+def test_handoff_with_same_next_action_records_only_the_new_lead(client):
+    ref = task(client, lead_agent="mnema", next_action="poser la clé")
+
+    effects = _handoff(client, ref).json()["effects"]
+
+    assert effects[0]["applied"] is True
+    assert _history(client, ref)[-1]["changes"] == {"lead_agent": ["mnema", "aether"]}
+
+
+def _first_noise_check(client, monkeypatch, during):
+    """Run `during(other_session)` in another session, just before the event is inserted."""
+    from nexus.events import service
+
+    make = client.app.state.sessionmaker
+    original = service._refuse_noise
+    calls = []
+
+    def racing(session, envelope, task_row, actor_event_id, **kwargs):
+        original(session, envelope, task_row, actor_event_id, **kwargs)
+        calls.append(actor_event_id)
+        if len(calls) == 1:
+            with make() as other:
+                during(other)
+                other.commit()
+
+    monkeypatch.setattr(service, "_refuse_noise", racing)
+
+
+def test_handoff_is_judged_on_the_current_task_not_the_copy_read_before_the_event(
+    client, monkeypatch
+):
+    from nexus.events import service
+    from nexus.models import Task
+
+    ref = task(client, lead_agent="aether", next_action="poser la clé")
+    task_id = service.parse_task_ref(ref)
+
+    def other_agent_takes_over(other):
+        service.tasks.update_task(other, other.get(Task, task_id), {"lead_agent": "mnema"}, "loic")
+
+    _first_noise_check(client, monkeypatch, other_agent_takes_over)
+    effects = _handoff(client, ref).json()["effects"]
+
+    assert effects[0]["applied"] is True
+    assert client.get(f"/api/tasks/{ref}").json()["lead_agent"] == "aether"
+
+
+def test_concurrent_handoffs_with_different_subjects_apply_once(client, monkeypatch):
+    from datetime import datetime
+
+    from nexus.events import service
+    from nexus.events.rules import Envelope
+
+    ref = task(client, lead_agent="mnema", next_action="x")
+
+    def twin(other):
+        service.publish(other, Envelope(
+            actor="helios", kind="handoff", subject="Autre sujet", task=ref, needs=["aether"],
+            payload={"next_action": "poser la clé"}), "evt_twin", datetime.fromisoformat(AT))
+
+    _first_noise_check(client, monkeypatch, twin)
+    res = _handoff(client, ref)
+
+    assert res.status_code == 201
+    assert res.json()["effects"][0]["applied"] is False
+    assert [h["action"] for h in _history(client, ref)].count("updated") == 1
+
+
+def test_identical_handoffs_racing_under_different_ids_are_noise(client, monkeypatch):
+    from datetime import datetime
+
+    from nexus.events import service
+    from nexus.events.rules import Envelope
+
+    ref = task(client, lead_agent="mnema", next_action="x")
+
+    def twin(other):
+        service.publish(other, Envelope(
+            actor="helios", kind="handoff", subject="À toi", task=ref, needs=["aether"],
+            payload={"next_action": "poser la clé"}), "evt_twin", datetime.fromisoformat(AT))
+
+    _first_noise_check(client, monkeypatch, twin)
+    res = _handoff(client, ref)
+
+    assert res.status_code == 409
+    assert res.json()["detail"]["code"] == "noise"
+    assert [h["action"] for h in _history(client, ref)].count("updated") == 1
+
+
+def test_claim_whose_update_stores_nothing_is_not_applied(client, monkeypatch):
+    from nexus.events import service
+
+    ref = task(client, lead_agent="mnema")
+    monkeypatch.setattr(service.tasks, "update_task", lambda session, task, changes, actor: task)
+
+    effects = publish(client, "claimed", task=ref).json()["effects"]
+
+    assert [(e["action"], e["applied"]) for e in effects] == [("lead_agent", False)]
+
+
 def test_refused_effect_is_reported_but_event_is_kept(client):
     ref = task(client)  # backlog : ne peut pas passer directement en done
     res = publish(client, "done", "Fini", task=ref, evidence=["commit:x"])

@@ -29,6 +29,7 @@ How to use it:
 - [ ] Numbers: `bool` is rejected where a number is expected (`True` is an `int` in Python); `NaN`/`Infinity` are rejected before storage.
 - [ ] Every request body inherits `InputModel` (`nexus.validation`): unknown fields and lone UTF-16 surrogates (`"\ud800"`, keys included) are refused with a 422 — decoded fine, they cannot be encoded back and would break every later read.
 - [ ] A service that other code may call directly (future adapters, ADR-015) re-checks what the HTTP models guarantee: strict JSON only (no set, bytes, datetime, non-str keys), timezone-aware instants, known enums, a plain adapter name for `origin` — refused with a `RuleViolation`, never a crash during `flush()`.
+- [ ] A container received from a direct service call (a tuple for `needs`/`evidence`) is normalised to a list before the fingerprint and the storage, so a read-back and the anti-noise check compare like with like; a list expected but received as a string (`evidence="commit:abc"`, iterated character by character) or with non-text items is refused with a `RuleViolation`, and so is a `payload` that is not an object.
 - [ ] Types inside free-form JSON (`payload`) are checked before they reach a typed column (e.g. `run_ref` must be a string).
 - [ ] References are parsed strictly (ASCII digits, bounded length): `²` or 5 000 digits give a 404, not a 500.
 - [ ] Two fields that describe the same thing (`run` vs `payload.run_ref`) must agree, or the request is refused.
