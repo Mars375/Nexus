@@ -252,8 +252,8 @@ function fixedFrame(width: number, depth: number, seats: Seat[], racks: { x: num
   }
   // label boxes unspread give the horizontal extent and a first top
   // With several floors, the racks' labels (one set per rack count) must fit too: floors share one frame.
-  const sets: Labelled[][] = [seatItems(width, seats), ...(selector ? [1, 2, 3, 4].map((n) => rackItems(serverRoom(width, depth, n).racks)) : [])]
-  const unspread = (a: number) => sets.flatMap((items) => placeLabels(width, depth, a, items, projector(a), []))
+  const sets: { items: Labelled[]; rooms: boolean }[] = [{ items: seatItems(width, seats), rooms: false }, ...(selector ? [1, 2, 3, 4].map((n) => ({ items: rackItems(serverRoom(width, depth, n).racks), rooms: true })) : [])]
+  const unspread = (a: number) => sets.flatMap(({ items }) => placeLabels(width, depth, a, items, projector(a), []))
   let labelTop = Infinity, labelBottom = -Infinity
   for (let a = 0; a < 360; a += SAMPLE_STEP) for (const { box } of unspread(a)) { minX = Math.min(minX, box.x0); maxX = Math.max(maxX, box.x1); labelTop = Math.min(labelTop, box.y0); labelBottom = Math.max(labelBottom, box.y1) }
   const top0 = Math.min(minY, labelTop) - PAD, bottom0 = Math.max(maxY, labelBottom) + PAD
@@ -262,7 +262,7 @@ function fixedFrame(width: number, depth: number, seats: Seat[], racks: { x: num
   for (let pass = 0; pass < 8; pass++) {
     const zones = zonesOf(vb, legendRows, selector)
     let top = vb.y + PAD, bottom = vb.y + vb.h - PAD
-    for (let a = 0; a < 360; a += LABEL_STEP) for (const { box } of sets.flatMap((items) => placeLabels(width, depth, a, items, projector(a), zones))) { top = Math.min(top, box.y0); bottom = Math.max(bottom, box.y1) }
+    for (let a = 0; a < 360; a += LABEL_STEP) for (const { box } of sets.flatMap(({ items, rooms }) => placeLabels(width, depth, a, items, projector(a), rooms ? [...zones, markRect(width, depth, a, projector(a))] : zones))) { top = Math.min(top, box.y0); bottom = Math.max(bottom, box.y1) }
     if (top >= vb.y + PAD - 0.05 && bottom <= vb.y + vb.h - PAD + 0.05) break
     const y = round(top - PAD)
     vb = { ...vb, y, h: round(bottom + PAD - y) }
@@ -311,6 +311,20 @@ function serverRoom(width: number, depth: number, rackCount: number) {
   return { room, racks, aisles, units, tray, markings }
 }
 
+// Floor units the « ÉTAGE n » mark covers around its anchor (with a little margin): rack labels keep clear of it.
+const MARK = { halfW: 2.6, halfD: 0.7 }
+
+/** Screen box of the floor mark at `angle`, on the aisle nearer to the viewer (the same choice as `layoutServerFloor`). */
+function markRect(width: number, depth: number, angle: number, project: Layout['project']): Rect {
+  const g = serverRoom(width, depth, 1), { turn } = turner(width, depth, angle)
+  const mid = (r: PlanRect): Pt => [r.x + r.w / 2, r.y + r.d / 2]
+  const depthOf = (p: Pt) => { const [u, v] = turn(...p); return u + v }
+  const cold = mid(g.aisles.cold), hot = mid(g.aisles.hot)
+  const at = depthOf(cold) >= depthOf(hot) ? cold : hot
+  const pts = [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sy]) => project(at[0] + sx * MARK.halfW, at[1] + sy * MARK.halfD, 0))
+  return { x0: Math.min(...pts.map((q) => q[0])), y0: Math.min(...pts.map((q) => q[1])), x1: Math.max(...pts.map((q) => q[0])), y1: Math.max(...pts.map((q) => q[1])) }
+}
+
 /** Server room for `rackCount` racks (1 to 4), reusing the projection, angle and frame of the floor-1 layout. */
 export function layoutServerFloor(base: Layout, rackCount: number): ServerFloor {
   const g = serverRoom(base.width, base.depth, rackCount)
@@ -322,7 +336,7 @@ export function layoutServerFloor(base: Layout, rackCount: number): ServerFloor 
   const marker = [(px[0] - o[0]) / 10, (px[1] - o[1]) / 10, (py[0] - o[0]) / 10, (py[1] - o[1]) / 10, o[0], o[1]] as const
   const ledFace: Dir = base.sees(0, 1) ? '+y' : base.sees(0, -1) ? '-y' : (['+x', '-x', '+y', '-y'] as const).find((d) => base.sees(...NORMALS[d])) ?? '+x'
   // The plan x axis is the reading direction: when it runs leftwards on screen the mark is turned half a turn.
-  const labels = placeLabels(base.width, base.depth, base.angle, rackItems(g.racks), base.project, base.zones)
+  const labels = placeLabels(base.width, base.depth, base.angle, rackItems(g.racks), base.project, [...base.zones, markRect(base.width, base.depth, base.angle, base.project)])
   return { ...g, markerAt, marker, markerFlip: marker[0] < 0, ledFace, labels }
 }
 

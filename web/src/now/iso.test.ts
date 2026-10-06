@@ -503,6 +503,15 @@ describe('salle des serveurs (#36)', () => {
       })
     }
   })
+  test('« ÉTAGE n » n\'est jamais recouvert par une étiquette de baie, à chaque quart de tour, 2 à 4 baies', () => {
+    for (const agents of [8, 12]) for (const k of [2, 3, 4]) for (const a of QUARTERS) {
+      const l = layoutFloor(agents, 4, a, 3), f = layoutServerFloor(l, k)
+      // the mark's own footprint on screen: 4.8 x 1.2 floor units around its anchor, turned like the floor
+      const pts = [[-2.4, -0.6], [2.4, -0.6], [-2.4, 0.6], [2.4, 0.6]].map(([dx, dy]) => l.project(f.markerAt[0] + dx, f.markerAt[1] + dy, 0))
+      const mark = rect(Math.min(...pts.map((q) => q[0])), Math.min(...pts.map((q) => q[1])), Math.max(...pts.map((q) => q[0])), Math.max(...pts.map((q) => q[1])))
+      f.labels.forEach((lab, i) => expect(hit(lab.box, mark), `étiquette ${i} sur le marquage, ${agents} agents, ${k} baies à ${a}°`).toBe(false))
+    }
+  })
   test('les étiquettes des baies tiennent dans le cadre fixe à chaque angle', () => {
     for (const agents of [8, 12]) for (let a = 0; a < 360; a += 5) {
       const l = layoutFloor(agents, 4, a, 2), { x, y, w, h } = l.viewBox
