@@ -21,15 +21,15 @@ export function TaskCardBody({ task, pendingDependencies, now, lifted }: CardPro
   return (
     <article
       className={clsx(
-        'relative rounded-md border bg-surface px-3 py-2.5 text-left',
-        main ? 'border-accent/60 bg-accent-soft/40' : 'border-line',
-        lifted && 'rotate-[0.6deg] scale-[1.02] shadow-xl shadow-black/15',
+        'relative rounded-sm border px-3 py-2.5 text-left',
+        main ? 'border-accent bg-accent-soft' : 'border-line bg-surface',
+        lifted && 'rotate-[0.6deg] scale-[1.02] shadow-xl shadow-black/60',
       )}
     >
       {main && (
         <span aria-hidden className="absolute inset-y-2 left-0 w-[3px] rounded-r bg-accent" />
       )}
-      <h3 className="font-display text-sm leading-snug font-semibold">{task.title}</h3>
+      <h3 className="font-orbital text-sm leading-snug font-semibold">{task.title}</h3>
       {main && <p className="mt-0.5 text-2xs font-medium text-accent">Opération principale</p>}
       {auxiliary && <p className="mt-0.5 text-2xs font-medium text-muted">Opération auxiliaire</p>}
       {task.status === 'blocked' && task.block_cause && (
@@ -65,7 +65,7 @@ export function TaskCardBody({ task, pendingDependencies, now, lifted }: CardPro
         {task.expected_evidence && task.evidence.length === 0 && task.status !== 'done' && (
           <span>Preuve attendue</span>
         )}
-        <span className="ml-auto tabular-nums">{task.id.replace('nx-task-', '#')}</span>
+        <span className="ml-auto font-data tabular-nums">{task.id.replace('nx-task-', '#')}</span>
       </footer>
     </article>
   )
@@ -88,7 +88,7 @@ export function TaskCard({
         type="button"
         onClick={() => onOpen(task.id)}
         className={clsx(
-          'block w-full cursor-grab rounded-md active:cursor-grabbing',
+          'block w-full cursor-grab rounded-sm active:cursor-grabbing',
           isDragging && 'opacity-30',
         )}
         aria-label={`${task.title} — ouvrir ou déplacer`}

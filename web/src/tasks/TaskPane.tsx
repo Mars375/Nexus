@@ -50,7 +50,7 @@ export function TaskPane({ task, tasks, onClose }: Props) {
       <header className="flex items-start gap-3 border-b border-line px-5 py-4">
         <div className="min-w-0 flex-1">
           <p className="flex gap-2 text-xs text-muted">
-            <span className="tabular-nums">{task.id}</span>
+            <span className="font-data tabular-nums">{task.id}</span>
             <span className="text-ink">{STATUS_LABEL[task.status]}</span>
             {task.status === 'in_progress' && task.operation_role && (
               <span className={task.operation_role === 'main' ? 'text-accent' : undefined}>
@@ -58,8 +58,8 @@ export function TaskPane({ task, tasks, onClose }: Props) {
               </span>
             )}
           </p>
-          <h2 className="mt-0.5 font-display text-lg leading-tight font-semibold">{task.title}</h2>
-          <Provenance source={task.source} measuredAt={task.measured_at} kind="tasks" className="mt-1 block" />
+          <h2 className="mt-0.5 font-orbital text-lg leading-tight font-semibold">{task.title}</h2>
+          <Provenance source={task.source} measuredAt={task.measured_at} kind="tasks" className="mt-1 block font-data" />
         </div>
         <Button variant="ghost" onClick={onClose} aria-label="Fermer le détail">
           Fermer
@@ -112,7 +112,7 @@ export function TaskPane({ task, tasks, onClose }: Props) {
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="border-b border-line px-5 py-4">
-      <h3 className="mb-2.5 text-xs font-semibold text-muted">{title}</h3>
+      <h3 className="mb-2.5 font-orbital-display text-xs font-semibold uppercase tracking-[0.18em] text-muted">{title}</h3>
       {children}
     </section>
   )
@@ -272,7 +272,7 @@ function EditForm({ task }: { task: Task }) {
             </Field>
           </div>
           <fieldset className="grid gap-1">
-            <legend className="mb-1 text-xs font-medium text-muted">Collaborateurs</legend>
+            <legend className="mb-1 font-orbital-display text-xs font-semibold uppercase tracking-[0.14em] text-muted">Collaborateurs</legend>
             <div className="flex flex-wrap gap-1.5">
               {ACTORS.filter((a) => a !== 'loic').map((actor) => {
                 const on = form.collaborators.includes(actor)
@@ -285,8 +285,8 @@ function EditForm({ task }: { task: Task }) {
                       set('collaborators', on ? form.collaborators.filter((a) => a !== actor) : [...form.collaborators, actor])
                     }
                     className={clsx(
-                      'rounded-full border px-2 py-0.5 transition-colors duration-100',
-                      on ? 'border-ink/40 bg-sunken' : 'border-line opacity-60 hover:opacity-100',
+                      'rounded-full border px-2 py-0.5 transition-colors duration-100 hover:bg-ink/10',
+                      on ? 'border-ink bg-sunken' : 'border-line-strong',
                     )}
                   >
                     <AgentMark actor={actor} withName />

@@ -146,14 +146,14 @@ function Column({
       ref={setNodeRef}
       aria-label={STATUS_LABEL[status]}
       className={clsx(
-        'flex min-w-48 max-w-80 flex-1 basis-0 flex-col rounded-lg bg-sunken/70 transition-[opacity,box-shadow] duration-150',
+        'flex min-w-48 max-w-80 flex-1 basis-0 flex-col border border-line bg-sunken transition-[opacity,box-shadow] duration-150',
         dragging && !allowed && 'opacity-40',
-        isOver && allowed && dragging?.status !== status && 'ring-2 ring-accent/60',
+        isOver && allowed && dragging?.status !== status && 'ring-2 ring-accent',
       )}
     >
       <header className="flex items-baseline gap-2 px-3 pt-3 pb-2">
-        <h2 className="font-display text-sm font-semibold">{STATUS_LABEL[status]}</h2>
-        <span className="text-xs text-muted tabular-nums">{count}</span>
+        <h2 className="font-orbital-display text-xs font-semibold uppercase tracking-[0.18em]">{STATUS_LABEL[status]}</h2>
+        <span className="font-data text-xs text-muted tabular-nums">{count}</span>
       </header>
       <ul className="flex min-h-16 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2">
         {children}
