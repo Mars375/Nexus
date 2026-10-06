@@ -53,7 +53,7 @@ const isNonEmptyString = (value: unknown): value is string => typeof value === '
 const MAX_CURSOR = 999_999_999_999
 
 const isCursorValue = (value: unknown): boolean =>
-  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= MAX_CURSOR
+  Number.isSafeInteger(value) && (value as number) >= 0 && (value as number) <= MAX_CURSOR
 
 const isCursor = (value: unknown): value is Cursor =>
   isRecord(value) && isCursorValue(value.history) && isCursorValue(value.events)
