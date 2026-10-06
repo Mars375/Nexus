@@ -48,6 +48,8 @@ test('l’anneau de focus de la première carte est entièrement visible dans sa
 
 test('la boîte de dialogue reste centrée dès la première image de son animation', async ({ page }) => {
   await page.goto('/#/travail')
+  // Pause the opening animation from its first frame: a slow machine must not see it already finished.
+  await page.addStyleTag({ content: '[role=dialog]{animation-play-state:paused!important}' })
   await page.getByRole('button', { name: 'Nouvelle tâche' }).first().click()
   const dialog = page.getByRole('dialog', { name: 'Nouvelle tâche' })
   await expect(dialog).toBeVisible()
