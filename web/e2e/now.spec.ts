@@ -150,9 +150,11 @@ test('mouvement réduit : une demande fraîche garde son fond ambre', async ({ p
 
 // --- Étages de baies (#36) : le serveur ne connaît que 4 nœuds, la réponse en simule 12 (ou 10)
 const NODE_IDS = ['cortex', 'synapse', 'artemis', 'helios', 'n5', 'n6', 'n7', 'n8', 'n9', 'n10', 'n11', 'n12']
-async function serveNodes(page: import('@playwright/test').Page, count = 12, offline: string[] = []) {
+async function serveNodes(page: import('@playwright/test').Page, count = 12, offline: string[] = [], unknown: string[] = []) {
+  // Offline and unknown nodes carry a last sighting, so their room labels really have three lines with « vu il y a ».
+  const seen = new Date(Date.now() - 3 * 3_600_000).toISOString()
   await page.route('**/api/nodes', (route) => route.fulfill({
-    json: NODE_IDS.slice(0, count).map((id) => ({ id, kind: 'homelab', guardian_agent: 'aether', status: offline.includes(id) ? 'offline' : 'online', last_seen: null, detail: null, source: 'tailscale', measured_at: new Date().toISOString() })),
+    json: NODE_IDS.slice(0, count).map((id) => ({ id, kind: 'homelab', guardian_agent: 'aether', status: offline.includes(id) ? 'offline' : unknown.includes(id) ? 'unknown' : 'online', last_seen: offline.includes(id) || unknown.includes(id) ? seen : null, detail: null, source: 'tailscale', measured_at: new Date().toISOString() })),
   }))
 }
 
@@ -282,3 +284,32 @@ test('un étage disparaît pendant l\'ascenseur : le repli est instantané, la c
   await expect(page.locator('[data-stage]')).toHaveAttribute('data-floor', '2')
   await expect(page.locator('.level')).toHaveCount(1)
 })
+
+for (const width of [1440, 1400, 1366, 1100]) for (const [count, floor] of [[12, 2], [10, 3]] as const) {
+  test(`salle des serveurs (étage ${floor}, ${count} nœuds) : aucune étiquette de baie n'en recouvre une autre ni un coin fixe, avant et après un glisser, à ${width} px`, async ({ page }) => {
+    await serveNodes(page, count, ['n6', 'n10'], ['n7'])
+    await page.setViewportSize({ width, height: width === 1366 ? 768 : width === 1400 ? 600 : 900 })
+    await page.goto('/#/maintenant')
+    const stage = page.locator('[data-stage]')
+    await expect(page.getByRole('button', { name: /^Monter d'un étage/ })).toBeVisible()
+    for (let i = 1; i < floor; i++) await page.getByRole('button', { name: /^Monter d'un étage/ }).click()
+    await expect(stage).toHaveAttribute('data-floor', String(floor))
+    await page.waitForTimeout(500)
+    await expect(page.locator('[data-rack-label]')).toHaveCount(floor === 3 ? count - 8 : 4)
+    // the labels measured are the real three-line ones
+    await expect(page.locator('[data-rack-label]').filter({ hasText: 'vu il y a' }).first()).toBeVisible()
+    await expectNoLabelOverlap(page, `étage ${floor} à 0°`)
+    const box = (await stage.boundingBox())!
+    const x = box.x + box.width / 2, y = box.y + box.height * 0.8
+    await page.mouse.move(x, y); await page.mouse.down()
+    await page.mouse.move(x + 100, y, { steps: 5 }); await page.mouse.move(x + 200, y, { steps: 5 })
+    await page.mouse.up()
+    await expect(stage).toHaveAttribute('data-angle', '90')
+    await expectNoLabelOverlap(page, `étage ${floor} à 90° après un glisser`)
+    for (const quarter of ['180', '270', '360']) {
+      await page.getByRole('button', { name: 'Tourner l\'étage vers la droite' }).click()
+      await expect(stage).toHaveAttribute('data-angle', quarter)
+      await expectNoLabelOverlap(page, `étage ${floor} à ${quarter}°`)
+    }
+  })
+}
