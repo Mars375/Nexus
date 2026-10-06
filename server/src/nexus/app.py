@@ -7,6 +7,7 @@ import logging
 from contextlib import asynccontextmanager, suppress
 from functools import partial
 from importlib.metadata import version
+from secrets import token_hex  # not `nexus.secrets`
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -90,6 +91,9 @@ def create_app(
         if before_migration:
             backup.backup(settings.db_path, settings.backup_dir, settings.backup_keep)
         migrate.upgrade(settings.db_url)
+        # Random per process, derived from nothing: a cursor from another run (restart, restored
+        # base) is never trusted by the live endpoint (#25).
+        app.state.live_instance = token_hex(8)
         app.state.engine = make_engine(settings.db_url)
         app.state.sessionmaker = sessionmaker(app.state.engine, expire_on_commit=False)
         if not before_migration:

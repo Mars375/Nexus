@@ -22,12 +22,14 @@ L'interface reflète chaque changement sans rechargement : un événement posté
 
 ### Point d'entrée
 
-`/api/ws` (WebSocket). Paramètres de requête facultatifs : `history_after`, `events_after` (entiers ≥ 0).
+`/api/ws` (WebSocket). Paramètres de requête facultatifs : `history_after`, `events_after` (entiers ≥ 0) et `instance` (16 chiffres hexadécimaux minuscules, ASCII strict).
 
 - **Sans curseur** (premier chargement d'un onglet) : on part du dernier identifiant existant ; l'état actuel vient des lectures REST.
 - **Avec curseur** (reconnexion) : on renvoie tout ce qui a changé au-delà, puis on passe en direct.
 - **Curseur en avance sur la base** (ex. base restaurée depuis une sauvegarde) : le serveur l'annonce (`reset: true` dans `hello`) et repart de l'existant ; le client relit tout.
-- Paramètre invalide (non entier, négatif) : fermeture avec le code 1008 et une raison générique, sans recopier la valeur reçue.
+- **Instance différente** : à chaque démarrage, le serveur tire un identifiant d'instance aléatoire (`secrets.token_hex(8)`, rien n'en est dérivé) et le renvoie dans `hello`. Le client le redonne avec son curseur à la reconnexion. Si l'instance reçue diffère de celle du serveur (redémarrage, base restaurée), les identifiants ont pu être réécrits sous le curseur sans le dépasser : le serveur répond `reset: true` et repart de l'existant, même si le curseur n'est pas en avance. Conséquence assumée : chaque redémarrage du serveur fait invalider une fois tout le cache des clients connectés.
+- **Compatibilité** : un curseur sans `instance` (ancien client) n'est comparé à aucune instance (comportement d'avant). Une `instance` sans curseur est refusée (1008, « curseur incomplet »).
+- Paramètre invalide (curseur non entier ou négatif, `instance` mal formée : majuscules, longueur ≠ 16, chiffres non ASCII) : fermeture avec le code 1008 et une raison générique, sans recopier la valeur reçue.
 
 ### Messages (JSON, serveur → client)
 
@@ -35,7 +37,7 @@ Volontairement minces : des références et des types, jamais de texte libre re�
 
 | `type` | Champs | Sens |
 |---|---|---|
-| `hello` | `cursor`, `reset` (bool) | connexion établie ; curseur de départ |
+| `hello` | `cursor`, `reset` (bool), `instance` | connexion établie ; curseur de départ ; identifiant de l'instance du serveur (seul `hello` le porte) |
 | `task_changed` | `task` (`nx-task-N`), `cursor` | une tâche a changé (plusieurs lignes d'historique d'une même tâche dans une même relecture → un seul message) |
 | `event` | `event` (`nx-evt-N`), `task` (`nx-task-N` ou `null`), `kind`, `cursor` | un événement a été enregistré |
 | `resync` | `cursor` | trop de changements d'un coup (plus de 500 lignes) : le client relit tout |
@@ -94,7 +96,7 @@ Aucune animation ; seul un changement d'état change l'affichage.
 
 ## Tests
 
-- **Serveur (pytest, TestClient WebSocket)** : `hello` sans curseur part de l'existant ; rattrapage exact depuis un curseur (tâche modifiée, commentaire, événement) ; direct : un changement fait après la connexion arrive ; coalescence par tâche ; `resync` au-delà du seuil ; curseur en avance → `reset: true` ; paramètre invalide refusé sans écho ; origine étrangère refusée, origines par défaut et absence d'`Origin` admises ; aucun texte libre (sujet d'événement, commentaire) dans les messages.
+- **Serveur (pytest, TestClient WebSocket)** : `hello` sans curseur part de l'existant ; rattrapage exact depuis un curseur (tâche modifiée, commentaire, événement) ; direct : un changement fait après la connexion arrive ; coalescence par tâche ; `resync` au-delà du seuil ; curseur en avance → `reset: true` ; autre instance avec curseur non en avance → `reset: true` ; curseur sans instance → pas de reset ; instance seule ou mal formée refusée sans écho ; `instance` stable pour une app et différente entre deux apps ; paramètre invalide refusé sans écho ; origine étrangère refusée, origines par défaut et absence d'`Origin` admises ; aucun texte libre (sujet d'événement, commentaire) dans les messages.
 - **Web (Vitest)** : machine d'états (transitions, attente croissante plafonnée, passage à `unknown` après 30 s, reconnexion sur silence de 45 s) avec un faux WebSocket et de faux timers ; effets des messages sur le client TanStack Query ; indicateur pour chaque état.
 - **Playwright** : tableau ouvert, une tâche créée par l'API (hors interface) apparaît en moins d'une seconde ; coupure simulée (connexion fermée côté navigateur avec `page.routeWebSocket`) puis reconnexion : un changement fait pendant la coupure apparaît après la reconnexion.
 
