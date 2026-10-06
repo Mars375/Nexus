@@ -5,6 +5,7 @@ from datetime import datetime
 import pytest
 
 from nexus.events import service
+from nexus.events.limits import RUN_MAX
 from nexus.events.rules import Envelope
 from nexus.models import Event
 from nexus.tasks.rules import RuleViolation
@@ -256,3 +257,26 @@ def test_evidence_length_is_measured_after_stripping_like_the_api(client):
     with pytest.raises(RuleViolation) as exc:
         direct(client, question(evidence=["  " + "e" * 513 + "  "]), "evt_b")
     assert exc.value.code == "too_long_evidence"
+
+
+def test_payload_run_ref_limit_is_enforced_from_an_adapter(client):
+    direct(client, question(payload={"run_ref": "r" * RUN_MAX}), "evt_a")
+
+    with pytest.raises(RuleViolation) as exc:
+        direct(client, question(payload={"run_ref": "r" * (RUN_MAX + 1)}), "evt_b")
+
+    assert exc.value.code == "invalid_run_ref"
+    assert str(RUN_MAX) in exc.value.message
+    with client.app.state.sessionmaker() as session:
+        assert session.query(Event).count() == 1
+
+
+def test_payload_run_ref_limit_is_the_same_over_http(client):
+    body = _http_body("subject", 0) | {"subject": "Où est la clé ?"}
+
+    ok = client.post("/api/events", json=body | {"payload": {"run_ref": "r" * RUN_MAX}})
+    over = client.post("/api/events", json=body | {"id": "evt_b",
+                                                   "payload": {"run_ref": "r" * (RUN_MAX + 1)}})
+
+    assert ok.status_code == 201
+    assert over.json()["detail"]["code"] == "invalid_run_ref"
