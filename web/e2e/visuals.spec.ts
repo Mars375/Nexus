@@ -46,6 +46,40 @@ test('l’anneau de focus de la première carte est entièrement visible dans sa
   expect(geometry.ringBottom).toBeLessThanOrEqual(geometry.clipBottom)
 })
 
+const API = 'http://127.0.0.1:8799'
+test('l’anneau de la première carte reste visible quand Shift+Tab la ramène dans une colonne défilée', async ({ page, request }) => {
+  for (let i = 0; i < 14; i++) {
+    const res = await request.post(`${API}/api/tasks`, { data: {
+      title: `Défilement ${i}`, objective: `Objectif ${'x'.repeat(80)}`, status: 'todo',
+      next_action: 'Suite assez longue pour tenir sur deux lignes dans la carte',
+    } })
+    expect(res.ok()).toBeTruthy()
+  }
+  await page.goto('/#/travail')
+  const column = page.locator('section[aria-label="À faire"] ul')
+  const cards = column.locator(':scope > li > button')
+  await expect(cards.filter({ hasText: 'Défilement 13' })).toBeVisible()
+  expect(await column.evaluate((ul) => ul.scrollHeight > ul.clientHeight), 'la colonne doit défiler').toBe(true)
+  await page.keyboard.press('Tab') // keyboard modality: :focus-visible applies
+  await cards.nth(1).focus()
+  // Hide only the top half of the first card. Chrome brings a PARTLY hidden element to the nearest edge
+  // (that is the clipping case); a fully hidden one is centred, which clamps to scrollTop 0 and hides the bug.
+  await column.evaluate((ul) => {
+    const first = ul.firstElementChild!.getBoundingClientRect()
+    ul.scrollTop = first.top - ul.getBoundingClientRect().top + first.height / 2
+  })
+  await page.keyboard.press('Shift+Tab')
+  await expect(cards.first()).toBeFocused()
+  const r = await cards.first().evaluate((el) => {
+    const s = getComputedStyle(el)
+    const grow = parseFloat(s.outlineWidth) + parseFloat(s.outlineOffset)
+    const ul = el.closest('ul')!
+    return { outline: s.outlineStyle, ringTop: el.getBoundingClientRect().top - grow, clipTop: ul.getBoundingClientRect().top, scrollTop: ul.scrollTop }
+  })
+  expect(r.outline).not.toBe('none')
+  expect(r.ringTop, JSON.stringify(r)).toBeGreaterThanOrEqual(r.clipTop - 0.5)
+})
+
 test('la boîte de dialogue reste centrée dès la première image de son animation', async ({ page }) => {
   await page.goto('/#/travail')
   // Pause the opening animation from its first frame: a slow machine must not see it already finished.
