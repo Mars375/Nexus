@@ -5,7 +5,7 @@ import { age } from '@/format'
 import { isStale } from '@/freshness'
 import { useNow } from '@/useNow'
 import { DESK, box, drawOrder, layoutFloor, toPercent, type Dir, type Layout } from './iso'
-import { AGE_TICK_MS, displayName, floorAlert, floorAlertSides, nodeFloors, rackDetail, rackLabel, rackTone, seatModels, type FloorAlert, type RackView, type SeatModel } from './model'
+import { AGE_TICK_MS, displayName, floorAlert, floorAlertCount, floorAlertSides, nodeFloors, rackDetail, rackLabel, rackTone, seatModels, type FloorAlert, type RackView, type SeatModel } from './model'
 import { Faces, Rack } from './Rack'
 import { RackLabels, ServerRoom } from './ServerRoom'
 import { useArrivals } from './useArrivals'
@@ -50,7 +50,7 @@ const NORMAL: Record<Dir, readonly [number, number]> = { '+x': [1, 0], '-x': [-1
 type FloorProps = { snapshot: NowSnapshot; nodes: NodeState[] | undefined; nodesFailed?: boolean }
 
 const ROTATE_BUTTON = 'pointer-events-auto grid size-9 place-items-center rounded-md border border-line bg-surface/80 text-base text-ink hover:bg-sunken focus-visible:outline-2 focus-visible:outline-accent'
-const ALERT_TEXT: Record<FloorAlert, string> = { off: 'un nœud hors ligne', unknown: 'un nœud en état inconnu' }
+const alertText = (alert: FloorAlert, count: number): string => `${count === 1 ? 'un nœud' : `${count} nœuds`} ${alert === 'off' ? 'hors ligne' : 'en état inconnu'}`
 
 /** The floor with its rotation and its floors: drag, arrow keys, PageUp / PageDown and buttons; the angle settles on quarter turns. */
 export function Floor(props: FloorProps) {
@@ -61,12 +61,13 @@ export function Floor(props: FloorProps) {
   const floors = nodeFloors(nodes)
   const alerts = floors.map((f) => floorAlert(f, (n) => nodesFailed || isStale(n.measured_at, 'nodes', now)))
   // Alerts of the floors out of sight sit on ▲ / ▼ and in the label, never for the floor shown.
-  const sides = floorAlertSides(alerts, level.floor)
+  const stale = (n: NodeState) => nodesFailed || isStale(n.measured_at, 'nodes', now)
+  const sides = floorAlertSides(alerts, level.floor, floors.map((f) => floorAlertCount(f, stale)))
   // A new alert on a floor out of sight pulses the pip of its side once; never under reduced motion.
   const freshAlerts = useArrivals(nodes === undefined ? null : alerts.flatMap((a, i) => a ? [`${i + 1}:${a}`] : []))
   const pulse = (side: 'up' | 'down') => !prefersReducedMotion() && sides.others.some((o) => (side === 'up' ? o.floor > level.floor : o.floor < level.floor) && freshAlerts.has(`${o.floor}:${o.alert}`))
   const listFloors = (fs: number[]) => fs.length === 1 ? `à l'étage ${fs[0]}` : `aux étages ${fs.slice(0, -1).join(', ')} et ${fs.at(-1)}`
-  const describe = (side: 'up' | 'down') => sides.others.filter((o) => (side === 'up' ? o.floor > level.floor : o.floor < level.floor)).map((o) => `${ALERT_TEXT[o.alert]} à l'étage ${o.floor}`).join(', ')
+  const describe = (side: 'up' | 'down') => sides.others.filter((o) => (side === 'up' ? o.floor > level.floor : o.floor < level.floor)).map((o) => `${alertText(o.alert, o.count)} à l'étage ${o.floor}`).join(', ')
   const stepButton = (side: 'up' | 'down') => {
     const text = describe(side), pipAlert = side === 'up' ? sides.above : sides.below
     const atLimit = side === 'up' ? level.floor >= level.count : level.floor <= 1

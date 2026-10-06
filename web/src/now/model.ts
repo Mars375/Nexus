@@ -58,6 +58,13 @@ export function floorAlert(nodes: readonly NodeState[], stale: (n: NodeState) =>
   return amber ? 'unknown' : null
 }
 
+/** How many nodes cause the alert `floorAlert` gives (red: the fresh offline ones; amber: the unknown or stale ones). */
+export function floorAlertCount(nodes: readonly NodeState[], stale: (n: NodeState) => boolean): number {
+  const kind = floorAlert(nodes, stale)
+  if (kind === 'off') return nodes.filter((n) => !stale(n) && n.status === 'offline').length
+  return kind === 'unknown' ? nodes.filter((n) => stale(n) || n.status === 'unknown').length : 0
+}
+
 const SEVERITY: Record<FloorAlert, number> = { unknown: 1, off: 2 }
 const worst = (list: FloorAlert[]): FloorAlert | null => list.reduce<FloorAlert | null>((w, a) => (w === null || SEVERITY[a] > SEVERITY[w] ? a : w), null)
 
@@ -65,8 +72,8 @@ const worst = (list: FloorAlert[]): FloorAlert | null => list.reduce<FloorAlert 
  * Alerts of the floors out of sight, seen from floor `current` (1-based): the most severe above and
  * below it (for the pips on ▲ and ▼), and every other alerting floor in order. Never the floor shown.
  */
-export function floorAlertSides(alerts: readonly (FloorAlert | null)[], current: number): { above: FloorAlert | null; below: FloorAlert | null; others: { floor: number; alert: FloorAlert }[] } {
-  const others = alerts.flatMap((alert, i) => alert && i + 1 !== current ? [{ floor: i + 1, alert }] : [])
+export function floorAlertSides(alerts: readonly (FloorAlert | null)[], current: number, counts: readonly number[] = []): { above: FloorAlert | null; below: FloorAlert | null; others: { floor: number; alert: FloorAlert; count: number }[] } {
+  const others = alerts.flatMap((alert, i) => alert && i + 1 !== current ? [{ floor: i + 1, alert, count: counts[i] ?? 1 }] : [])
   return { above: worst(others.filter((o) => o.floor > current).map((o) => o.alert)), below: worst(others.filter((o) => o.floor < current).map((o) => o.alert)), others }
 }
 

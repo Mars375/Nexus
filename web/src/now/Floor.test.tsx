@@ -771,3 +771,14 @@ test('salle : une dernière vue dans le futur (horloge décalée) n\'affiche pas
   expect(lines(rackLabelOf(container, 'synapse'))[1]).toBe('hors ligne')
   expect(container.querySelector('[data-legend]')!.textContent).not.toContain('vu il y a 0 s')
 })
+
+test('plusieurs nœuds en alerte sur un étage : le nombre est dit, au pluriel', () => {
+  const a = render(<Floor snapshot={snap()} nodes={twelve({ n9: 'offline', n10: 'offline', n11: 'unknown' })} />)
+  expect(up()).toHaveAccessibleName('Monter d\'un étage : 2 nœuds hors ligne à l\'étage 3')
+  a.unmount()
+  const b = render(<Floor snapshot={snap()} nodes={twelve({ n6: 'unknown', n7: 'unknown', n8: 'unknown' })} />)
+  expect(up()).toHaveAccessibleName('Monter d\'un étage : 3 nœuds en état inconnu à l\'étage 2')
+  b.unmount()
+  render(<Floor snapshot={snap()} nodes={twelve({ n9: 'offline' })} />)
+  expect(up()).toHaveAccessibleName('Monter d\'un étage : un nœud hors ligne à l\'étage 3')
+})
