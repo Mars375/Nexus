@@ -6,7 +6,7 @@ export const INVALID_API_BASE =
   'VITE_NEXUS_API_URL doit être une origine http(s) seule (http://hôte:port), sans chemin, identifiants, requête ni fragment.'
 
 // Raw shape first: new URL() would normalise `/a/..` to `/` and drop an empty `?` or `#`.
-const RAW_ORIGIN = /^https?:\/\/[^/?#@\s]+\/?$/i
+const RAW_ORIGIN = /^https?:\/\/[^/\\?#@\s]+\/?$/i
 
 export function normalizeApiBase(raw: string | undefined): string {
   const value = raw?.trim() ?? ''

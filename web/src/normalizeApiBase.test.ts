@@ -24,6 +24,7 @@ describe('normalizeApiBase', () => {
     'https://nexus.local/proxy',
     'http://user:' + 'pw' + '@nexus.local',
     'http://nexus.local/a/..',
+    'http://nexus.local\\api',
     'http://nexus.local?',
     'http://nexus.local#',
     'http://nexus.local?x=1',
