@@ -130,3 +130,7 @@ Prioritaires sur ce qui précède.
 2. Repères : la colonne de trois points est supprimée. Une pastille sur ▲ (étage au-dessus en alerte) et sur ▼ (au-dessous), de la couleur de l'alerte la plus grave (rouge hors ligne, ambre inconnu ou périmé, rien pour hors ligne prévu), jamais pour l'étage affiché ; texte « Étage 2 / 3 · alerte à l'étage 3 » ; noms accessibles « Monter d'un étage : un nœud hors ligne à l'étage 3 ». Une alerte nouvelle fait pulser la pastille du côté concerné, une fois.
 
 ### E. Cette section.
+
+### Ajustements de la relecture 2
+- Le marquage « ÉTAGE n » est un obstacle fixe pour l'écart des étiquettes de baies ; la légende lue par les lecteurs d'écran reprend toutes les lignes de l'étiquette (`rackDetail`, « vu il y a » seulement si la date est plausible), le nombre de nœuds en alerte est dit au pluriel, et un repli pendant l'ascenseur se fait sans transition (`data-snap`).
+- L'estimation de hauteur des étiquettes de baie passe de 62 à 71 unités (scène basse : 0,53 px par unité) : le cadre des étages multiples grandit de 5,3 % (1 020,7 à 1 074,7), celui de l'étage 1 jusqu'à 4 nœuds ne change pas ; les e2e des salles couvrent 1 100, 1 366, 1 400 (hauteur 600) et 1 440 px.
