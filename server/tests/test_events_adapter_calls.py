@@ -306,3 +306,16 @@ def test_evidence_strip_is_the_one_of_the_api(client, suffix, accepted):
         with pytest.raises(RuleViolation) as exc:
             direct(client, question(evidence=[item]), "evt_b")
         assert exc.value.code == "too_long_evidence"
+
+
+@pytest.mark.parametrize("item", ["", " ", "\t\n", "\u00a0\u3000"])
+def test_blank_evidence_item_is_refused_like_the_api(client, item):
+    over_http = client.post("/api/events", json=_http_body("evidence", 0) | {"evidence": [item]})
+    assert over_http.status_code == 422
+
+    with pytest.raises(RuleViolation) as exc:
+        direct(client, question(evidence=["ok", item]), "evt_b")
+
+    assert exc.value.code == "invalid_evidence"
+    with client.app.state.sessionmaker() as session:
+        assert session.query(Event).count() == 0

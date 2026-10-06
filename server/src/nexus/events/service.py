@@ -147,7 +147,11 @@ def publish(
     _check_lengths(envelope, actor_event_id)
     # Stored stripped, as the API does: measured and stored values are the same, and a resend
     # padded differently is still the same fact.
-    envelope.evidence = [_API_STRIP.validate_python(item) for item in envelope.evidence]
+    evidence = [_API_STRIP.validate_python(item) for item in envelope.evidence]
+    if not all(evidence):
+        # The API refuses a blank reference (`Ref` has min_length=1 after stripping).
+        raise RuleViolation("invalid_evidence", "evidence : éléments non vides requis")
+    envelope.evidence = evidence
     incoming = (envelope.subject, envelope.body, envelope.payload, envelope.evidence,
                 envelope.needs, envelope.run, actor_event_id)
     if has_unencodable(incoming):
