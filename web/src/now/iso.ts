@@ -60,8 +60,8 @@ const RACK_PER_COLUMN = Math.floor((FLOOR_DEPTH - RACK_MARGIN - RACK.d - RACK_ST
 // Room taken by label text around its anchor, in viewBox units (labels keep their px size).
 const LABEL_HALF = 110
 const LABEL_TEXT_H = 42
-// Three lines (40 px) at the smallest render (about 0.66 px per unit): the stage can be height-limited and shrink below 1 px per unit.
-const RACK_LABEL_H = 62
+// Three lines (40 px) on a height-limited stage (min 560 px for a frame about 1060 units tall: 0.53 px per unit, 75 units) minus the gap.
+const RACK_LABEL_H = 71
 const GAP = 6
 const SAMPLE_STEP = 5
 const LABEL_STEP = 1
