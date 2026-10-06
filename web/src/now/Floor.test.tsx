@@ -791,3 +791,16 @@ test('plusieurs nœuds en alerte sur un étage : le nombre est dit, au pluriel',
   render(<Floor snapshot={snap()} nodes={twelve({ n9: 'offline' })} />)
   expect(up()).toHaveAccessibleName('Monter d\'un étage : un nœud hors ligne à l\'étage 3')
 })
+
+test('repli pendant l\'ascenseur : les couches reçoivent data-snap (aucune transition) tant qu\'aucun mouvement ne suit', () => {
+  motion()
+  vi.useFakeTimers()
+  const { container, rerender } = render(<Floor snapshot={snap()} nodes={twelve()} />)
+  fireEvent.click(up()); fireEvent.click(up())
+  expect(container.querySelector('[data-snap]')).toBeNull()
+  rerender(<Floor snapshot={snap()} nodes={twelve().slice(0, 6)} />)
+  expect([...container.querySelectorAll('.level')].map((e) => e.hasAttribute('data-snap'))).toEqual([true])
+  fireEvent.click(down())
+  expect(container.querySelector('[data-snap]')).toBeNull()
+  vi.useRealTimers()
+})

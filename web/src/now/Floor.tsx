@@ -85,7 +85,7 @@ export function Floor(props: FloorProps) {
     if (e.key === 'PageUp' || e.key === 'PageDown') { e.preventDefault(); level.go(e.key === 'PageUp' ? 1 : -1) }
   }
   return (
-    <FloorScene {...props} angle={angle} stage={{ ...stage, onKeyDown }} floor={level.floor} floorCount={level.count} layers={level.layers} dir={level.dir} lifted={level.lifted} arriving={level.arriving}>
+    <FloorScene {...props} angle={angle} stage={{ ...stage, onKeyDown }} floor={level.floor} floorCount={level.count} layers={level.layers} dir={level.dir} lifted={level.lifted} arriving={level.arriving} snap={level.snap}>
       <div className="absolute left-0 top-0 flex gap-1">
         <button type="button" className={ROTATE_BUTTON} aria-label="Tourner l'étage vers la gauche" onClick={() => rotateBy(-90)}><span aria-hidden="true">↺</span></button>
         <button type="button" className={ROTATE_BUTTON} aria-label="Tourner l'étage vers la droite" onClick={() => rotateBy(90)}><span aria-hidden="true">↻</span></button>
@@ -104,10 +104,10 @@ export function Floor(props: FloorProps) {
   )
 }
 
-type SceneProps = FloorProps & { angle: number; stage?: FloorStage; children?: ReactNode; floor?: number; floorCount?: number; layers?: FloorLayer[]; dir?: 'up' | 'down'; lifted?: number; arriving?: number }
+type SceneProps = FloorProps & { angle: number; stage?: FloorStage; children?: ReactNode; floor?: number; floorCount?: number; layers?: FloorLayer[]; dir?: 'up' | 'down'; lifted?: number; arriving?: number; snap?: boolean }
 
 /** The floor seen at `angle` degrees: pure drawing, the angle and the floor shown are owned by the caller. */
-export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage, children, floor = 1, floorCount = 1, layers, dir, lifted, arriving }: SceneProps) {
+export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage, children, floor = 1, floorCount = 1, layers, dir, lifted, arriving, snap }: SceneProps) {
   const now = useNow(AGE_TICK_MS)
   const seats = seatModels(snapshot)
   // Une mesure trop ancienne, ou une relecture en échec : jamais de vert sur une donnée périmée.
@@ -222,7 +222,7 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
       {[...mounted].sort((a, b) => a.floor - b.floor).map((m) => (
         <div key={m.floor} className="level absolute inset-0" data-level={m.floor} data-role={m.role}
           // The slide only exists for a floor leaving or the one reached by a move: never at first render, never on a fall back.
-          {...((m.role === 'leaving' || m.floor === lifted) && { 'data-from': m.from })} {...(m.role === 'current' && m.floor === arriving && { 'data-arriving': '' })}
+          {...((m.role === 'leaving' || m.floor === lifted) && { 'data-from': m.from })} {...(m.role === 'current' && m.floor === arriving && { 'data-arriving': '' })} {...(snap && { 'data-snap': '' })}
           {...(m.role === 'leaving' && { inert: true, 'aria-hidden': true })}>
           {m.floor === 1 ? officeLevel : roomLevel(m.floor)}
         </div>

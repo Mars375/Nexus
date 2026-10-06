@@ -251,3 +251,34 @@ test('▲ puis ▼ presque aussitôt : la couche de l\'étage 1 reste le même n
   await expect(page.locator('.level')).toHaveCSS('opacity', '1')
   await expect(page.locator('.level')).toHaveCSS('transform', 'none')
 })
+
+test('un étage disparaît pendant l\'ascenseur : le repli est instantané, la couche reprise ne glisse ni ne fond', async ({ page }) => {
+  let count = 12
+  await page.route('**/api/nodes', (route) => route.fulfill({
+    json: NODE_IDS.slice(0, count).map((id) => ({ id, kind: 'homelab', guardian_agent: 'aether', status: 'online', last_seen: null, detail: null, source: 'tailscale', measured_at: new Date().toISOString() })),
+  }))
+  await page.goto('/#/maintenant')
+  const upButton = page.getByRole('button', { name: /^Monter d'un étage/ })
+  await expect(upButton).toBeVisible()
+  await page.evaluate(() => {
+    const w = window as unknown as { __snap: { opacity: number; transform: string }[]; __run: boolean }
+    w.__snap = []; w.__run = true
+    const tick = () => {
+      const el = document.querySelector('.level[data-level="2"][data-role="current"]')
+      if (el && document.querySelector('[data-stage]')!.getAttribute('data-floor-count') === '2') w.__snap.push({ opacity: Number(getComputedStyle(el).opacity), transform: getComputedStyle(el).transform })
+      if (w.__run) requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  })
+  await upButton.click(); await page.waitForTimeout(40); await upButton.click() // 1 → 2 → 3, floor 2 is leaving
+  await page.waitForTimeout(150)
+  count = 6 // floor 3 disappears: the read that says so arrives within the lift
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange', { bubbles: true })))
+  await expect(page.locator('[data-stage]')).toHaveAttribute('data-floor-count', '2')
+  await page.waitForTimeout(500)
+  const snaps = await page.evaluate(() => { const w = window as unknown as { __snap: { opacity: number; transform: string }[]; __run: boolean }; w.__run = false; return w.__snap })
+  expect(snaps.length).toBeGreaterThan(5)
+  expect(snaps.filter((q) => q.opacity !== 1 || q.transform !== 'none'), 'la couche de l\'étage 2 a glissé ou fondu après le repli').toHaveLength(0)
+  await expect(page.locator('[data-stage]')).toHaveAttribute('data-floor', '2')
+  await expect(page.locator('.level')).toHaveCount(1)
+})

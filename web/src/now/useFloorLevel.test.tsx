@@ -152,3 +152,15 @@ test('repli après un mouvement : plus de lifted ni de couche qui part, rien ne 
   expect(result.current).toMatchObject({ floor: 2, lifted: undefined, arriving: undefined })
   expect(result.current.layers).toEqual([{ floor: 2, role: 'current', from: 'above' }])
 })
+
+test('repli pendant l\'ascenseur : snap vrai (la couche qui part devient courante sans transition), faux dès le mouvement suivant', () => {
+  const { result, rerender } = setup(3)
+  expect(result.current.snap).toBe(false)
+  act(() => result.current.go(1)); act(() => result.current.go(1)) // 1 → 2 → 3: floor 2 is leaving
+  expect(result.current.layers.map((l) => [l.floor, l.role])).toEqual([[1, 'leaving'], [2, 'leaving'], [3, 'current']])
+  rerender({ count: 2, loaded: true }) // floor 3 vanishes within the lift
+  expect(result.current.layers).toEqual([{ floor: 2, role: 'current', from: 'above' }])
+  expect(result.current.snap).toBe(true)
+  act(() => result.current.go(-1))
+  expect(result.current.snap).toBe(false)
+})

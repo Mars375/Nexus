@@ -32,6 +32,8 @@ export type FloorLevel = {
   dir: 'up' | 'down' | undefined
   /** The floor reached by the last move (an action, not a fall back): the one that slides in. Absent until the first move. */
   lifted: number | undefined
+  /** True after a fall back: a layer that was leaving becomes the current one on the same node, which must not animate. */
+  snap: boolean
   /** Room floor still settling in after a move, for the rack and LED cascade. */
   arriving: number | undefined
   /** The floor shown, preceded by the floors still leaving (never any under reduced motion). */
@@ -41,7 +43,7 @@ export type FloorLevel = {
 /** Which of `count` floors is shown, with the layers the lift animation needs mounted. */
 export function useFloorLevel(count: number, { loaded }: { loaded: boolean }): FloorLevel {
   const [target, setTarget] = useState(requested)
-  const [motion, setMotion] = useState<{ dir: 'up' | 'down' | undefined; from: FloorLayer['from']; leaving: Leaving[]; lifted: number | undefined; arriving: number | undefined }>({ dir: undefined, from: 'above', leaving: [], lifted: undefined, arriving: undefined })
+  const [motion, setMotion] = useState<{ dir: 'up' | 'down' | undefined; from: FloorLayer['from']; leaving: Leaving[]; lifted: number | undefined; arriving: number | undefined; snap: boolean }>({ dir: undefined, from: 'above', leaving: [], lifted: undefined, arriving: undefined, snap: false })
   const asked = useRef(target)
   const countRef = useRef(count)
   const shown = useRef(Math.min(target, count))
@@ -52,7 +54,7 @@ export function useFloorLevel(count: number, { loaded }: { loaded: boolean }): F
   // A floor that no longer exists: fall back at once (not an action, so no lift)...
   if (loaded && target > count) {
     setTarget(count)
-    setMotion((m) => ({ ...m, lifted: undefined, arriving: undefined, leaving: [] })) // nothing slides, rolls or cascades
+    setMotion((m) => ({ ...m, lifted: undefined, arriving: undefined, leaving: [], snap: true })) // nothing slides, rolls or cascades
   }
   useEffect(() => { countRef.current = count; shown.current = floor })
   useEffect(() => () => { for (const t of timers.current) window.clearTimeout(t) }, [])
@@ -71,11 +73,11 @@ export function useFloorLevel(count: number, { loaded }: { loaded: boolean }): F
     requested = next
     setTarget(next)
     const dir = next > base ? 'up' : 'down', from = dir === 'up' ? 'above' : 'below'
-    if (prefersReducedMotion()) { setMotion({ dir, from, leaving: [], lifted: undefined, arriving: undefined }); return }
+    if (prefersReducedMotion()) { setMotion({ dir, from, leaving: [], lifted: undefined, arriving: undefined, snap: false }); return }
     // A floor never shown (a second quick press) has nothing to slide out; one coming back stops leaving.
     const leaves = base === shown.current
     const id = nextId.current++
-    setMotion((m) => ({ dir, from, lifted: next, arriving: next > 1 ? next : undefined, leaving: [...m.leaving.filter((l) => l.floor !== next && l.floor !== base), ...(leaves ? [{ id, floor: base, from } as Leaving] : [])] }))
+    setMotion((m) => ({ dir, from, snap: false, lifted: next, arriving: next > 1 ? next : undefined, leaving: [...m.leaving.filter((l) => l.floor !== next && l.floor !== base), ...(leaves ? [{ id, floor: base, from } as Leaving] : [])] }))
     const done = window.setTimeout(() => {
       timers.current = timers.current.filter((x) => x !== done)
       setMotion((m) => (m.arriving === next ? { ...m, arriving: undefined } : m))
@@ -94,5 +96,5 @@ export function useFloorLevel(count: number, { loaded }: { loaded: boolean }): F
     ...motion.leaving.filter((l) => l.floor !== floor).map((l): FloorLayer => ({ floor: l.floor, role: 'leaving', from: l.from })),
     { floor, role: 'current', from: motion.from },
   ]
-  return { floor, count, go, dir: motion.dir, lifted: motion.lifted, arriving: motion.arriving, layers }
+  return { floor, count, go, dir: motion.dir, lifted: motion.lifted, arriving: motion.arriving, snap: motion.snap, layers }
 }
