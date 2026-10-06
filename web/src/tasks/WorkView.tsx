@@ -144,7 +144,7 @@ function FilterSelect({
   return (
     <select
       aria-label={label}
-      className={`${toolbarControlClass} ${value ? 'border-accent font-medium' : ''}`}
+      className={`${toolbarControlClass} ${value ? 'border-accent! font-medium' : ''}`}
       value={value}
       onChange={(e) => onChange(e.target.value)}
     >

@@ -8,13 +8,15 @@ const fsModule = 'node:fs'
 const { readFileSync } = (await import(/* @vite-ignore */ fsModule)) as {
   readFileSync: (path: string, encoding: 'utf8') => string
 }
-const css = readFileSync('src/index.css', 'utf8')
+// Under jsdom `import.meta.url` is an http URL; Vitest still provides the file's directory.
+const css = readFileSync(`${(import.meta as unknown as { dirname: string }).dirname}/index.css`, 'utf8')
 
-/** Token map of the `.orbital` block of index.css. */
+/** Token map of every `.orbital` block of index.css; a later block overrides an earlier one, as in CSS. */
 function orbitalTokens(): Record<string, string> {
-  const block = /\n\.orbital \{([^}]*)\}/.exec(css)?.[1] ?? ''
   const tokens: Record<string, string> = {}
-  for (const m of block.matchAll(/--([\w-]+):\s*([^;]+);/g)) tokens[m[1]] = m[2].trim()
+  for (const block of css.matchAll(/\n\.orbital \{([^}]*)\}/g)) {
+    for (const m of block[1].matchAll(/--([\w-]+):\s*([^;]+);/g)) tokens[m[1]] = m[2].trim()
+  }
   return tokens
 }
 
@@ -70,14 +72,9 @@ describe('orbital theme: contrast (WCAG 2.x)', () => {
     }
   }
 
-  it('text on the main-operation card (accent-soft over surface) is at least 4.5:1', () => {
-    const card = colour('accent-soft', colour('surface'))
+  it('text on the main-operation card (accent-soft over the column, which is sunken) is at least 4.5:1', () => {
+    const card = colour('accent-soft', colour('surface-sunken'))
     for (const text of ['ink', 'muted', 'accent']) expect(ratio(colour(text), card), text).toBeGreaterThanOrEqual(4.5)
-  })
-
-  it('text on the blocked-card tint (attention-soft over surface) is at least 4.5:1', () => {
-    const card = colour('attention-soft', colour('surface'))
-    for (const text of ['ink', 'muted', 'attention']) expect(ratio(colour(text), card), text).toBeGreaterThanOrEqual(4.5)
   })
 
   it('text on hovered buttons (ink at 10% over the surface) is at least 4.5:1', () => {

@@ -21,8 +21,8 @@ export function TaskCardBody({ task, pendingDependencies, now, lifted }: CardPro
   return (
     <article
       className={clsx(
-        'relative rounded-sm border bg-surface px-3 py-2.5 text-left',
-        main ? 'border-accent bg-accent-soft' : 'border-line',
+        'relative rounded-sm border px-3 py-2.5 text-left',
+        main ? 'border-accent bg-accent-soft' : 'border-line bg-surface',
         lifted && 'rotate-[0.6deg] scale-[1.02] shadow-xl shadow-black/60',
       )}
     >
