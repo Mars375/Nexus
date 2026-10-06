@@ -8,6 +8,7 @@ des références et des types, jamais de texte reçu : l'interface relit par l'A
 from __future__ import annotations
 
 import asyncio
+import re
 from contextlib import suppress
 from dataclasses import dataclass
 from urllib.parse import urlsplit
@@ -47,17 +48,38 @@ def _parse(raw: str) -> int:
     return int(raw)
 
 
+# ASCII-strict on purpose: `\d` and `$` would accept non-ASCII digits and a trailing newline.
+_INSTANCE = re.compile(r"[0-9a-f]{16}")
+
+
 def start_cursor(
-    history_after: str | None, events_after: str | None, current: Cursor
+    history_after: str | None,
+    events_after: str | None,
+    instance: str | None,
+    current: Cursor,
+    live_instance: str,
 ) -> tuple[Cursor, bool]:
-    """Curseur de départ et `reset` ; les deux paramètres vont ensemble ou pas du tout."""
+    """Starting cursor and `reset`; the two cursors come together or not at all.
+
+    `instance` is the id of the server run that issued the cursor: when it differs from
+    `live_instance` (restart, restored base) ids may have been rewritten, so restart from what
+    exists and let the client reread. An old client sends no instance: no comparison, as before.
+    """
     if history_after is None and events_after is None:
+        if instance is not None:
+            raise ValueError("curseur incomplet")
         return current, False
     if history_after is None or events_after is None:
         raise ValueError("curseur incomplet")
     requested = Cursor(_parse(history_after), _parse(events_after))
-    if requested.history > current.history or requested.events > current.events:
-        # Base restaurée ou recréée : on repart de l'existant et le client relit tout.
+    if instance is not None and _INSTANCE.fullmatch(instance) is None:
+        raise ValueError("instance invalide")  # the received value is never echoed
+    if (
+        (instance is not None and instance != live_instance)
+        or requested.history > current.history
+        or requested.events > current.events
+    ):
+        # Restored or recreated base, or another instance: restart from what exists, client rereads.
         return current, True
     return requested, False
 
@@ -142,14 +164,21 @@ async def live_updates(websocket: WebSocket) -> None:
         cursor, reset = start_cursor(
             websocket.query_params.get("history_after"),
             websocket.query_params.get("events_after"),
+            websocket.query_params.get("instance"),
             await asyncio.to_thread(read_current),
+            app.state.live_instance,
         )
     except ValueError:
         # Raison générique : la valeur reçue n'est jamais recopiée.
         await websocket.close(code=1008, reason="curseur invalide")
         return
     await websocket.accept()
-    await websocket.send_json({"type": "hello", "cursor": cursor.as_dict(), "reset": reset})
+    await websocket.send_json({
+        "type": "hello",
+        "cursor": cursor.as_dict(),
+        "reset": reset,
+        "instance": app.state.live_instance,
+    })
 
     async def push() -> None:
         nonlocal cursor

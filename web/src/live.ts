@@ -8,7 +8,7 @@ import { API_BASE } from './apiBase'
 export type Cursor = { history: number; events: number }
 
 export type LiveMessage =
-  | { type: 'hello'; cursor: Cursor; reset: boolean }
+  | { type: 'hello'; cursor: Cursor; reset: boolean; instance?: string }
   | { type: 'task_changed'; task: string; cursor: Cursor }
   | { type: 'event'; event: string; task: string | null; kind: string; cursor: Cursor }
   | { type: 'resync'; cursor: Cursor }
@@ -39,10 +39,14 @@ export function reconnectDelay(attempt: number, random: () => number = Math.rand
 
 export function liveUrl(
   cursor: Cursor | null,
+  instance: string | null = null,
   location: { protocol: string; host: string } = window.location,
   base: string = API_BASE,
 ): string {
-  const query = cursor ? `?history_after=${cursor.history}&events_after=${cursor.events}` : ''
+  // The instance only makes sense next to the cursor it vouches for (the server refuses it alone).
+  const query = cursor
+    ? `?history_after=${cursor.history}&events_after=${cursor.events}${instance ? `&instance=${instance}` : ''}`
+    : ''
   if (base) return `${base.replace(/^http/, 'ws')}/api/ws${query}`
   const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
   return `${scheme}://${location.host}/api/ws${query}`
@@ -59,6 +63,9 @@ const MAX_CURSOR = 999_999_999_999
 const isCursorValue = (value: unknown): boolean =>
   Number.isSafeInteger(value) && (value as number) >= 0 && (value as number) <= MAX_CURSOR
 
+/** Server instance id: 16 lowercase hex digits (server/src/nexus/live.py). */
+const isInstance = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{16}$/.test(value)
+
 const isCursor = (value: unknown): value is Cursor =>
   isRecord(value) && isCursorValue(value.history) && isCursorValue(value.events)
 
@@ -69,6 +76,7 @@ export function connectLive(options: {
   random?: () => number
 }): () => void {
   let cursor: Cursor | null = null
+  let instance: string | null = null // that of the last valid hello; absent for an old server
   let socket: LiveSocket | null = null
   let attempt = 0
   let stopped = false
@@ -117,7 +125,7 @@ export function connectLive(options: {
     if (!isCursor(data.cursor)) return false
     switch (data.type) {
       case 'hello':
-        return typeof data.reset === 'boolean'
+        return typeof data.reset === 'boolean' && (data.instance === undefined || isInstance(data.instance))
       case 'task_changed':
         return isNonEmptyString(data.task)
       case 'event':
@@ -135,7 +143,7 @@ export function connectLive(options: {
   }
 
   const connect = () => {
-    const current = options.open(liveUrl(cursor))
+    const current = options.open(liveUrl(cursor, instance))
     socket = current
     // Une poignée de main qui n'aboutit jamais est traitée comme un silence (45 s), puis relancée.
     armSilence()
@@ -156,6 +164,7 @@ export function connectLive(options: {
       // un serveur peut accepter puis fermer sans rien dire).
       attempt = 0
       cursor = message.cursor
+      if (message.type === 'hello') instance = message.instance ?? null
       armSilence() // Only re-arm on valid messages
       if (!connected) {
         connected = true

@@ -1,5 +1,7 @@
 """Temps réel (#5) : curseur, lecture des changements, contrôle d'origine."""
 
+import re
+
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
@@ -107,20 +109,56 @@ def test_too_many_changes_become_a_single_resync(client, monkeypatch):
     assert end == latest
 
 
+INSTANCE = "0123456789abcdef"
+OTHER = "fedcba9876543210"
+
+
 def test_no_cursor_starts_from_now():
-    assert start_cursor(None, None, Cursor(5, 7)) == (Cursor(5, 7), False)
+    assert start_cursor(None, None, None, Cursor(5, 7), INSTANCE) == (Cursor(5, 7), False)
 
 
 def test_a_valid_cursor_is_kept():
-    assert start_cursor("3", "4", Cursor(5, 7)) == (Cursor(3, 4), False)
+    assert start_cursor("3", "4", None, Cursor(5, 7), INSTANCE) == (Cursor(3, 4), False)
 
 
 def test_a_cursor_ahead_of_the_base_is_reset():
-    assert start_cursor("9", "0", Cursor(5, 7)) == (Cursor(5, 7), True)
+    assert start_cursor("9", "0", INSTANCE, Cursor(5, 7), INSTANCE) == (Cursor(5, 7), True)
 
 
 def test_only_the_events_component_ahead_resets_to_now():
-    assert start_cursor("0", "9", Cursor(5, 7)) == (Cursor(5, 7), True)
+    assert start_cursor("0", "9", INSTANCE, Cursor(5, 7), INSTANCE) == (Cursor(5, 7), True)
+
+
+def test_same_instance_and_cursor_not_ahead_is_kept():
+    assert start_cursor("3", "4", INSTANCE, Cursor(5, 7), INSTANCE) == (Cursor(3, 4), False)
+
+
+def test_a_different_instance_resets_even_if_the_cursor_is_not_ahead():
+    # Central regression: a restored base can have rewritten ids past the old cursor.
+    assert start_cursor("3", "4", OTHER, Cursor(5, 7), INSTANCE) == (Cursor(5, 7), True)
+
+
+def test_a_cursor_without_instance_is_compared_to_nothing():
+    # Old client: same behaviour as before the instance existed.
+    assert start_cursor("3", "4", None, Cursor(5, 7), INSTANCE) == (Cursor(3, 4), False)
+
+
+BAD_INSTANCES = ["", "ABCDEF0123456789", "0123456789abcde", "0123456789abcdef0", "٣" * 16,
+                 "g" * 16, "0" * 10_000, "0123456789abcde\n"]
+
+
+@pytest.mark.parametrize("instance", BAD_INSTANCES, ids=range(len(BAD_INSTANCES)))
+def test_a_malformed_instance_is_refused(instance):
+    with pytest.raises(ValueError) as error:
+        start_cursor("1", "1", instance, Cursor(5, 5), INSTANCE)
+    assert instance not in str(error.value) or instance == ""
+
+
+def test_an_instance_without_cursor_is_refused():
+    with pytest.raises(ValueError):
+        start_cursor(None, None, INSTANCE, Cursor(5, 5), INSTANCE)
+    with pytest.raises(ValueError):
+        start_cursor("1", None, INSTANCE, Cursor(5, 5), INSTANCE)
 
 
 @pytest.mark.parametrize(
@@ -128,7 +166,7 @@ def test_only_the_events_component_ahead_resets_to_now():
 )
 def test_invalid_cursor_parameters_are_refused(history, events):
     with pytest.raises(ValueError):
-        start_cursor(history, events, Cursor(5, 5))
+        start_cursor(history, events, None, Cursor(5, 5), INSTANCE)
 
 
 @pytest.mark.parametrize(
@@ -159,7 +197,9 @@ def test_hello_without_cursor_starts_from_now(client):
     with db(client) as s:
         now = current_cursor(s)
     with client.websocket_connect("/api/ws") as ws:
-        assert ws.receive_json() == {"type": "hello", "cursor": now.as_dict(), "reset": False}
+        hello = ws.receive_json()
+    assert re.fullmatch(r"[0-9a-f]{16}", hello.pop("instance"))
+    assert hello == {"type": "hello", "cursor": now.as_dict(), "reset": False}
 
 
 def test_a_reconnection_replays_what_was_missed(client):
@@ -233,3 +273,96 @@ def test_allowed_origins_are_read_from_the_environment(monkeypatch, tmp_path):
     assert Settings.from_env().allowed_origins == frozenset(
         {"tauri://localhost", "http://tauri.localhost"}
     )
+
+
+def _hello(client, query=""):
+    with client.websocket_connect("/api/ws" + query) as ws:
+        return ws.receive_json()
+
+
+def test_hello_instance_is_16_hex_and_stable_for_one_app(client):
+    first, second = _hello(client), _hello(client)
+    assert re.fullmatch(r"[0-9a-f]{16}", first["instance"])
+    assert first["instance"] == second["instance"]
+
+
+def test_hello_instance_differs_between_apps(tmp_path):
+    from conftest import tailscale_json
+    from fastapi.testclient import TestClient
+
+    from nexus.app import create_app
+
+    seen = []
+    for name in ("a", "b"):
+        settings = Settings(data_dir=tmp_path / name)
+        with TestClient(create_app(settings, nodes_runner=tailscale_json)) as c:
+            seen.append(_hello(c)["instance"])
+    assert seen[0] != seen[1]
+
+
+def test_only_hello_carries_the_instance(client):
+    new_task(client)
+    with client.websocket_connect("/api/ws?history_after=0&events_after=0") as ws:
+        ws.receive_json()
+        assert "instance" not in ws.receive_json()
+
+
+def test_a_cursor_without_instance_does_not_reset_over_websocket(client):
+    ref = new_task(client)
+    hello = _hello(client, "?history_after=1&events_after=0")
+    assert hello["reset"] is False and ref
+
+
+def test_a_restored_base_makes_the_old_instance_reset(tmp_path):
+    """Restore an older copy then rewrite past the cursor: ids reused, cursor not ahead."""
+    import shutil
+
+    from conftest import tailscale_json
+    from fastapi.testclient import TestClient
+
+    from nexus.app import create_app
+
+    settings = Settings(data_dir=tmp_path / "data")
+    with TestClient(create_app(settings, nodes_runner=tailscale_json)) as one:
+        new_task(one)
+        copy = tmp_path / "copy.db"
+        shutil.copy(settings.db_path, copy)
+        new_task(one, "B")
+        new_task(one, "C")
+        old = _hello(one)
+        old_instance = old["instance"]
+        with db(one) as s:
+            old_cursor = current_cursor(s)
+    # Hot-restore is out of scope: Nexus is stopped, then the older copy replaces the base.
+    shutil.copy(copy, settings.db_path)
+    for suffix in ("-wal", "-shm"):
+        settings.db_path.with_name(settings.db_path.name + suffix).unlink(missing_ok=True)
+    with TestClient(create_app(settings, nodes_runner=tailscale_json)) as two:
+        for title in ("X", "Y", "Z", "W"):
+            new_task(two, title)  # rewrites past the old cursor
+        with db(two) as s:
+            current = current_cursor(s)
+        assert current.history >= old_cursor.history
+        query = (f"?history_after={old_cursor.history}&events_after={old_cursor.events}"
+                 f"&instance={old_instance}")
+        hello = _hello(two, query)
+    assert hello["reset"] is True
+    assert hello["cursor"] == current.as_dict()
+    assert hello["instance"] != old_instance
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["?instance=0123456789abcdef", "?history_after=1&events_after=1&instance=ABCDEF0123456789",
+     "?history_after=1&events_after=1&instance=" + "٣" * 16,
+     "?history_after=1&events_after=1&instance=" + "0" * 10_000,
+     "?history_after=1&events_after=1&instance=short"],
+    ids=["no-cursor", "uppercase", "non-ascii", "too-long", "short"],
+)
+def test_a_bad_instance_is_refused_without_echo(client, query):
+    value = query.rsplit("instance=", 1)[1]
+    with pytest.raises(WebSocketDisconnect) as closed:
+        with client.websocket_connect("/api/ws" + query):
+            pass
+    assert closed.value.code == 1008
+    assert value not in str(closed.value.reason or "")

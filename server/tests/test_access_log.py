@@ -55,6 +55,14 @@ def test_websocket_lines_lose_their_query_string():
     assert record.getMessage() == '127.0.0.1:5000 - "WebSocket /api/ws" [accepted]'
 
 
+def test_the_websocket_instance_parameter_is_never_logged():
+    instance = "ab" * 8  # built at runtime: the value must appear in no log record
+    record = _ws_record(f"/api/ws?history_after=1&events_after=2&instance={instance}")
+    assert WebSocketPathFilter().filter(record) is True
+    assert instance not in record.getMessage()
+    assert record.getMessage() == '127.0.0.1:5000 - "WebSocket /api/ws" [accepted]'
+
+
 def test_an_unknown_websocket_path_is_masked():
     record = _ws_record(f"/api/{SECRET}", "403")
     WebSocketPathFilter().filter(record)

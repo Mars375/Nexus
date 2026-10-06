@@ -48,6 +48,8 @@ function harness() {
   return { sockets, states, messages, stop, last, open, send, drop, up }
 }
 
+const INSTANCE_A = '0123456789abcdef'
+const INSTANCE_B = 'fedcba9876543210'
 const HELLO = { type: 'hello', cursor: { history: 3, events: 4 }, reset: false }
 
 beforeEach(() => vi.useFakeTimers())
@@ -68,19 +70,31 @@ describe('reconnectDelay', () => {
 
 describe('liveUrl', () => {
   test('sans curseur, part de maintenant', () => {
-    expect(liveUrl(null, { protocol: 'http:', host: 'localhost:5173' })).toBe('ws://localhost:5173/api/ws')
+    expect(liveUrl(null, null, { protocol: 'http:', host: 'localhost:5173' })).toBe('ws://localhost:5173/api/ws')
   })
   test('avec curseur, demande le rattrapage ; https donne wss', () => {
-    expect(liveUrl({ history: 3, events: 4 }, { protocol: 'https:', host: 'nexus.local' })).toBe(
+    expect(liveUrl({ history: 3, events: 4 }, null, { protocol: 'https:', host: 'nexus.local' })).toBe(
       'wss://nexus.local/api/ws?history_after=3&events_after=4',
     )
   })
   test('avec une base configurée, ignore la page : ws/wss suit la base', () => {
     const page = { protocol: 'http:', host: 'tauri.localhost' }
-    expect(liveUrl(null, page, 'http://127.0.0.1:8765')).toBe('ws://127.0.0.1:8765/api/ws')
-    expect(liveUrl({ history: 3, events: 4 }, page, 'https://nexus.local')).toBe(
+    expect(liveUrl(null, null, page, 'http://127.0.0.1:8765')).toBe('ws://127.0.0.1:8765/api/ws')
+    expect(liveUrl({ history: 3, events: 4 }, null, page, 'https://nexus.local')).toBe(
       'wss://nexus.local/api/ws?history_after=3&events_after=4',
     )
+  })
+})
+
+describe('liveUrl avec instance', () => {
+  const page = { protocol: 'http:', host: 'localhost:5173' }
+  test("avec curseur et instance, ajoute l'instance", () => {
+    expect(liveUrl({ history: 3, events: 4 }, INSTANCE_A, page)).toBe(
+      `ws://localhost:5173/api/ws?history_after=3&events_after=4&instance=${INSTANCE_A}`,
+    )
+  })
+  test("sans curseur, n'envoie jamais d'instance", () => {
+    expect(liveUrl(null, INSTANCE_A, page)).toBe('ws://localhost:5173/api/ws')
   })
 })
 
@@ -111,6 +125,19 @@ describe('connectLive', () => {
     h.open()
     h.drop()
     expect(h.states.some((s) => s.status === 'connected')).toBe(false)
+  })
+
+  test("l'instance du dernier hello survit à plusieurs essais ratés d'affilée (redémarrage du serveur)", () => {
+    const h = harness()
+    h.open()
+    h.send({ type: 'hello', cursor: { history: 3, events: 4 }, reset: false, instance: INSTANCE_A })
+    h.drop()
+    vi.advanceTimersByTime(500)
+    h.drop() // serveur arrêté : l'essai échoue sans hello
+    vi.advanceTimersByTime(1000)
+    h.drop() // deuxième essai raté
+    vi.advanceTimersByTime(2000)
+    expect(h.last().url).toContain(`history_after=3&events_after=4&instance=${INSTANCE_A}`)
   })
 
   test('une connexion qui ne s\'ouvre jamais est fermée après 45 s puis relancée', () => {
@@ -397,5 +424,62 @@ describe('connectLive avec VITE_NEXUS_API_URL', () => {
     })
     stop()
     expect(urls).toEqual(['ws://127.0.0.1:8765/api/ws'])
+  })
+})
+
+describe('instance du serveur', () => {
+  const hello = (instance?: unknown) => ({ ...HELLO, ...(instance === undefined ? {} : { instance }) })
+  const reconnect = (h: ReturnType<typeof harness>) => {
+    h.drop()
+    vi.advanceTimersByTime(500)
+    return h.last().url
+  }
+
+  test("la reconnexion envoie le dernier curseur ET l'instance du dernier hello", () => {
+    const h = harness()
+    h.open()
+    h.send(hello(INSTANCE_A))
+    expect(reconnect(h)).toContain(`history_after=3&events_after=4&instance=${INSTANCE_A}`)
+  })
+
+  test('un second hello avec une autre instance remplace la précédente', () => {
+    const h = harness()
+    h.open()
+    h.send(hello(INSTANCE_A))
+    h.send(hello(INSTANCE_B))
+    const url = reconnect(h)
+    expect(url).toContain(`instance=${INSTANCE_B}`)
+    expect(url).not.toContain(INSTANCE_A)
+  })
+
+  test.each([123, '', 'ABCDEF0123456789', '0123456789abcdef0', '0123456789abcde', null])(
+    'un hello avec instance %j est ignoré : curseur conservé, pas connecté',
+    (bad) => {
+      const h = harness()
+      h.open()
+      h.send({ ...HELLO, cursor: { history: 1, events: 1 }, instance: bad })
+      expect(h.states.some((s) => s.status === 'connected')).toBe(false)
+      expect(h.messages).toEqual([])
+      expect(reconnect(h)).toBe('ws://localhost:3000/api/ws')
+    },
+  )
+
+  test('un hello invalide après un hello valide garde le curseur et l\'instance précédents', () => {
+    const h = harness()
+    h.open()
+    h.send(hello(INSTANCE_A))
+    h.send({ ...HELLO, cursor: { history: 9, events: 9 }, instance: 'X' })
+    expect(reconnect(h)).toContain(`history_after=3&events_after=4&instance=${INSTANCE_A}`)
+  })
+
+  test("un hello sans instance (ancien serveur) est accepté et la reconnexion n'en envoie pas", () => {
+    const h = harness()
+    h.open()
+    h.send(hello(INSTANCE_A))
+    h.send(hello())
+    expect(h.states.at(-1)).toEqual({ status: 'connected' })
+    const url = reconnect(h)
+    expect(url).toContain('history_after=3&events_after=4')
+    expect(url).not.toContain('instance')
   })
 })

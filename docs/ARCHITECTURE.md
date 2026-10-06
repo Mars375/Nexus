@@ -91,6 +91,7 @@ watch(run_ref)          → événements du run (claimed, progress, blocked, don
 - **`nexus.db` (SQLite)** — source de vérité pour : tâches, événements, runs (côté Nexus), approbations, décisions, conversations natives Nexus, politiques.
 - **Index/cache externe** (dans `nexus.db`, tables séparées) — snapshots datés des données externes (chats, mails, commits…) pour l'affichage et la recherche. Reconstructible depuis les sources ; jamais considéré comme vérité.
 - Sauvegarde : `nexus.db` est la seule donnée non reconstructible → sauvegarde régulière obligatoire (à définir en Phase 1).
+- **Restauration d'une sauvegarde** : arrêter Nexus, remplacer `nexus.db` par la copie, supprimer les fichiers `nexus.db-wal` et `nexus.db-shm`, puis redémarrer. La restauration à chaud, Nexus en marche, n'est **pas** prise en charge, et la garantie du temps réel en dépend : à chaque démarrage le serveur tire une nouvelle instance, ce qui oblige les clients à tout invalider une fois (`reset: true`), alors qu'une base remplacée sous un serveur qui tourne laisserait des curseurs périmés passer pour valides. Chaque redémarrage du serveur fait de même, une seule fois par client (voir `docs/superpowers/specs/2026-09-30-temps-reel-design.md`).
 
 ### 3.4 Interface
 
