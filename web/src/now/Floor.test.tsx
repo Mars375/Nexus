@@ -589,10 +589,19 @@ test('une alerte qui apparaît sur un autre étage fait pulser la pastille du c�
   rerender(<Floor snapshot={snap()} nodes={twelve({ n10: 'offline' })} />)
   expect(pip(container, 'up')!.classList.contains('is-fresh')).toBe(true)
   expect(container.querySelectorAll('.is-fresh')).toHaveLength(1)
-  fireEvent.click(up()); fireEvent.click(up()) // now on floor 3, the floor with the alert
-  rerender(<Floor snapshot={snap()} nodes={twelve({ n10: 'offline', n11: 'offline' })} />)
-  expect(pip(container, 'up')).toBeNull(); expect(pip(container, 'down')).toBeNull() // nothing for the floor shown
+})
+
+test('une alerte NOUVELLE sur l\'étage affiché n\'a ni pastille, ni texte d\'étiquette, ni nom de bouton, ni pulsation', () => {
+  motion()
+  const { container, rerender } = render(<Floor snapshot={snap()} nodes={twelve()} />)
+  fireEvent.click(up()); fireEvent.click(up()) // floor 3, no alert there yet
+  rerender(<Floor snapshot={snap()} nodes={twelve({ n10: 'offline' })} />) // a brand new alert appears on the floor shown
+  expect(pickLabel()).toBe('Étage 3 / 3')
+  expect(pip(container, 'up')).toBeNull(); expect(pip(container, 'down')).toBeNull()
+  expect(down()).toHaveAccessibleName('Descendre d\'un étage')
   expect(container.querySelector('.is-fresh')).toBeNull()
+  fireEvent.click(down()); fireEvent.click(down()) // leave it: now it is out of sight and counts
+  expect(pickLabel()).toBe('Étage 1 / 3 · alerte à l\'étage 3')
 })
 
 test('mouvement réduit : ni couche qui part, ni data-arriving, ni is-fresh, ni numéro qui roule', () => {
