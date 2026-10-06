@@ -4,27 +4,109 @@ import { connectLive, type LiveMessage, type LiveState } from './live'
 import { tasksKey } from './tasks/queries'
 import { nowKey } from './now/queries'
 
+type InvalidateFilters = { queryKey: readonly unknown[]; exact?: boolean }
+/** What a message asks to refetch: `'all'` absorbs every other request. */
+type Invalidation = 'all' | InvalidateFilters
+
+/** A burst of messages is flushed once, this long after its first message. */
+export const LIVE_BATCH_MS = 50
+
+/**
+ * Consecutive postponements after which a flush runs anyway (about 10 s at LIVE_BATCH_MS,
+ * the period of the refetch that stays the safety net).
+ */
+export const LIVE_MAX_DEFERRALS = 200
+
 /** Un message ne fait que dire quoi relire : les données passent toujours par l'API REST. */
-export function applyLiveMessage(client: QueryClient, message: LiveMessage): void {
+function invalidationsFor(message: LiveMessage): Invalidation[] {
   switch (message.type) {
     case 'task_changed':
-      void client.invalidateQueries({ queryKey: tasksKey, exact: true })
-      void client.invalidateQueries({ queryKey: ['tasks', message.task] })
-      void client.invalidateQueries({ queryKey: nowKey })
-      return
+      return [{ queryKey: tasksKey, exact: true }, { queryKey: ['tasks', message.task] }, { queryKey: nowKey }]
     case 'event':
-      void client.invalidateQueries({ queryKey: ['events'] })
-      if (message.task) void client.invalidateQueries({ queryKey: ['tasks', message.task] })
-      void client.invalidateQueries({ queryKey: nowKey })
-      return
+      return [
+        { queryKey: ['events'] },
+        ...(message.task ? [{ queryKey: ['tasks', message.task] }] : []),
+        { queryKey: nowKey },
+      ]
     case 'resync':
-      void client.invalidateQueries()
-      return
+      return ['all']
     case 'hello':
-      if (message.reset) void client.invalidateQueries()
-      return
+      return message.reset ? ['all'] : []
     case 'ping':
+      return []
+  }
+}
+
+/**
+ * Collects the invalidations of a burst and flushes them once, LIVE_BATCH_MS after the first
+ * message (the window is not extended, so a steady stream still flushes every window).
+ * While a mutation runs (a drag-move PATCH) the flush is postponed so a refetch cannot
+ * overwrite the optimistic card; so it is while a query is on its initial read, whose
+ * in-flight promise would swallow the invalidation (only a first read matched by the pending
+ * invalidations counts; with a global one pending, any first read does). The pending set is
+ * kept. Postponement is bounded by LIVE_MAX_DEFERRALS consecutive windows, then the flush runs
+ * anyway: after that cap an invalidation may still be swallowed by an in-flight first read,
+ * which the 10 s periodic refetch covers. The counter resets when a flush runs or on dispose.
+ * The first `hello` of a batcher invalidates everything: the server starts from "now", so a
+ * change committed between the first REST read and that `hello` would otherwise wait for the
+ * 10 s refetch.
+ */
+export function createLiveBatcher(client: QueryClient): {
+  push: (message: LiveMessage) => void
+  dispose: () => void
+} {
+  let seenHello = false
+  let disposed = false
+  let all = false
+  let deferrals = 0
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const pending = new Map<string, InvalidateFilters>()
+
+  const flush = () => {
+    timer = undefined
+    if (disposed) return
+    // A query still on its initial read (no data) would swallow an invalidation: react-query
+    // returns the in-flight promise and resets `isInvalidated` on its success. Wait for it
+    // (bounded by the 10 s request timeout).
+    const cache = client.getQueryCache()
+    const firstRead = (q: { state: { data: unknown } }) => q.state.data === undefined
+    const firstReadInFlight = all
+      ? cache.findAll({ fetchStatus: 'fetching' }).some(firstRead)
+      : [...pending.values()].some((f) => cache.findAll({ ...f, fetchStatus: 'fetching' }).some(firstRead))
+    if ((client.isMutating() > 0 || firstReadInFlight) && deferrals < LIVE_MAX_DEFERRALS) {
+      deferrals += 1
+      timer = setTimeout(flush, LIVE_BATCH_MS)
       return
+    }
+    deferrals = 0
+    const wasAll = all
+    const filters = [...pending.values()]
+    all = false
+    pending.clear()
+    if (wasAll) void client.invalidateQueries()
+    else for (const f of filters) void client.invalidateQueries(f)
+  }
+
+  return {
+    push(message) {
+      if (disposed) return
+      const requests = invalidationsFor(message)
+      if (message.type === 'hello' && !seenHello) requests.push('all')
+      if (message.type === 'hello') seenHello = true
+      if (requests.length === 0) return
+      for (const request of requests) {
+        if (request === 'all') all = true
+        else pending.set(JSON.stringify(request), request)
+      }
+      timer ??= setTimeout(flush, LIVE_BATCH_MS)
+    },
+    dispose() {
+      disposed = true
+      deferrals = 0
+      clearTimeout(timer)
+      timer = undefined
+      pending.clear()
+    },
   }
 }
 
@@ -32,14 +114,17 @@ export function applyLiveMessage(client: QueryClient, message: LiveMessage): voi
 export function useLiveUpdates(): LiveState {
   const client = useQueryClient()
   const [state, setState] = useState<LiveState>({ status: 'connecting' })
-  useEffect(
-    () =>
-      connectLive({
-        open: (url) => new WebSocket(url),
-        onMessage: (message) => applyLiveMessage(client, message),
-        onState: setState,
-      }),
-    [client],
-  )
+  useEffect(() => {
+    const batcher = createLiveBatcher(client) // per effect run: remounts start fresh
+    const stop = connectLive({
+      open: (url) => new WebSocket(url),
+      onMessage: batcher.push,
+      onState: setState,
+    })
+    return () => {
+      stop()
+      batcher.dispose()
+    }
+  }, [client])
   return state
 }

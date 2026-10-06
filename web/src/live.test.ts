@@ -307,4 +307,65 @@ describe('connectLive', () => {
     secondSocket.onmessage?.({ data: JSON.stringify({ type: 'ping', cursor: { history: 0, events: 0 } }) } as MessageEvent)
     expect(h.messages).toHaveLength(1) // le message de la bonne socket est reçu
   })
+
+  describe('validation par type de message (#25)', () => {
+    const C = { history: 9, events: 9 }
+    const invalid: [string, unknown][] = [
+      ['hello sans reset', { type: 'hello', cursor: C }],
+      ['hello avec reset non booléen', { type: 'hello', cursor: C, reset: 'true' }],
+      ['task_changed sans task', { type: 'task_changed', cursor: C }],
+      ['task_changed avec task vide', { type: 'task_changed', cursor: C, task: '' }],
+      ['task_changed avec task numérique', { type: 'task_changed', cursor: C, task: 3 }],
+      ['event sans event', { type: 'event', cursor: C, kind: 'done', task: null }],
+      ['event avec event vide', { type: 'event', cursor: C, event: '', kind: 'done', task: null }],
+      ['event sans kind', { type: 'event', cursor: C, event: 'e1', task: null }],
+      ['event avec kind vide', { type: 'event', cursor: C, event: 'e1', kind: '', task: null }],
+      ['event sans task (undefined)', { type: 'event', cursor: C, event: 'e1', kind: 'done' }],
+      ['event avec task numérique', { type: 'event', cursor: C, event: 'e1', kind: 'done', task: 4 }],
+      ['event avec task vide', { type: 'event', cursor: C, event: 'e1', kind: 'done', task: '' }],
+      ['curseur au-delà de 12 chiffres (1e13)', { type: 'ping', cursor: { history: 1e13, events: 1 } }],
+      ['curseur flottant 1e21', { type: 'ping', cursor: { history: 1, events: 1e21 } }],
+      ['curseur 2**53 non sûr', { type: 'ping', cursor: { history: 2 ** 53, events: 1 } }],
+    ]
+    test.each(invalid)('%s : ignoré, curseur conservé, pas de connexion', (_name, bad) => {
+      const h = harness()
+      h.open()
+      h.send(bad)
+      expect(h.messages).toEqual([])
+      expect(h.states.some((s) => s.status === 'connected')).toBe(false)
+      h.send(HELLO)
+      h.send(bad)
+      expect(h.messages).toEqual([HELLO])
+      h.drop()
+      vi.advanceTimersByTime(500)
+      expect(h.last().url).toContain('history_after=3&events_after=4')
+    })
+
+    test('un curseur de 12 chiffres (999999999999) est accepté et rejoué à la reconnexion', () => {
+      const h = harness()
+      h.open()
+      const big = { type: 'ping', cursor: { history: 999999999999, events: 0 } }
+      h.send(big)
+      expect(h.messages).toEqual([big])
+      h.send({ type: 'ping', cursor: { history: 1e13, events: 0 } }) // refused: last good cursor kept
+      h.drop()
+      vi.advanceTimersByTime(500)
+      expect(h.last().url).toContain('history_after=999999999999&events_after=0')
+    })
+
+    test('les messages valides de chaque type passent', () => {
+      const h = harness()
+      h.open()
+      const valid = [
+        { type: 'hello', cursor: C, reset: true },
+        { type: 'task_changed', cursor: C, task: 'nx-task-1' },
+        { type: 'event', cursor: C, event: 'e1', kind: 'done', task: null },
+        { type: 'event', cursor: C, event: 'e1', kind: 'done', task: 'nx-task-1' },
+        { type: 'resync', cursor: C },
+        { type: 'ping', cursor: C },
+      ]
+      for (const m of valid) h.send(m)
+      expect(h.messages).toEqual(valid)
+    })
+  })
 })
