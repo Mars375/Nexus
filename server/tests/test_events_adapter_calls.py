@@ -280,3 +280,21 @@ def test_payload_run_ref_limit_is_the_same_over_http(client):
 
     assert ok.status_code == 201
     assert over.json()["detail"]["code"] == "invalid_run_ref"
+
+
+@pytest.mark.parametrize(
+    ("suffix", "accepted"),
+    [("\u001c", False), ("\u001f", False), ("\u00a0", True), ("\u3000", True), (" ", True)],
+)
+def test_evidence_strip_is_the_one_of_the_api(client, suffix, accepted):
+    # `str.strip()` removes U+001C..U+001F, Pydantic does not: the measure must be Pydantic's.
+    item = "e" * 512 + suffix
+    over_http = client.post("/api/events", json=_http_body("evidence", 0) | {"evidence": [item]})
+    assert (over_http.status_code == 201) is accepted
+
+    if accepted:
+        direct(client, question(evidence=[item]), "evt_b")
+    else:
+        with pytest.raises(RuleViolation) as exc:
+            direct(client, question(evidence=[item]), "evt_b")
+        assert exc.value.code == "too_long_evidence"

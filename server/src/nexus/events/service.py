@@ -11,8 +11,9 @@ import json
 import logging
 import re
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Annotated, Any
 
+from pydantic import StringConstraints, TypeAdapter
 from sqlalchemy import select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -92,6 +93,11 @@ def _check_scalars(envelope: Envelope, actor_event_id: object) -> None:
         raise RuleViolation("invalid_event_id", "id doit être un texte")
 
 
+# The API strips evidence items with Pydantic before measuring them: reuse that exact stripping
+# (it differs from `str.strip()`, which also removes U+001C to U+001F).
+_API_STRIP = TypeAdapter(Annotated[str, StringConstraints(strip_whitespace=True)])
+
+
 def _check_lengths(envelope: Envelope, actor_event_id: str) -> None:
     """Refuse a value longer than the API accepts (same constants, same measure).
 
@@ -104,7 +110,7 @@ def _check_lengths(envelope: Envelope, actor_event_id: str) -> None:
         raise RuleViolation("too_long_run", f"run : {RUN_MAX} caractères au plus")
     if len(envelope.subject) > SUBJECT_MAX:
         raise RuleViolation("too_long_subject", f"subject : {SUBJECT_MAX} caractères au plus")
-    if any(len(item.strip()) > EVIDENCE_REF_MAX for item in envelope.evidence):
+    if any(len(_API_STRIP.validate_python(item)) > EVIDENCE_REF_MAX for item in envelope.evidence):
         raise RuleViolation(
             "too_long_evidence", f"evidence : {EVIDENCE_REF_MAX} caractères au plus par élément"
         )
