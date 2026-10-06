@@ -11,6 +11,12 @@ type Invalidation = 'all' | InvalidateFilters
 /** A burst of messages is flushed once, this long after its first message. */
 export const LIVE_BATCH_MS = 50
 
+/**
+ * Consecutive postponements after which a flush runs anyway (about 10 s at LIVE_BATCH_MS,
+ * the period of the refetch that stays the safety net).
+ */
+export const LIVE_MAX_DEFERRALS = 200
+
 /** Un message ne fait que dire quoi relire : les données passent toujours par l'API REST. */
 function invalidationsFor(message: LiveMessage): Invalidation[] {
   switch (message.type) {
@@ -36,10 +42,14 @@ function invalidationsFor(message: LiveMessage): Invalidation[] {
  * message (the window is not extended, so a steady stream still flushes every window).
  * While a mutation runs (a drag-move PATCH) the flush is postponed so a refetch cannot
  * overwrite the optimistic card; so it is while a query is on its initial read, whose
- * in-flight promise would swallow the invalidation. The pending set is kept. The first
- * `hello` of a batcher invalidates everything: the server starts from "now", so a change
- * committed between the first REST read and that `hello` would otherwise wait for the 10 s
- * refetch.
+ * in-flight promise would swallow the invalidation (only a first read matched by the pending
+ * invalidations counts; with a global one pending, any first read does). The pending set is
+ * kept. Postponement is bounded by LIVE_MAX_DEFERRALS consecutive windows, then the flush runs
+ * anyway: after that cap an invalidation may still be swallowed by an in-flight first read,
+ * which the 10 s periodic refetch covers. The counter resets when a flush runs or on dispose.
+ * The first `hello` of a batcher invalidates everything: the server starts from "now", so a
+ * change committed between the first REST read and that `hello` would otherwise wait for the
+ * 10 s refetch.
  */
 export function createLiveBatcher(client: QueryClient): {
   push: (message: LiveMessage) => void
@@ -48,6 +58,7 @@ export function createLiveBatcher(client: QueryClient): {
   let seenHello = false
   let disposed = false
   let all = false
+  let deferrals = 0
   let timer: ReturnType<typeof setTimeout> | undefined
   const pending = new Map<string, InvalidateFilters>()
 
@@ -57,14 +68,17 @@ export function createLiveBatcher(client: QueryClient): {
     // A query still on its initial read (no data) would swallow an invalidation: react-query
     // returns the in-flight promise and resets `isInvalidated` on its success. Wait for it
     // (bounded by the 10 s request timeout).
-    const firstReadInFlight = client
-      .getQueryCache()
-      .findAll({ fetchStatus: 'fetching' })
-      .some((q) => q.state.data === undefined)
-    if (client.isMutating() > 0 || firstReadInFlight) {
+    const cache = client.getQueryCache()
+    const firstRead = (q: { state: { data: unknown } }) => q.state.data === undefined
+    const firstReadInFlight = all
+      ? cache.findAll({ fetchStatus: 'fetching' }).some(firstRead)
+      : [...pending.values()].some((f) => cache.findAll({ ...f, fetchStatus: 'fetching' }).some(firstRead))
+    if ((client.isMutating() > 0 || firstReadInFlight) && deferrals < LIVE_MAX_DEFERRALS) {
+      deferrals += 1
       timer = setTimeout(flush, LIVE_BATCH_MS)
       return
     }
+    deferrals = 0
     const wasAll = all
     const filters = [...pending.values()]
     all = false
@@ -88,6 +102,7 @@ export function createLiveBatcher(client: QueryClient): {
     },
     dispose() {
       disposed = true
+      deferrals = 0
       clearTimeout(timer)
       timer = undefined
       pending.clear()

@@ -2,7 +2,7 @@ import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { LiveMessage } from './live'
 import { tasksKey } from './tasks/queries'
-import { createLiveBatcher, LIVE_BATCH_MS } from './liveUpdates'
+import { createLiveBatcher, LIVE_BATCH_MS, LIVE_MAX_DEFERRALS } from './liveUpdates'
 
 const CURSOR = { history: 1, events: 1 }
 
@@ -215,6 +215,85 @@ describe('createLiveBatcher', () => {
       await vi.advanceTimersByTimeAsync(0)
       expect(observer.getCurrentResult().data).toBe('new')
       unsubscribe()
+      batcher.dispose()
+    })
+  })
+
+  describe('portée de la garde de première lecture', () => {
+    const hold = (client: QueryClient, queryKey: readonly unknown[]) => {
+      const observer = new QueryObserver(client, { queryKey, queryFn: () => new Promise<string>(() => {}) })
+      return observer.subscribe(() => {})
+    }
+
+    test('une première lecture sans rapport ne retarde pas une invalidation ciblée', () => {
+      const { client, invalidate } = spyClient()
+      const unsubscribe = hold(client, ['nodes'])
+      const batcher = createLiveBatcher(client)
+      batcher.push(task('nx-task-1'))
+      vi.advanceTimersByTime(LIVE_BATCH_MS)
+      expect(count(invalidate, { queryKey: ['tasks', 'nx-task-1'] })).toBe(1)
+      unsubscribe()
+      batcher.dispose()
+    })
+
+    test('une première lecture concernée retarde toujours la relecture ciblée', () => {
+      const { client, invalidate } = spyClient()
+      const unsubscribe = hold(client, ['tasks', 'nx-task-1'])
+      const batcher = createLiveBatcher(client)
+      batcher.push(task('nx-task-1'))
+      vi.advanceTimersByTime(LIVE_BATCH_MS * 3)
+      expect(invalidate).not.toHaveBeenCalled()
+      unsubscribe()
+      batcher.dispose()
+    })
+
+    test('avec « tout » en attente, une première lecture sans rapport retarde', () => {
+      const { client, invalidate } = spyClient()
+      const unsubscribe = hold(client, ['nodes'])
+      const batcher = createLiveBatcher(client)
+      batcher.push({ type: 'resync', cursor: CURSOR })
+      vi.advanceTimersByTime(LIVE_BATCH_MS * 3)
+      expect(invalidate).not.toHaveBeenCalled()
+      unsubscribe()
+      batcher.dispose()
+    })
+  })
+
+  describe('plafond de reports', () => {
+    function holdMutation(client: QueryClient) {
+      void client.getMutationCache().build(client, { mutationFn: () => new Promise<void>(() => {}) }).execute(undefined)
+    }
+
+    test('LIVE_MAX_DEFERRALS vaut 200', () => {
+      expect(LIVE_MAX_DEFERRALS).toBe(200)
+    })
+
+    test('une mutation bloquée ne retarde pas indéfiniment : relecture au plafond', () => {
+      const { client, invalidate } = spyClient()
+      holdMutation(client)
+      const batcher = createLiveBatcher(client)
+      batcher.push(task('nx-task-1'))
+      // First flush at 1 window, then LIVE_MAX_DEFERRALS postponements; the next flush runs.
+      vi.advanceTimersByTime(LIVE_BATCH_MS * LIVE_MAX_DEFERRALS)
+      expect(invalidate).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(LIVE_BATCH_MS)
+      expect(count(invalidate, { queryKey: ['tasks', 'nx-task-1'] })).toBe(1)
+      batcher.dispose()
+    })
+
+    test('le compteur repart de zéro après une relecture', () => {
+      const { client, invalidate } = spyClient()
+      holdMutation(client)
+      const batcher = createLiveBatcher(client)
+      batcher.push(task('nx-task-1'))
+      vi.advanceTimersByTime(LIVE_BATCH_MS * (LIVE_MAX_DEFERRALS + 1))
+      expect(count(invalidate, { queryKey: ['tasks', 'nx-task-1'] })).toBe(1)
+      invalidate.mockClear()
+      batcher.push(task('nx-task-2'))
+      vi.advanceTimersByTime(LIVE_BATCH_MS * LIVE_MAX_DEFERRALS)
+      expect(invalidate).not.toHaveBeenCalled() // fresh budget
+      vi.advanceTimersByTime(LIVE_BATCH_MS)
+      expect(count(invalidate, { queryKey: ['tasks', 'nx-task-2'] })).toBe(1)
       batcher.dispose()
     })
   })
