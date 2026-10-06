@@ -166,6 +166,7 @@ action (répondre à un chat, envoyer un mail, créer un événement…)
 - **Base :** SQLite (`nexus.db`).
 - **UI :** React + TypeScript + Vite. Aucune dépendance à une API propre au navigateur : tout passe par l'API FastAPI.
 - **Temps réel :** WebSocket serveur → UI ; patterns repris du dashboard Hermes quand utiles.
+- **Adresse de l'API :** relative à la page par défaut (navigateur). Dans une WebView, la page n'est pas servie par l'API : `VITE_NEXUS_API_URL` (origine seule `http(s)://hôte:port`, sans chemin, fixée à la compilation et validée par `vite.config.ts`, qui refuse la compilation sinon) devient la base des requêtes REST et du WebSocket. Côté serveur, il restera à autoriser l'origine de la WebView à deux endroits : `NEXUS_ALLOWED_ORIGINS` pour le WebSocket (fermé en 1008 sinon ; CORS ne s'y applique pas) et un middleware CORS pour le REST, qui n'existe pas encore.
 - **Application Windows (cible long terme) :** Tauri 2 — la même UI dans WebView2, le serveur FastAPI lancé en sidecar ; icône de barre des tâches, notifications Windows, démarrage automatique. Repli possible : Electron.
 
 ```text
