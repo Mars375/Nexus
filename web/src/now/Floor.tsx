@@ -5,7 +5,7 @@ import { age } from '@/format'
 import { isStale } from '@/freshness'
 import { useNow } from '@/useNow'
 import { DESK, box, drawOrder, layoutFloor, toPercent, type Dir, type Layout } from './iso'
-import { AGE_TICK_MS, displayName, floorAlert, floorAlertSides, nodeFloors, rackLabel, rackTone, seatModels, type FloorAlert, type RackView, type SeatModel } from './model'
+import { AGE_TICK_MS, displayName, floorAlert, floorAlertSides, nodeFloors, rackDetail, rackLabel, rackTone, seatModels, type FloorAlert, type RackView, type SeatModel } from './model'
 import { Faces, Rack } from './Rack'
 import { RackLabels, ServerRoom } from './ServerRoom'
 import { useArrivals } from './useArrivals'
@@ -236,8 +236,8 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
       {/* On a server floor the legend is read by screen readers only; sighted users get the labels and a one-line summary. */}
       <ul data-legend className={clsx('pointer-events-none absolute bottom-0 right-0 m-0 flex list-none flex-col gap-1 p-0 font-data text-[11px]', onRoom && 'sr-only')}>
         {nodes === undefined && <li className="text-muted">{nodesFailed ? 'nœuds illisibles' : 'lecture des nœuds…'}</li>}
-        {shown.map(({ node: n, tone, text }) => (
-          <li key={n.id} className={clsx('flex items-center gap-2', tone === 'ok' ? 'text-ink' : 'text-muted')}><span className="legend-dot" data-tone={tone} aria-hidden="true" />{text}</li>
+        {shown.map((r) => (
+          <li key={r.node.id} className={clsx('flex items-center gap-2', r.tone === 'ok' ? 'text-ink' : 'text-muted')}><span className="legend-dot" data-tone={r.tone} aria-hidden="true" />{onRoom ? rackDetail(r, now).text : r.text}</li>
         ))}
       </ul>
       {onRoom && <p aria-hidden="true" data-legend-summary className="pointer-events-none absolute bottom-0 right-0 m-0 font-data text-[11px] text-ink">{shown.filter((r) => r.tone === 'ok').length} / {shown.length} en ligne</p>}

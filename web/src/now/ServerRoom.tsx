@@ -1,6 +1,5 @@
 import { RACK, box, layoutServerFloor, type Layout, type PlanRect } from './iso'
-import { age } from '@/format'
-import { displayName, type RackView } from './model'
+import { rackDetail, type RackView } from './model'
 import { toPercent } from './iso'
 import { Faces, Rack } from './Rack'
 
@@ -67,7 +66,7 @@ const NAME_TONE = (r: RackView): string => r.tone === 'off' ? (r.node.status ===
 /**
  * HTML labels of a server floor's racks, laid like the desks' labels. Real data only: the name, the
  * state text of the model (« périmée » included), when an offline or unknown node was last seen, its guardian.
- * Purely visual (aria-hidden): the legend list carries the same information for screen readers.
+ * Purely visual (aria-hidden): the sr-only legend list is built from the same `rackDetail`, so screen readers lose nothing.
  */
 export function RackLabels({ l, racks, now }: { l: Layout; racks: RackView[]; now: number }) {
   const g = layoutServerFloor(l, racks.length)
@@ -75,12 +74,12 @@ export function RackLabels({ l, racks, now }: { l: Layout; racks: RackView[]; no
     <div aria-hidden="true">
       {racks.map((r, i) => {
         const lab = g.labels[i], [left, top] = toPercent(l, [lab.x, lab.y])
-        const seen = (r.node.status === 'offline' || r.node.status === 'unknown') && r.node.last_seen ? ` · vu ${age(r.node.last_seen, now)}` : ''
+        const d = rackDetail(r, now)
         return (
           <div key={r.node.id} data-rack-label={r.node.id} className={`absolute whitespace-nowrap text-center -translate-x-1/2 ${lab.below ? 'translate-y-0' : '-translate-y-full'}`} style={{ left: `${left}%`, top: `${top}%` }}>
-            <span data-line className={`block font-orbital-display text-[13px] font-semibold tracking-[0.14em] leading-[14px] ${NAME_TONE(r)}`}>{r.node.id.toUpperCase()}</span>
-            <span data-line className="mx-auto block max-w-[34ch] truncate font-data text-[11px] leading-[13px] text-muted">{r.state}{seen}</span>
-            <span data-line className="mx-auto hidden font-data text-[11px] leading-[13px] text-muted @min-[800px]:block">gardien : {displayName(r.node.guardian_agent)}</span>
+            <span data-line className={`block font-orbital-display text-[13px] font-semibold tracking-[0.14em] leading-[14px] ${NAME_TONE(r)}`}>{d.name}</span>
+            <span data-line className="mx-auto block max-w-[34ch] truncate font-data text-[11px] leading-[13px] text-muted">{d.state}</span>
+            <span data-line className="mx-auto hidden font-data text-[11px] leading-[13px] text-muted @min-[800px]:block">{d.guardian}</span>
           </div>
         )
       })}

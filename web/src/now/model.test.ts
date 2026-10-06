@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import type { NodeState, NowSnapshot } from '@/api'
-import { RACKS_PER_FLOOR, floorAlert, floorAlertSides, nodeFloors, rackLabel, rackTone, seatModels } from './model'
+import { RACKS_PER_FLOOR, floorAlert, floorAlertSides, nodeFloors, rackDetail, rackLabel, rackTone, seatModels } from './model'
 
 const base: NowSnapshot = {
   source: 'nexus.db', measured_at: '2026-10-01T10:00:00+02:00', operation: null, auxiliaries: [],
@@ -74,4 +74,16 @@ test('alertes autour de l\'étage affiché : jamais pour lui, la plus grave de c
   expect(floorAlertSides(alerts, 4)).toEqual({ above: null, below: 'off', others: [{ floor: 2, alert: 'unknown' }, { floor: 3, alert: 'off' }] })
   expect(floorAlertSides([null, null], 1)).toEqual({ above: null, below: null, others: [] })
   expect(floorAlertSides(['unknown', 'off', 'unknown'], 2)).toEqual({ above: 'unknown', below: 'unknown', others: [{ floor: 1, alert: 'unknown' }, { floor: 3, alert: 'unknown' }] })
+})
+
+test('détail d\'une baie : état, « vu il y a » seulement pour hors ligne ou inconnu avec une date plausible, gardien', () => {
+  const now = Date.parse('2026-10-03T12:00:00+02:00')
+  const view = (status: NodeState['status'], last_seen: string | null, measured_at = '2026-10-03T12:00:00+02:00') => ({ node: { ...nodeOf('cortex', status), last_seen, measured_at, guardian_agent: 'mnema' }, tone: rackTone(nodeOf('cortex', status)), state: rackLabel(nodeOf('cortex', status)), text: '' })
+  expect(rackDetail(view('offline', '2026-10-03T09:00:00+02:00'), now)).toEqual({ name: 'CORTEX', state: 'hors ligne · vu il y a 3 h', guardian: 'gardien : Mnema', text: 'CORTEX · hors ligne · vu il y a 3 h · gardien : Mnema' })
+  expect(rackDetail(view('unknown', '2026-10-03T11:00:00+02:00'), now).state).toBe('inconnu · vu il y a 1 h')
+  expect(rackDetail(view('unknown', null), now).state).toBe('inconnu')
+  expect(rackDetail(view('offline-by-design', '2026-10-01T09:00:00+02:00'), now).state).toBe('hors ligne, prévu')
+  expect(rackDetail(view('online', '2026-10-03T09:00:00+02:00'), now).state).toBe('en ligne')
+  expect(rackDetail(view('offline', '2026-10-03T15:00:00+02:00'), now).state).toBe('hors ligne') // future: clock skew, nothing invented
+  expect(rackDetail(view('offline', '2026-10-03T11:59:00+02:00', '2026-10-03T11:00:00+02:00'), now).state).toBe('hors ligne') // seen after it was measured
 })
