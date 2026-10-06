@@ -1,0 +1,91 @@
+import { expect, test, type Page } from '@playwright/test'
+
+// Visual defects of #49: focus ring clipped, dialog opening jump, toast font and contrast.
+
+async function createTask(page: Page, title: string) {
+  await page.getByRole('button', { name: 'Nouvelle tâche' }).first().click()
+  const dialog = page.getByRole('dialog', { name: 'Nouvelle tâche' })
+  await dialog.getByLabel('Titre').fill(title)
+  await dialog.getByLabel('Objectif').fill(`Objectif de ${title}`)
+  await dialog.getByRole('button', { name: 'Créer la tâche' }).click()
+  await expect(dialog).toBeHidden()
+}
+
+/** WCAG contrast ratio of two computed `rgb(…)` / `rgba(…)` colours (both opaque here). */
+function contrast(a: string, b: string): number {
+  const lum = (css: string) => {
+    const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(css)
+    if (!m) throw new Error(`unsupported colour: ${css}`)
+    const [r, g, bl] = [m[1], m[2], m[3]].map((v) => {
+      const c = Number(v) / 255
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+    })
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bl
+  }
+  const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x)
+  return (hi + 0.05) / (lo + 0.05)
+}
+
+test('l’anneau de focus de la première carte est entièrement visible dans sa colonne', async ({ page }) => {
+  await page.goto('/#/travail')
+  await createTask(page, 'Carte du haut')
+  await createTask(page, 'Carte du bas')
+  // Newest first: take whichever card is the first of the column, not a given title.
+  const first = page.locator('ul:has(button[aria-label^="Carte du haut"]) > li:first-child button')
+  await page.keyboard.press('Tab') // keyboard modality: :focus-visible applies on focus()
+  await first.focus()
+  const geometry = await first.evaluate((el) => {
+    const style = getComputedStyle(el)
+    const grow = parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset)
+    const card = el.getBoundingClientRect()
+    const list = el.closest('ul')!.getBoundingClientRect()
+    return { outlineStyle: style.outlineStyle, ringTop: card.top - grow, ringBottom: card.bottom + grow, clipTop: list.top, clipBottom: list.bottom }
+  })
+  expect(geometry.outlineStyle).not.toBe('none')
+  expect(geometry.ringTop).toBeGreaterThanOrEqual(geometry.clipTop)
+  expect(geometry.ringBottom).toBeLessThanOrEqual(geometry.clipBottom)
+})
+
+test('la boîte de dialogue reste centrée dès la première image de son animation', async ({ page }) => {
+  await page.goto('/#/travail')
+  await page.getByRole('button', { name: 'Nouvelle tâche' }).first().click()
+  const dialog = page.getByRole('dialog', { name: 'Nouvelle tâche' })
+  await expect(dialog).toBeVisible()
+  const start = await dialog.evaluate((el) => {
+    const animation = el.getAnimations().find((a) => (a as CSSAnimation).animationName === 'dialog-in')
+    if (!animation) return null
+    animation.pause()
+    animation.currentTime = 0
+    const box = el.getBoundingClientRect()
+    return { x: box.left + box.width / 2, y: box.top + box.height / 2, w: innerWidth / 2, h: innerHeight / 2 }
+  })
+  expect(start, 'the dialog keeps an opening animation').not.toBeNull()
+  // Horizontal centre is exact; vertically the 6 px rise of the animation is the only allowed offset.
+  expect(Math.abs(start!.x - start!.w)).toBeLessThanOrEqual(1)
+  expect(Math.abs(start!.y - start!.h)).toBeLessThanOrEqual(8)
+})
+
+test('les toasts utilisent la police du thème et un contraste d’au moins 4,5:1', async ({ page }) => {
+  await page.goto('/#/travail')
+  await createTask(page, 'Tâche à toaster')
+  const toast = page.locator('[data-sonner-toast]').first()
+  await expect(toast).toBeVisible()
+  expect(await toast.evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^"?Barlow"?,/)
+
+  // Same element, same stylesheet: only the type changes, so every richColors pair is measured as rendered.
+  const pairs = await toast.evaluate((el) => {
+    const out: Record<string, { fg: string; bg: string }> = {}
+    for (const type of ['success', 'error', 'info', 'warning']) {
+      const clone = el.cloneNode(true) as HTMLElement
+      clone.setAttribute('data-type', type)
+      el.parentElement!.append(clone)
+      const style = getComputedStyle(clone)
+      out[type] = { fg: style.color, bg: style.backgroundColor }
+      clone.remove()
+    }
+    return out
+  })
+  for (const [type, { fg, bg }] of Object.entries(pairs)) {
+    expect(contrast(fg, bg), `${type}: ${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5)
+  }
+})

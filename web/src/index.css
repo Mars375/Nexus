@@ -168,10 +168,14 @@
   }
 }
 
+/*
+ * Centring is done by Tailwind's `translate` property (-translate-x/y-1/2 in ui.tsx), which
+ * composes with `transform`: animate only `transform` here, never the -50% offsets again.
+ */
 @keyframes dialog-in {
   from {
     opacity: 0;
-    transform: translate(-50%, calc(-50% + 6px)) scale(0.98);
+    transform: translateY(6px) scale(0.98);
   }
 }
 

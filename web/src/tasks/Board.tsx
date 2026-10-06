@@ -151,11 +151,12 @@ function Column({
         isOver && allowed && dragging?.status !== status && 'ring-2 ring-accent',
       )}
     >
-      <header className="flex items-baseline gap-2 px-3 pt-3 pb-2">
+      <header className="flex items-baseline gap-2 px-3 pt-3 pb-1">
         <h2 className="font-orbital-display text-xs font-semibold uppercase tracking-[0.18em]">{STATUS_LABEL[status]}</h2>
         <span className="font-data text-xs text-muted tabular-nums">{count}</span>
       </header>
-      <ul className="flex min-h-16 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2">
+      {/* pt-1 (header pb-1): room for the 4 px focus ring of the first card, which overflow-y-auto would clip. */}
+      <ul className="flex min-h-16 flex-1 flex-col gap-2 overflow-y-auto px-2 pt-1 pb-2">
         {children}
         {count === 0 && (
           <li className="px-1 py-3 text-xs text-muted">Aucune tâche.</li>
