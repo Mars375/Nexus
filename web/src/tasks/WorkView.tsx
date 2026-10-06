@@ -38,10 +38,10 @@ export function WorkView({ openTask }: { openTask?: string | null } = {}) {
   const filtered = JSON.stringify(filters) !== JSON.stringify(NO_FILTER)
 
   return (
-    <div className="flex min-h-0 flex-1">
+    <div className="orbital flex min-h-0 flex-1 bg-paper font-orbital">
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex flex-wrap items-center gap-2 px-5 pt-5 pb-4">
-          <h1 className="mr-3 font-display text-lg font-semibold">Travail</h1>
+          <h1 className="mr-3 font-orbital-display text-2xl font-semibold uppercase tracking-[0.12em]">Travail</h1>
           <FilterSelect label="Filtrer par agent" value={filters.agent} onChange={(v) => set('agent', v as Actor | '')}>
             <option value="">Tous les agents</option>
             {ACTORS.map((a) => (
@@ -74,6 +74,7 @@ export function WorkView({ openTask }: { openTask?: string | null } = {}) {
           <label className="flex items-center gap-1.5 text-xs text-muted">
             <input
               type="checkbox"
+              className="accent-accent"
               checked={filters.showDropped}
               onChange={(e) => set('showDropped', e.target.checked)}
             />
@@ -90,7 +91,7 @@ export function WorkView({ openTask }: { openTask?: string | null } = {}) {
         </header>
 
         {provenance && (
-          <p className="px-5 pb-2">
+          <p className="px-5 pb-2 font-data">
             <Provenance source={provenance.source} measuredAt={provenance.measuredAt} kind="tasks" />
           </p>
         )}
@@ -143,7 +144,7 @@ function FilterSelect({
   return (
     <select
       aria-label={label}
-      className={`${toolbarControlClass} ${value ? 'border-ink/50 font-medium' : ''}`}
+      className={`${toolbarControlClass} ${value ? 'border-accent font-medium' : ''}`}
       value={value}
       onChange={(e) => onChange(e.target.value)}
     >

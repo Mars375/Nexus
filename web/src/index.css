@@ -13,6 +13,7 @@
   --ink: #1b1f24;
   --muted: #5b6470;
   --line: #d9dde3;
+  --line-strong: #7a828e;
   --accent: #2f5bd3;
   --accent-soft: #e6ecfb;
   --on-accent: #ffffff;
@@ -44,6 +45,7 @@
     --ink: #edeef0;
     --muted: #9aa1ab;
     --line: #3a3c42;
+    --line-strong: #7a828e;
     --accent: #7c9bff;
     --accent-soft: #2a3352;
     --on-accent: #10141f;
@@ -69,7 +71,10 @@
 /*
  * Thème « Salle orbitale » (#6) : quasi-noir, filets fins, couleur réservée aux états.
  * Palette proposée par Gemini, contrastes recalculés (texte ≥ 4,5:1). Appliqué par la classe
- * `orbital` : navigation, barre d'état, Maintenant. Travail garde le thème clair pour l'instant.
+ * `orbital` : navigation, barre d'état, Maintenant, Travail (#27). Les boîtes de dialogue Radix
+ * sont rendues dans un portail hors de l'élément `orbital` : `Dialog` (ui.tsx) porte donc la classe
+ * elle-même. `--line` est un filet décoratif ; `--line-strong` borde les contrôles (≥ 3:1).
+ * Les couleurs d'état restent réservées aux états ; `src/theme.test.tsx` vérifie les contrastes.
  */
 .orbital {
   --paper: #07080a;
@@ -78,14 +83,28 @@
   --ink: #f4f4f5;
   --muted: #a1a1aa;
   --line: #22252b;
+  --line-strong: #646b77;
   --accent: #5eead4;
   --accent-soft: rgba(94, 234, 212, 0.08);
+  --on-accent: #04110f;
   --attention: #fb923c;
   --attention-soft: rgba(251, 146, 60, 0.06);
   --danger: #f87171;
   --ok: #4ade80;
   --run: #5eead4;
   --unknown: #8b8b95;
+
+  /* Acteurs : variantes claires, lisibles sur fond quasi noir (même jeu que le mode sombre). */
+  --agent-loic: #f4f4f5;
+  --agent-helios: #e6b93d;
+  --agent-mnema: #a98cf0;
+  --agent-aether: #6fb4f2;
+  --agent-artemis: #aab3c2;
+  --agent-claude: #d1977a;
+  --agent-codex: #4cc39f;
+  --agent-orca: #5bb0cb;
+  --agent-hermes: #a6bb57;
+
   color-scheme: dark;
   color: var(--ink);
 }
@@ -104,6 +123,7 @@
   --color-ink: var(--ink);
   --color-muted: var(--muted);
   --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
   --color-accent: var(--accent);
   --color-accent-soft: var(--accent-soft);
   --color-on-accent: var(--on-accent);

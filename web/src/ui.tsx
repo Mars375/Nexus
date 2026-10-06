@@ -5,10 +5,10 @@ import type { Actor } from '@/api'
 import { ACTOR_NAME } from '@/tasks/vocabulary'
 
 const controlClass =
-  'rounded-md border border-line bg-surface text-ink ' +
-  'placeholder:text-muted/70 focus-visible:outline-2 focus-visible:outline-accent'
+  'rounded-sm border border-line-strong bg-sunken text-ink ' +
+  'placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent'
 
-export const inputClass = `${controlClass} w-full px-2.5 py-1.5 text-sm`
+export const inputClass = `${controlClass} w-full min-w-0 px-2.5 py-1.5 text-sm`
 
 /** Contrôle compact d'une barre d'outils (filtres). */
 export const toolbarControlClass = `${controlClass} px-2 py-1 text-xs`
@@ -22,11 +22,11 @@ export function Button({
     <button
       type="button"
       className={clsx(
-        'inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium',
+        'inline-flex items-center justify-center gap-1.5 rounded-sm px-3 py-1.5 text-sm font-medium',
         'transition-colors duration-100 disabled:cursor-not-allowed disabled:opacity-50',
         variant === 'primary' && 'bg-accent text-on-accent hover:bg-accent/90',
-        variant === 'secondary' && 'border border-line bg-surface text-ink hover:bg-sunken',
-        variant === 'ghost' && 'text-muted hover:bg-sunken hover:text-ink',
+        variant === 'secondary' && 'border border-line-strong bg-surface text-ink hover:bg-ink/10',
+        variant === 'ghost' && 'text-muted hover:bg-ink/10 hover:text-ink',
         className,
       )}
       {...props}
@@ -44,8 +44,8 @@ export function Field({
   children: ReactNode
 }) {
   return (
-    <label className="grid gap-1">
-      <span className="text-xs font-medium text-muted">{label}</span>
+    <label className="grid min-w-0 gap-1">
+      <span className="font-orbital-display text-xs font-semibold uppercase tracking-[0.14em] text-muted">{label}</span>
       {children}
       {hint && <span className="text-2xs text-muted">{hint}</span>}
     </label>
@@ -68,15 +68,16 @@ export function Dialog({
   return (
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
       <RadixDialog.Portal>
-        <RadixDialog.Overlay className="fixed inset-0 bg-black/30 data-[state=open]:animate-[fade-in_120ms_ease-out]" />
+        <RadixDialog.Overlay className="fixed inset-0 bg-black/70 data-[state=open]:animate-[fade-in_120ms_ease-out]" />
         <RadixDialog.Content
+          // Portail hors de l'élément `orbital` : la classe doit être portée ici (voir index.css).
           className={clsx(
-            'fixed top-1/2 left-1/2 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2',
-            'rounded-lg border border-line bg-surface p-5 shadow-2xl shadow-black/20',
+            'orbital font-orbital fixed top-1/2 left-1/2 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2',
+            'max-h-[calc(100vh-2rem)] overflow-y-auto rounded-sm border border-line-strong bg-surface p-5 shadow-2xl shadow-black/60',
             'data-[state=open]:animate-[dialog-in_160ms_cubic-bezier(0.2,0.8,0.2,1)]',
           )}
         >
-          <RadixDialog.Title className="font-display text-base font-semibold">{title}</RadixDialog.Title>
+          <RadixDialog.Title className="font-orbital-display text-lg font-semibold tracking-[0.04em]">{title}</RadixDialog.Title>
           {description ? (
             <RadixDialog.Description className="mt-1 text-xs text-muted">
               {description}

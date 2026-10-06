@@ -64,7 +64,7 @@ export default function App() {
         </main>
       </div>
       <HealthStatus live={live} />
-      <Toaster position="bottom-center" offset={40} theme="system" richColors closeButton />
+      <Toaster position="bottom-center" offset={40} theme="dark" richColors closeButton />
     </div>
   )
 }
