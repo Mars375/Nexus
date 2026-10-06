@@ -90,7 +90,9 @@ const ROOM_MAX_RACKS = 4
 export const LED_TOP = 2.1
 export const LED_STEP = 0.38
 
+/** Rounds to one decimal, so projected coordinates stay stable and compact. */
 const round = (v: number) => Math.round(v * 10) / 10
+/** Degrees to radians. */
 const radians = (deg: number) => (deg * Math.PI) / 180
 
 /** Rotation by `angle` degrees around the floor centre, for points and for face normals. */
@@ -167,6 +169,7 @@ function zonesOf(vb: Frame, legendRows: number, selector: boolean): Rect[] {
 }
 
 const EPS = 0.01 // boxes that only touch at the gap are not overlapping
+/** True when two boxes touch or come within the label gap of each other. */
 const overlaps = (a: Rect, b: Rect) => a.x0 < b.x1 + GAP - EPS && b.x0 < a.x1 + GAP - EPS && a.y0 < b.y1 + GAP - EPS && b.y0 < a.y1 + GAP - EPS
 
 /**
@@ -201,8 +204,10 @@ function labelBelow(width: number, depth: number, angle: number, item: Labelled)
   return u + v - (cu + cv) > 1e-9
 }
 
+/** Label descriptors of the desks: the row depth is read at the floor's middle column. */
 const seatItems = (width: number, seats: Seat[]): Labelled[] => seats.map((s) => ({ x: s.x, y: s.y, w: DESK.w, d: DESK.d, top: 1.8, refX: width / 2 }))
 // Racks in a row: each one is read at its own place along the row; the leader starts above the cable tray.
+/** Label descriptors of a row of racks: each read at its own place, the leader starting above the cable tray. */
 const rackItems = (racks: { x: number; y: number }[]): Labelled[] => racks.map((r) => ({ x: r.x, y: r.y, w: RACK.w, d: RACK.d, top: RACK.h + 0.6, refX: r.x + RACK.w / 2, textH: RACK_LABEL_H }))
 
 /** Labels at `angle`: above or under their object by row depth, then spread so none covers another or a fixed corner. */
@@ -349,6 +354,7 @@ export function ledQuad(l: Pick<Layout, 'project'>, r: { x: number; y: number },
   return [at(a, z), at(b, z), at(b, z - 0.16), at(a, z - 0.16)]
 }
 
+/** Points list of a polygon, as an SVG `points` attribute. */
 const pts = (list: Pt[]) => list.map((p) => `${p[0]},${p[1]}`).join(' ')
 
 const NORMALS: Record<Dir, Pt> = { '+y': [0, 1], '+x': [1, 0], '-x': [-1, 0], '-y': [0, -1] }

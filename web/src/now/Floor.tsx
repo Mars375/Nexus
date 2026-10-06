@@ -50,6 +50,7 @@ const NORMAL: Record<Dir, readonly [number, number]> = { '+x': [1, 0], '-x': [-1
 type FloorProps = { snapshot: NowSnapshot; nodes: NodeState[] | undefined; nodesFailed?: boolean }
 
 const ROTATE_BUTTON = 'pointer-events-auto grid size-9 place-items-center rounded-md border border-line bg-surface/80 text-base text-ink hover:bg-sunken focus-visible:outline-2 focus-visible:outline-accent'
+/** Alert wording for a floor: « un nœud hors ligne », « 3 nœuds en état inconnu ». */
 const alertText = (alert: FloorAlert, count: number): string => `${count === 1 ? 'un nœud' : `${count} nœuds`} ${alert === 'off' ? 'hors ligne' : 'en état inconnu'}`
 
 /** The floor with its rotation and its floors: drag, arrow keys, PageUp / PageDown and buttons; the angle settles on quarter turns. */
@@ -65,10 +66,14 @@ export function Floor(props: FloorProps) {
   const sides = floorAlertSides(alerts, level.floor, floors.map((f) => floorAlertCount(f, stale)))
   // A new alert on a floor out of sight pulses the pip of its side once; never under reduced motion.
   const freshAlerts = useArrivals(nodes === undefined ? null : alerts.flatMap((a, i) => a ? [`${i + 1}:${a}`] : []))
+/** True when a fresh alert on the floors of that side should make its pip pulse once. */
   const pulse = (side: 'up' | 'down') => !prefersReducedMotion() && sides.others.some((o) => (side === 'up' ? o.floor > level.floor : o.floor < level.floor) && freshAlerts.has(`${o.floor}:${o.alert}`))
+/** « étage 3 » or « étages 2, 3, 5 », for the alert line of the label. */
   const listFloors = (fs: number[]) => `${fs.length === 1 ? 'étage' : 'étages'} ${fs.join(', ')}`
   const labelText = `Étage ${level.floor} / ${level.count}${sides.others.length > 0 ? ` · alerte : ${listFloors(sides.others.map((o) => o.floor))}` : ''}`
+/** Accessible wording of the alerts on the floors above (`up`) or below (`down`) the one shown. */
   const describe = (side: 'up' | 'down') => sides.others.filter((o) => (side === 'up' ? o.floor > level.floor : o.floor < level.floor)).map((o) => `${alertText(o.alert, o.count)} à l'étage ${o.floor}`).join(', ')
+/** The ▲ or ▼ button: pip of the most severe alert on its side, names the floors in alert, aria-disabled at the limit. */
   const stepButton = (side: 'up' | 'down') => {
     const text = describe(side), pipAlert = side === 'up' ? sides.above : sides.below
     const atLimit = side === 'up' ? level.floor >= level.count : level.floor <= 1
@@ -80,6 +85,7 @@ export function Floor(props: FloorProps) {
       </button>
     )
   }
+/** Arrow keys rotate (stage handler), PageUp / PageDown change floor; modified keys are left to the browser. */
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     stage.onKeyDown(e)
     if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || level.count < 2) return
@@ -112,6 +118,7 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
   const now = useNow(AGE_TICK_MS)
   const seats = seatModels(snapshot)
   // Une mesure trop ancienne, ou une relecture en échec : jamais de vert sur une donnée périmée.
+/** Racks of a floor: tone, state text (« périmée » when stale or when the read failed) and legend line. */
   const racksOf = (list: NodeState[]): RackView[] => list.map((node) => {
     const stale = nodesFailed || isStale(node.measured_at, 'nodes', now)
     const state = stale ? 'périmée' : rackLabel(node)
@@ -146,6 +153,7 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
       })}
     </g>
   )
+/** Rack of floor 1, on its LED face chosen by the angle. */
   const officeRack = (index: number) => {
     const rv = office[index]
     if (!rv) return null
@@ -153,6 +161,7 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
     return <Rack key={`rack-${rv.node.id}`} l={l} at={l.racks[index]} node={rv.node} tone={rv.tone} face={face} index={index} />
   }
   const viewBox = `${l.viewBox.x} ${l.viewBox.y} ${l.viewBox.w} ${l.viewBox.h}`
+/** HTML labels of the desks, laid over the floor-1 SVG. */
   const labels = seats.map((m, i) => {
     const [left, top] = toPercent(l, [l.labels[i].x, l.labels[i].y])
     const blocked = snapshot.blocks.find((b) => b.lead_agent === m.agent)
@@ -194,6 +203,7 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
       {labels}
     </>
   )
+/** The SVG and the labels of a server floor. */
   const roomLevel = (n: number) => {
     const racks = racksOf(floors[n - 1] ?? [])
     return (

@@ -23,6 +23,7 @@ export type RackTone = 'ok' | 'unknown' | 'off'
 /** A rack as drawn and listed: its node, tone, state text in French (« périmée » when the reading is stale) and legend line. */
 export type RackView = { node: NodeState; tone: RackTone; state: string; text: string }
 
+/** Visual tone of a rack: ok only when the node is online, unknown when unread, off otherwise. */
 export function rackTone(n: NodeState): RackTone {
   if (n.status === 'online') return 'ok'
   if (n.status === 'unknown') return 'unknown'
@@ -66,6 +67,7 @@ export function floorAlertCount(nodes: readonly NodeState[], stale: (n: NodeStat
 }
 
 const SEVERITY: Record<FloorAlert, number> = { unknown: 1, off: 2 }
+/** Most severe of some alerts (red over amber), or null when there is none. */
 const worst = (list: FloorAlert[]): FloorAlert | null => list.reduce<FloorAlert | null>((w, a) => (w === null || SEVERITY[a] > SEVERITY[w] ? a : w), null)
 
 /**
@@ -80,6 +82,7 @@ export function floorAlertSides(alerts: readonly (FloorAlert | null)[], current:
 const LABEL: Record<NodeState['status'], string> = {
   online: 'en ligne', unknown: 'inconnu', offline: 'hors ligne', 'offline-by-design': 'hors ligne, prévu',
 }
+/** State text of a node in French, as shown in the legend and on the rack label. */
 export function rackLabel(n: NodeState): string {
   return LABEL[n.status]
 }
@@ -102,4 +105,5 @@ const AGENT_NAME: Record<string, string> = {
   helios: 'Helios', mnema: 'Mnema', aether: 'Aether', artemis: 'Artemis', claude: 'Claude',
   codex: 'Codex', orca: 'Orca', hermes: 'Hermes', loic: 'Loïc',
 }
+/** Display name of an agent (or the raw actor when it has none). */
 export const displayName = (actor: string): string => AGENT_NAME[actor] ?? actor

@@ -61,6 +61,7 @@ export function ServerRoom({ l, floor, racks }: { l: Layout; floor: number; rack
   )
 }
 
+/** Colour class of a rack name: danger when offline, muted when off by design, attention when unknown. */
 const NAME_TONE = (r: RackView): string => r.tone === 'off' ? (r.node.status === 'offline-by-design' ? 'text-unknown' : 'text-danger') : r.tone === 'unknown' ? 'text-attention' : ''
 
 /**

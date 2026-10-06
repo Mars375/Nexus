@@ -65,6 +65,7 @@ export function useFloorLevel(count: number, { loaded }: { loaded: boolean }): F
     requested = floor
   }, [loaded, floor])
 
+/** Moves `delta` floors from the floor asked for last, stages the leaving layer and the arrival cascade. */
   const go = useCallback((delta: number) => {
     const base = Math.min(asked.current, countRef.current)
     const next = Math.min(Math.max(base + delta, 1), countRef.current)
