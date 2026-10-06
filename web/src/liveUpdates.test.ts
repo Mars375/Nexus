@@ -236,13 +236,26 @@ describe('createLiveBatcher', () => {
       batcher.dispose()
     })
 
-    test('une première lecture concernée retarde toujours la relecture ciblée', () => {
-      const { client, invalidate } = spyClient()
-      const unsubscribe = hold(client, ['tasks', 'nx-task-1'])
+    test('une première lecture concernée retarde la relecture ciblée, qui part dès qu\'elle a abouti', async () => {
+      const client = new QueryClient()
+      const invalidate = vi.spyOn(client, 'invalidateQueries') // pass-through: the real refetch runs
+      const resolvers: ((v: string) => void)[] = []
+      const queryFn = vi.fn(() => new Promise<string>((resolve) => resolvers.push(resolve)))
+      const observer = new QueryObserver(client, { queryKey: ['tasks', 'nx-task-1'], queryFn })
+      const unsubscribe = observer.subscribe(() => {})
+      expect(queryFn).toHaveBeenCalledTimes(1)
+
       const batcher = createLiveBatcher(client)
-      batcher.push(task('nx-task-1'))
-      vi.advanceTimersByTime(LIVE_BATCH_MS * 3)
-      expect(invalidate).not.toHaveBeenCalled()
+      batcher.push(task('nx-task-1')) // targeted invalidation, no `hello` involved
+      await vi.advanceTimersByTimeAsync(LIVE_BATCH_MS * 3)
+      expect(invalidate).not.toHaveBeenCalled() // held while the matching first read is in flight
+
+      resolvers[0]('old')
+      await vi.advanceTimersByTimeAsync(LIVE_BATCH_MS)
+      // The pending set survived the postponements: released exactly once, for the held key.
+      expect(count(invalidate, { queryKey: ['tasks', 'nx-task-1'] })).toBe(1)
+      expect(count(invalidate, { queryKey: ['tasks'], exact: true })).toBe(1)
+      expect(queryFn).toHaveBeenCalledTimes(2) // the observer refetches on top of the settled read
       unsubscribe()
       batcher.dispose()
     })
