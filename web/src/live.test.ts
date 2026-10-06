@@ -127,6 +127,19 @@ describe('connectLive', () => {
     expect(h.states.some((s) => s.status === 'connected')).toBe(false)
   })
 
+  test("l'instance du dernier hello survit à plusieurs essais ratés d'affilée (redémarrage du serveur)", () => {
+    const h = harness()
+    h.open()
+    h.send({ type: 'hello', cursor: { history: 3, events: 4 }, reset: false, instance: INSTANCE_A })
+    h.drop()
+    vi.advanceTimersByTime(500)
+    h.drop() // serveur arrêté : l'essai échoue sans hello
+    vi.advanceTimersByTime(1000)
+    h.drop() // deuxième essai raté
+    vi.advanceTimersByTime(2000)
+    expect(h.last().url).toContain(`history_after=3&events_after=4&instance=${INSTANCE_A}`)
+  })
+
   test('une connexion qui ne s\'ouvre jamais est fermée après 45 s puis relancée', () => {
     const h = harness()
     vi.advanceTimersByTime(SILENCE_MS - 1)

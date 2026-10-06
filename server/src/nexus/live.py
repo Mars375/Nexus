@@ -59,11 +59,11 @@ def start_cursor(
     current: Cursor,
     live_instance: str,
 ) -> tuple[Cursor, bool]:
-    """Curseur de départ et `reset` ; les deux curseurs vont ensemble ou pas du tout.
+    """Starting cursor and `reset`; the two cursors come together or not at all.
 
-    `instance` est celle du serveur qui a émis le curseur : si elle diffère de `live_instance`
-    (redémarrage, base restaurée), les identifiants ont pu être réécrits, on repart de l'existant.
-    Un ancien client n'envoie pas d'instance : aucune comparaison, comportement d'avant.
+    `instance` is the id of the server run that issued the cursor: when it differs from
+    `live_instance` (restart, restored base) ids may have been rewritten, so restart from what
+    exists and let the client reread. An old client sends no instance: no comparison, as before.
     """
     if history_after is None and events_after is None:
         if instance is not None:

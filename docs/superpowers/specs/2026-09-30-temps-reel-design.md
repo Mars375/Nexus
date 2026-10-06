@@ -28,7 +28,7 @@ L'interface reflète chaque changement sans rechargement : un événement posté
 - **Avec curseur** (reconnexion) : on renvoie tout ce qui a changé au-delà, puis on passe en direct.
 - **Curseur en avance sur la base** (ex. base restaurée depuis une sauvegarde) : le serveur l'annonce (`reset: true` dans `hello`) et repart de l'existant ; le client relit tout.
 - **Instance différente** : à chaque démarrage, le serveur tire un identifiant d'instance aléatoire (`secrets.token_hex(8)`, rien n'en est dérivé) et le renvoie dans `hello`. Le client le redonne avec son curseur à la reconnexion. Si l'instance reçue diffère de celle du serveur (redémarrage, base restaurée), les identifiants ont pu être réécrits sous le curseur sans le dépasser : le serveur répond `reset: true` et repart de l'existant, même si le curseur n'est pas en avance. Conséquence assumée : chaque redémarrage du serveur fait invalider une fois tout le cache des clients connectés.
-- **Compatibilité** : un curseur sans `instance` (ancien client) n'est comparé à aucune instance (comportement d'avant). Une `instance` sans curseur est refusée (1008, « curseur incomplet »).
+- **Compatibilité** : un curseur sans `instance` (ancien client) n'est comparé à aucune instance (comportement d'avant). Une `instance` sans curseur, ou mal formée, est refusée (1008, raison générique « curseur invalide », la valeur reçue n'est jamais recopiée).
 - Paramètre invalide (curseur non entier ou négatif, `instance` mal formée : majuscules, longueur ≠ 16, chiffres non ASCII) : fermeture avec le code 1008 et une raison générique, sans recopier la valeur reçue.
 
 ### Messages (JSON, serveur → client)
@@ -66,7 +66,7 @@ Un WebSocket n'est pas protégé par CORS : un site quelconque ouvert dans le na
 
 - Adresse relative à la page (`/api/ws`, en `ws:` ou `wss:` selon la page) : fonctionne derrière le proxy Vite (`ws: true` déjà configuré) et, plus tard, dans Tauri.
 - **États** : `connecting` (aucune connexion encore réussie), `connected`, `reconnecting` (avec le numéro d'essai), `unknown` (plus de 30 s sans connexion établie, comptées depuis la perte de la connexion ou le chargement de la page).
-- **Reconnexion** : attente croissante 0,5 s, 1 s, 2 s … plafonnée à 10 s, avec un aléa de ±20 % ; on renvoie le dernier curseur.
+- **Reconnexion** : attente croissante 0,5 s, 1 s, 2 s … plafonnée à 10 s, avec un aléa de ±20 % ; on renvoie le dernier curseur et l'`instance` du dernier `hello` valide.
 - **Connexion morte** : aucun message (même `ping`) depuis 45 s → on ferme et on reconnecte.
 - La machine d'états est une fonction pure testable, séparée de l'objet `WebSocket` (injecté).
 
@@ -90,7 +90,7 @@ Aucune animation ; seul un changement d'état change l'affichage.
 
 - Rafale de changements : messages coalescés par tâche ; au-delà de 500 lignes d'un coup, `resync`.
 - Plusieurs onglets : chaque onglet a sa connexion et son curseur.
-- Serveur redémarré (reload en dev) : la connexion tombe, le client reconnecte avec son curseur, aucun changement n'est perdu (les identifiants sont en base).
+- Serveur redémarré (reload en dev) : la connexion tombe, le client reconnecte avec son curseur et son `instance`, aucun changement n'est perdu (les identifiants sont en base). L'`instance` change à chaque démarrage : le serveur répond `reset: true` et le client relit tout une fois.
 - Événement sans tâche (`task` null) : `event` avec `task: null`.
 - Tâche supprimée : n'existe pas (les tâches sont abandonnées, jamais supprimées).
 
