@@ -114,6 +114,7 @@ def test_unexpected_json_shape_makes_every_node_unknown(payload):
 
 
 def test_hanging_tailscale_does_not_block_the_api(settings):
+    import gc
     import threading
     import time
 
@@ -124,11 +125,16 @@ def test_hanging_tailscale_does_not_block_the_api(settings):
         return tailscale_json()
 
     with TestClient(create_app(settings, nodes_runner=hanging)) as client:
+        # Late in the full suite the heap is large: a generation-2 collection takes about 0.5 s
+        # and, when it lands inside the timed request, fails the test without the API being slow.
+        gc.collect()
+        gc.disable()
         try:
             started = time.monotonic()
             body = client.get("/api/nodes").json()
             elapsed = time.monotonic() - started
         finally:
+            gc.enable()
             release.set()  # avant l'arrêt de l'app, qui attend la lecture en cours
 
     assert elapsed < 0.5
