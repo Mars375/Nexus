@@ -66,7 +66,8 @@ export function Floor(props: FloorProps) {
   // A new alert on a floor out of sight pulses the pip of its side once; never under reduced motion.
   const freshAlerts = useArrivals(nodes === undefined ? null : alerts.flatMap((a, i) => a ? [`${i + 1}:${a}`] : []))
   const pulse = (side: 'up' | 'down') => !prefersReducedMotion() && sides.others.some((o) => (side === 'up' ? o.floor > level.floor : o.floor < level.floor) && freshAlerts.has(`${o.floor}:${o.alert}`))
-  const listFloors = (fs: number[]) => fs.length === 1 ? `à l'étage ${fs[0]}` : `aux étages ${fs.slice(0, -1).join(', ')} et ${fs.at(-1)}`
+  const listFloors = (fs: number[]) => `${fs.length === 1 ? 'étage' : 'étages'} ${fs.join(', ')}`
+  const labelText = `Étage ${level.floor} / ${level.count}${sides.others.length > 0 ? ` · alerte : ${listFloors(sides.others.map((o) => o.floor))}` : ''}`
   const describe = (side: 'up' | 'down') => sides.others.filter((o) => (side === 'up' ? o.floor > level.floor : o.floor < level.floor)).map((o) => `${alertText(o.alert, o.count)} à l'étage ${o.floor}`).join(', ')
   const stepButton = (side: 'up' | 'down') => {
     const text = describe(side), pipAlert = side === 'up' ? sides.above : sides.below
@@ -94,9 +95,9 @@ export function Floor(props: FloorProps) {
         <div className="floor-pick pointer-events-none absolute left-0 top-10 flex items-center gap-1">
           {stepButton('up')}
           {stepButton('down')}
-          <span data-floor-label aria-live="polite" className="flex flex-col whitespace-nowrap font-data text-[11px] leading-[13px] text-ink">
+          <span data-floor-label aria-live="polite" title={labelText} className="flex w-[130px] min-w-0 flex-col font-data text-[11px] leading-[13px] text-ink">
             <span>Étage <span key={level.floor} className="floor-roll" {...(level.lifted !== undefined && level.dir && { 'data-roll': level.dir })}><span>{level.floor}</span></span> / {level.count}</span>
-            {sides.others.length > 0 && <span className={sides.others.some((o) => o.alert === 'off') ? 'text-danger' : 'text-attention'}> · alerte {listFloors(sides.others.map((o) => o.floor))}</span>}
+            {sides.others.length > 0 && <span data-alert-line className={clsx('line-clamp-2 break-words', sides.others.some((o) => o.alert === 'off') ? 'text-danger' : 'text-attention')}> · alerte : {listFloors(sides.others.map((o) => o.floor))}</span>}
           </span>
         </div>
       )}

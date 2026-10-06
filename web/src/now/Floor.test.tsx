@@ -492,7 +492,7 @@ test('un nœud hors ligne à l\'étage 3 : pastille rouge sur ▲, texte dans le
   expect(pip(container, 'down')).toBeNull()
   expect(up()).toHaveAccessibleName('Monter d\'un étage : un nœud hors ligne à l\'étage 3')
   expect(down()).toHaveAccessibleName('Descendre d\'un étage')
-  expect(pickLabel()).toBe('Étage 1 / 3 · alerte à l\'étage 3')
+  expect(pickLabel()).toBe('Étage 1 / 3 · alerte : étage 3')
   expect(container.querySelector('[data-floor-marker]')).toBeNull() // the column of dots is gone
 })
 
@@ -503,15 +503,15 @@ test('pastille sur ▼ pour un étage en dessous, la plus grave l\'emporte, aucu
   expect(pip(container, 'up')).toBeNull()
   expect(pip(container, 'down')!.getAttribute('data-alert')).toBe('unknown')
   expect(down()).toHaveAccessibleName('Descendre d\'un étage : un nœud en état inconnu à l\'étage 1')
-  expect(pickLabel()).toBe('Étage 3 / 3 · alerte à l\'étage 1')
+  expect(pickLabel()).toBe('Étage 3 / 3 · alerte : étage 1')
 })
 
 test('plusieurs étages en alerte : les deux textes, « alerte aux étages 1 et 3 »', () => {
   const { container } = render(<Floor snapshot={snap()} nodes={twelve({ n6: 'unknown', n10: 'offline' })} />)
   fireEvent.click(up())
-  expect(pickLabel()).toBe('Étage 2 / 3 · alerte à l\'étage 3') // the displayed floor 2 holds the unknown node
+  expect(pickLabel()).toBe('Étage 2 / 3 · alerte : étage 3') // the displayed floor 2 holds the unknown node
   fireEvent.click(down())
-  expect(pickLabel()).toBe('Étage 1 / 3 · alerte aux étages 2 et 3')
+  expect(pickLabel()).toBe('Étage 1 / 3 · alerte : étages 2, 3')
   expect(up()).toHaveAccessibleName('Monter d\'un étage : un nœud en état inconnu à l\'étage 2, un nœud hors ligne à l\'étage 3')
   expect(pip(container, 'up')!.getAttribute('data-alert')).toBe('off')
 })
@@ -526,7 +526,7 @@ test('un nœud inconnu, périmé ou une relecture en échec donne l\'ambre ; hor
   b.unmount()
   const c = render(<Floor snapshot={snap()} nodes={twelve()} nodesFailed />)
   expect(pip(c.container, 'up')!.getAttribute('data-alert')).toBe('unknown') // amber everywhere: floors 2 and 3 are above
-  expect(pickLabel()).toBe('Étage 1 / 3 · alerte aux étages 2 et 3')
+  expect(pickLabel()).toBe('Étage 1 / 3 · alerte : étages 2, 3')
   c.unmount()
   const d = render(<Floor snapshot={snap()} nodes={twelve({ artemis: 'offline-by-design' })} />)
   expect(pip(d.container, 'up')).toBeNull(); expect(pickLabel()).toBe('Étage 1 / 3')
@@ -601,7 +601,7 @@ test('une alerte NOUVELLE sur l\'étage affiché n\'a ni pastille, ni texte d\'�
   expect(down()).toHaveAccessibleName('Descendre d\'un étage')
   expect(container.querySelector('.is-fresh')).toBeNull()
   fireEvent.click(down()); fireEvent.click(down()) // leave it: now it is out of sight and counts
-  expect(pickLabel()).toBe('Étage 1 / 3 · alerte à l\'étage 3')
+  expect(pickLabel()).toBe('Étage 1 / 3 · alerte : étage 3')
 })
 
 test('mouvement réduit : ni couche qui part, ni data-arriving, ni is-fresh, ni numéro qui roule', () => {
@@ -803,4 +803,16 @@ test('repli pendant l\'ascenseur : les couches reçoivent data-snap (aucune tran
   fireEvent.click(down())
   expect(container.querySelector('[data-snap]')).toBeNull()
   vi.useRealTimers()
+})
+
+test('étiquette du sélecteur : largeur bornée, deux lignes d\'alerte au plus, texte complet pour les lecteurs d\'écran et en infobulle', () => {
+  const many = Array.from({ length: 20 }, (_, i) => node(`s${i + 1}`, [5, 9, 13, 17].includes(i + 1) ? 'offline' : 'online')) // floors 2, 3, 4, 5 in alert
+  render(<Floor snapshot={snap()} nodes={many} />)
+  const label = document.querySelector('[data-floor-label]') as HTMLElement
+  expect(label.className).toContain('w-[130px]'); expect(label.className).toContain('min-w-0')
+  const alert = label.querySelector('[data-alert-line]') as HTMLElement
+  expect(alert.className).toContain('line-clamp-2')
+  expect(label.textContent).toBe('Étage 1 / 5 · alerte : étages 2, 3, 4, 5') // the full list, whatever is clipped on screen
+  expect(label.getAttribute('title')).toBe('Étage 1 / 5 · alerte : étages 2, 3, 4, 5')
+  expect(up()).toHaveAccessibleName('Monter d\'un étage : un nœud hors ligne à l\'étage 2, un nœud hors ligne à l\'étage 3, un nœud hors ligne à l\'étage 4, un nœud hors ligne à l\'étage 5')
 })

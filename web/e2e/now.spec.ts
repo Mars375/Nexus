@@ -149,7 +149,7 @@ test('mouvement réduit : une demande fraîche garde son fond ambre', async ({ p
 })
 
 // --- Étages de baies (#36) : le serveur ne connaît que 4 nœuds, la réponse en simule 12 (ou 10)
-const NODE_IDS = ['cortex', 'synapse', 'artemis', 'helios', 'n5', 'n6', 'n7', 'n8', 'n9', 'n10', 'n11', 'n12']
+const NODE_IDS = ['cortex', 'synapse', 'artemis', 'helios', 'n5', 'n6', 'n7', 'n8', 'n9', 'n10', 'n11', 'n12', 'n13', 'n14', 'n15', 'n16', 'n17', 'n18', 'n19', 'n20']
 async function serveNodes(page: import('@playwright/test').Page, count = 12, offline: string[] = [], unknown: string[] = []) {
   // Offline and unknown nodes carry a last sighting, so their room labels really have three lines with « vu il y a ».
   const seen = new Date(Date.now() - 3 * 3_600_000).toISOString()
@@ -200,7 +200,7 @@ test('un nœud de l\'étage 3 hors ligne : la pastille de ▲ est rouge et l\'é
   await expect(pip).toBeVisible()
   await expect(pip).toHaveAttribute('data-alert', 'off')
   await expect(pip).toHaveCSS('background-color', 'rgb(248, 113, 113)')
-  await expect(page.locator('[data-floor-label]')).toHaveText('Étage 1 / 3 · alerte à l\'étage 3')
+  await expect(page.locator('[data-floor-label]')).toHaveText('Étage 1 / 3 · alerte : étage 3')
   await expect(page.getByRole('button', { name: 'Monter d\'un étage : un nœud hors ligne à l\'étage 3' })).toBeVisible()
 })
 
@@ -310,6 +310,38 @@ for (const width of [1440, 1400, 1366, 1100]) for (const [count, floor] of [[12,
       await page.getByRole('button', { name: 'Tourner l\'étage vers la droite' }).click()
       await expect(stage).toHaveAttribute('data-angle', quarter)
       await expectNoLabelOverlap(page, `étage ${floor} à ${quarter}°`)
+    }
+  })
+}
+
+for (const width of [800, 1440]) {
+  test(`20 nœuds, alertes sur 4 étages cachés : l'étiquette du sélecteur reste dans sa zone et ne recouvre aucune étiquette, avant et après un glisser, à ${width} px`, async ({ page, request }) => {
+    await seedAllAgents(request)
+    await serveNodes(page, 20, ['n6', 'n14'], ['n10', 'n18'])
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto('/#/maintenant')
+    const stage = page.locator('[data-stage]'), label = page.locator('[data-floor-label]')
+    await expect(label).toHaveText('Étage 1 / 5 · alerte : étages 2, 3, 4, 5')
+    await expect(page.locator('[data-label]')).toHaveCount(8)
+    const insideZone = async (when: string) => {
+      const s = (await stage.boundingBox())!, l = (await label.boundingBox())!
+      // the reserved zone: 210 px wide, 40 px high, right under the rotation buttons (which stand 40 px tall)
+      expect(l.x, `${when} : à gauche`).toBeGreaterThanOrEqual(s.x - 1); expect(l.x + l.width, `${when} : à droite`).toBeLessThanOrEqual(s.x + 210 + 1)
+      expect(l.y, `${when} : en haut`).toBeGreaterThanOrEqual(s.y + 40 - 1); expect(l.y + l.height, `${when} : en bas`).toBeLessThanOrEqual(s.y + 80 + 1)
+      await expectNoLabelOverlap(page, when)
+    }
+    await insideZone('0°')
+    const box = (await stage.boundingBox())!
+    const x = box.x + box.width / 2, y = box.y + box.height / 2
+    await page.mouse.move(x, y); await page.mouse.down()
+    await page.mouse.move(x + 100, y, { steps: 5 }); await page.mouse.move(x + 200, y, { steps: 5 })
+    await page.mouse.up()
+    await expect(stage).toHaveAttribute('data-angle', '90')
+    await insideZone('90° après un glisser')
+    for (const quarter of ['180', '270']) {
+      await page.getByRole('button', { name: 'Tourner l\'étage vers la droite' }).click()
+      await expect(stage).toHaveAttribute('data-angle', quarter)
+      await insideZone(`${quarter}°`)
     }
   })
 }
