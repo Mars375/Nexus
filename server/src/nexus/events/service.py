@@ -61,6 +61,36 @@ def _text_list(value: Any, name: str) -> list[str]:
     return list(value)
 
 
+# (field, violation code, message): required text, then optional text. The received value is never
+# echoed in the message (it could be a secret).
+_REQUIRED_TEXT = (
+    ("actor", "invalid_actor", "actor doit être un texte"),
+    ("kind", "invalid_kind", "kind doit être un texte"),
+    ("subject", "invalid_subject", "subject doit être un texte"),
+)
+_OPTIONAL_TEXT = (
+    ("task", "invalid_task", "task doit être un texte ou absente"),
+    ("run", "invalid_run", "run doit être un texte ou absent"),
+    ("body", "invalid_body", "body doit être un texte ou absent"),
+)
+
+
+def _check_scalars(envelope: Envelope, actor_event_id: object) -> None:
+    """Refuse a wrong scalar type from a direct call (the API's Pydantic models guarantee them).
+
+    Only the type is checked: empty or unknown values keep the behaviour of `rules.validate`.
+    """
+    for name, code, message in _REQUIRED_TEXT:
+        if not isinstance(getattr(envelope, name), str):
+            raise RuleViolation(code, message)
+    for name, code, message in _OPTIONAL_TEXT:
+        value = getattr(envelope, name)
+        if value is not None and not isinstance(value, str):
+            raise RuleViolation(code, message)
+    if not isinstance(actor_event_id, str):
+        raise RuleViolation("invalid_event_id", "id doit être un texte")
+
+
 def publish(
     session: Session,
     envelope: Envelope,
@@ -84,6 +114,7 @@ def publish(
     if not isinstance(at, datetime) or at.utcoffset() is None:
         # L'API l'exige (AwareDatetime) ; un adaptateur ferait sinon échouer l'écriture.
         raise RuleViolation("invalid_instant", "at : instant avec fuseau horaire requis")
+    _check_scalars(envelope, actor_event_id)
     if not isinstance(envelope.payload, dict):
         raise RuleViolation("invalid_payload", "payload doit être un objet JSON")
     envelope.needs = _text_list(envelope.needs, "needs")

@@ -125,3 +125,58 @@ def test_evidence_string_never_reaches_the_task_char_by_char(client):
 
     assert client.get(f"/api/tasks/{ref}").json()["evidence"] == []
     assert client.get("/api/events").status_code == 200
+
+
+WRONG_TYPES = [42, True, ["x"], {"a": 1}, b"x"]
+
+
+@pytest.mark.parametrize("value", WRONG_TYPES)
+@pytest.mark.parametrize(
+    ("field", "code"),
+    [
+        ("actor", "invalid_actor"),
+        ("kind", "invalid_kind"),
+        ("subject", "invalid_subject"),
+        ("task", "invalid_task"),
+        ("run", "invalid_run"),
+        ("body", "invalid_body"),
+    ],
+)
+def test_wrong_scalar_types_from_an_adapter_are_refused_not_crash(client, field, code, value):
+    with pytest.raises(RuleViolation) as exc:
+        direct(client, question(**{field: value}), "evt_a")
+
+    assert exc.value.code == code
+    assert str(value) not in exc.value.message  # the received value is never echoed
+    with client.app.state.sessionmaker() as session:
+        assert session.query(Event).count() == 0
+    assert client.get("/api/events").status_code == 200
+
+
+@pytest.mark.parametrize("value", WRONG_TYPES)
+def test_wrong_event_id_type_from_an_adapter_is_refused_not_crash(client, value):
+    with pytest.raises(RuleViolation) as exc:
+        direct(client, question(), value)
+
+    assert exc.value.code == "invalid_event_id"
+    assert str(value) not in exc.value.message
+    with client.app.state.sessionmaker() as session:
+        assert session.query(Event).count() == 0
+
+
+def test_valid_scalars_and_unknown_values_keep_their_behaviour(client):
+    ref = make_task(client)
+    _, created = direct(client, question(ref, run="r1", body="détail"), "evt_a")
+    assert created is True
+    _, created = direct(client, question(None, task=None, run=None, body=None,
+                                         subject="Autre question"), "evt_b")
+    assert created is True
+
+    for fields, code in [({"actor": "zzz"}, "unknown_actor"), ({"kind": "zzz"}, "unknown_kind"),
+                         ({"subject": "  "}, "subject_required")]:
+        with pytest.raises(RuleViolation) as exc:
+            direct(client, question(**fields), "evt_c")
+        assert exc.value.code == code
+    with pytest.raises(RuleViolation) as exc:
+        direct(client, question(), "")
+    assert exc.value.code == "event_id_required"
