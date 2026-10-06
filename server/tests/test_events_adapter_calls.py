@@ -127,7 +127,8 @@ def test_evidence_string_never_reaches_the_task_char_by_char(client):
     assert client.get("/api/events").status_code == 200
 
 
-WRONG_TYPES = [42, True, ["x"], {"a": 1}, b"x"]
+# Truthy and falsy alike: a check written as `if value and not isinstance(...)` must not pass.
+WRONG_TYPES = [42, True, ["x"], {"a": 1}, b"x", 0, False, [], {}, b""]
 
 
 @pytest.mark.parametrize("value", WRONG_TYPES)
@@ -153,7 +154,7 @@ def test_wrong_scalar_types_from_an_adapter_are_refused_not_crash(client, field,
     assert client.get("/api/events").status_code == 200
 
 
-@pytest.mark.parametrize("value", WRONG_TYPES)
+@pytest.mark.parametrize("value", [*WRONG_TYPES, None])
 def test_wrong_event_id_type_from_an_adapter_is_refused_not_crash(client, value):
     with pytest.raises(RuleViolation) as exc:
         direct(client, question(), value)
