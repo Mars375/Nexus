@@ -18,6 +18,7 @@ from pydantic import (
 from nexus.actors import Actor
 from nexus.clock import now
 from nexus.events import service
+from nexus.events.limits import EVENT_ID_MAX, EVIDENCE_REF_MAX, RUN_MAX, SUBJECT_MAX
 from nexus.events.rules import Envelope
 from nexus.models import Event
 from nexus.tasks.api import SessionDep, commit
@@ -27,7 +28,9 @@ Kind = Literal[
     "claimed", "working", "progress", "question", "blocked", "needs_human", "handoff",
     "review", "done", "failed", "unknown",
 ]
-Ref = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=512)]
+Ref = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=EVIDENCE_REF_MAX)
+]
 
 router = APIRouter(prefix="/api/events", tags=["événements"])
 
@@ -37,13 +40,15 @@ class EventIn(InputModel):
 
 
     v: Literal[1] = 1
-    id: str = Field(min_length=1, max_length=128, description="identifiant unique chez l'acteur")
+    id: str = Field(
+        min_length=1, max_length=EVENT_ID_MAX, description="identifiant unique chez l'acteur"
+    )
     at: AwareDatetime
     task: str | None = None
-    run: str | None = Field(default=None, max_length=128)
+    run: str | None = Field(default=None, max_length=RUN_MAX)
     actor: Actor
     kind: Kind
-    subject: str = Field(min_length=1, max_length=500)
+    subject: str = Field(min_length=1, max_length=SUBJECT_MAX)
     body: str | None = None
     payload: dict[str, Any] = {}
 

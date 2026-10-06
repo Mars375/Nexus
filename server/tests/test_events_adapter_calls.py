@@ -181,3 +181,78 @@ def test_valid_scalars_and_unknown_values_keep_their_behaviour(client):
     with pytest.raises(RuleViolation) as exc:
         direct(client, question(), "")
     assert exc.value.code == "event_id_required"
+
+
+# Limits the HTTP model caps (#42): (field, limit, code, how to build the direct call).
+LIMITS = [
+    ("id", 128, "too_long_id"),
+    ("run", 128, "too_long_run"),
+    ("subject", 500, "too_long_subject"),
+    ("evidence", 512, "too_long_evidence"),
+]
+
+
+def _direct_call(field, size):
+    """Direct-call arguments (envelope, id) with one field of `size` characters."""
+    value = "x" * size
+    if field == "id":
+        return question(), value
+    if field == "evidence":
+        return question(evidence=[value]), "evt_a"
+    return question(**{field: value}), "evt_a"
+
+
+def _http_body(field, size):
+    value = "x" * size
+    body = {"id": "evt_a", "at": AT.isoformat(), "actor": "helios", "kind": "question",
+            "subject": "Où est la clé ?", "needs": ["loic"]}
+    body["evidence" if field == "evidence" else field] = [value] if field == "evidence" else value
+    return body
+
+
+@pytest.mark.parametrize(("field", "limit", "code"), LIMITS)
+def test_value_at_the_limit_is_accepted_from_an_adapter(client, field, limit, code):
+    envelope, event_id = _direct_call(field, limit)
+
+    _, created = direct(client, envelope, event_id)
+
+    assert created is True
+
+
+@pytest.mark.parametrize(("field", "limit", "code"), LIMITS)
+def test_value_over_the_limit_is_refused_from_an_adapter(client, field, limit, code):
+    envelope, event_id = _direct_call(field, limit + 1)
+
+    with pytest.raises(RuleViolation) as exc:
+        direct(client, envelope, event_id)
+
+    assert exc.value.code == code
+    assert str(limit) in exc.value.message
+    assert "xxxxx" not in exc.value.message  # the received value is never echoed
+    with client.app.state.sessionmaker() as session:
+        assert session.query(Event).count() == 0
+    assert client.get("/api/events").status_code == 200
+
+
+@pytest.mark.parametrize(("field", "limit", "code"), LIMITS)
+def test_http_route_refuses_the_same_overlong_values(client, field, limit, code):
+    # Proves the service and the API enforce the same limits (shared constants).
+    assert client.post("/api/events", json=_http_body(field, limit)).status_code == 201
+    over = _http_body(field, limit + 1)
+    if field != "id":
+        over["id"] = "evt_b"
+
+    assert client.post("/api/events", json=over).status_code == 422
+
+
+def test_evidence_length_is_measured_after_stripping_like_the_api(client):
+    padded = "  " + "e" * 512 + "  "
+
+    assert client.post("/api/events", json=_http_body("evidence", 0) | {"evidence": [padded]}
+                       ).status_code == 201
+    _, created = direct(client, question(evidence=[padded], subject="Autre"), "evt_c")
+    assert created is True
+
+    with pytest.raises(RuleViolation) as exc:
+        direct(client, question(evidence=["  " + "e" * 513 + "  "]), "evt_b")
+    assert exc.value.code == "too_long_evidence"

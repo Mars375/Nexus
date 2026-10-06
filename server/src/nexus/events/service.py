@@ -21,6 +21,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from nexus import secrets
 from nexus.clock import now
 from nexus.events import rules
+from nexus.events.limits import EVENT_ID_MAX, EVIDENCE_REF_MAX, RUN_MAX, SUBJECT_MAX
 from nexus.events.rules import Envelope
 from nexus.models import Event, Task
 from nexus.tasks import service as tasks
@@ -91,6 +92,24 @@ def _check_scalars(envelope: Envelope, actor_event_id: object) -> None:
         raise RuleViolation("invalid_event_id", "id doit être un texte")
 
 
+def _check_lengths(envelope: Envelope, actor_event_id: str) -> None:
+    """Refuse a value longer than the API accepts (same constants, same measure).
+
+    Run after the type checks, before redaction: the API measures the raw received length (the
+    evidence items after stripping, as `Ref` does). The value is never echoed.
+    """
+    if len(actor_event_id) > EVENT_ID_MAX:
+        raise RuleViolation("too_long_id", f"id : {EVENT_ID_MAX} caractères au plus")
+    if envelope.run is not None and len(envelope.run) > RUN_MAX:
+        raise RuleViolation("too_long_run", f"run : {RUN_MAX} caractères au plus")
+    if len(envelope.subject) > SUBJECT_MAX:
+        raise RuleViolation("too_long_subject", f"subject : {SUBJECT_MAX} caractères au plus")
+    if any(len(item.strip()) > EVIDENCE_REF_MAX for item in envelope.evidence):
+        raise RuleViolation(
+            "too_long_evidence", f"evidence : {EVIDENCE_REF_MAX} caractères au plus par élément"
+        )
+
+
 def publish(
     session: Session,
     envelope: Envelope,
@@ -119,6 +138,7 @@ def publish(
         raise RuleViolation("invalid_payload", "payload doit être un objet JSON")
     envelope.needs = _text_list(envelope.needs, "needs")
     envelope.evidence = _text_list(envelope.evidence, "evidence")
+    _check_lengths(envelope, actor_event_id)
     incoming = (envelope.subject, envelope.body, envelope.payload, envelope.evidence,
                 envelope.needs, envelope.run, actor_event_id)
     if has_unencodable(incoming):
