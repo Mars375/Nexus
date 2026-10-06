@@ -3,6 +3,8 @@
  * Le WebSocket est injecté (`open`) pour que la logique se teste sans réseau. Les messages
  * ne portent que des références : l'interface relit toujours les données par l'API REST.
  */
+import { API_BASE } from './apiBase'
+
 export type Cursor = { history: number; events: number }
 
 export type LiveMessage =
@@ -38,9 +40,11 @@ export function reconnectDelay(attempt: number, random: () => number = Math.rand
 export function liveUrl(
   cursor: Cursor | null,
   location: { protocol: string; host: string } = window.location,
+  base: string = API_BASE,
 ): string {
-  const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
   const query = cursor ? `?history_after=${cursor.history}&events_after=${cursor.events}` : ''
+  if (base) return `${base.replace(/^http/, 'ws')}/api/ws${query}`
+  const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
   return `${scheme}://${location.host}/api/ws${query}`
 }
 

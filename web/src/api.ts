@@ -1,5 +1,7 @@
 // Toute donnée passe par l'API FastAPI — jamais d'accès direct propre au navigateur (ADR-017).
 
+import { apiUrl } from './apiBase'
+
 export type Health = {
   version: string
   db: { status: 'ok' | 'unknown'; source: string; measured_at: string }
@@ -130,7 +132,7 @@ export async function request<T>(
   timeoutMs: number = REQUEST_TIMEOUT_MS,
 ): Promise<T> {
   const timeout = AbortSignal.timeout(timeoutMs)
-  const res = await fetch(path, {
+  const res = await fetch(apiUrl(path), {
     ...init,
     signal: init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout,
     headers: init?.body ? { 'Content-Type': 'application/json', ...init.headers } : init?.headers,
@@ -164,7 +166,7 @@ export async function fetchHealth(
   timeoutMs: number = HEALTH_TIMEOUT_MS,
 ): Promise<Health> {
   const timeout = AbortSignal.timeout(timeoutMs)
-  const res = await fetch('/api/health', {
+  const res = await fetch(apiUrl('/api/health'), {
     signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)

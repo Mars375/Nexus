@@ -75,6 +75,13 @@ describe('liveUrl', () => {
       'wss://nexus.local/api/ws?history_after=3&events_after=4',
     )
   })
+  test('avec une base configurée, ignore la page : ws/wss suit la base', () => {
+    const page = { protocol: 'http:', host: 'tauri.localhost' }
+    expect(liveUrl(null, page, 'http://127.0.0.1:8765')).toBe('ws://127.0.0.1:8765/api/ws')
+    expect(liveUrl({ history: 3, events: 4 }, page, 'https://nexus.local/proxy')).toBe(
+      'wss://nexus.local/proxy/api/ws?history_after=3&events_after=4',
+    )
+  })
 })
 
 describe('connectLive', () => {
