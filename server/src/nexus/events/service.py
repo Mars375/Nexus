@@ -53,6 +53,14 @@ def parse_task_ref(ref: str) -> int:
     return int(raw)
 
 
+def _text_list(value: Any, name: str) -> list[str]:
+    # An adapter may pass a tuple: normalise to the list the database will re-read, otherwise the
+    # fingerprint (read-back, anti-noise) compares a tuple to a list.
+    if not isinstance(value, list | tuple) or not all(isinstance(v, str) for v in value):
+        raise RuleViolation(f"invalid_{name}", f"{name} doit être une liste de textes")
+    return list(value)
+
+
 def publish(
     session: Session,
     envelope: Envelope,
@@ -76,6 +84,10 @@ def publish(
     if not isinstance(at, datetime) or at.utcoffset() is None:
         # L'API l'exige (AwareDatetime) ; un adaptateur ferait sinon échouer l'écriture.
         raise RuleViolation("invalid_instant", "at : instant avec fuseau horaire requis")
+    if not isinstance(envelope.payload, dict):
+        raise RuleViolation("invalid_payload", "payload doit être un objet JSON")
+    envelope.needs = _text_list(envelope.needs, "needs")
+    envelope.evidence = _text_list(envelope.evidence, "evidence")
     incoming = (envelope.subject, envelope.body, envelope.payload, envelope.evidence,
                 envelope.needs, envelope.run, actor_event_id)
     if has_unencodable(incoming):
@@ -367,13 +379,17 @@ def _apply_effects(session: Session, event: Event, e: Envelope, task: Task) -> l
     """Traduit l'événement en mutations de la tâche, chacune tentée dans un point de sauvegarde."""
     effects: list[dict] = []
 
-    def attempt(action: str, fn) -> None:
+    def attempt(action: str, fn, watched: tuple[str, ...] = (), unchanged: str = "") -> None:
         # Un conflit de version (la tâche a changé depuis sa lecture) n'est pas un refus : on
         # relit la tâche et on retente, les règles jugeant alors son état à jour.
         for _ in range(EFFECT_ATTEMPTS):
             savepoint = session.begin_nested()
             try:
+                before = [getattr(task, f) for f in watched]
                 fn()
+                if watched and before == [getattr(task, f) for f in watched]:
+                    # update_task writes nothing when nothing differs: not an applied effect.
+                    raise RuleViolation("effect_unchanged", unchanged)
                 savepoint.commit()
                 effects.append({"action": action, "applied": True})
                 return
@@ -417,9 +433,14 @@ def _apply_effects(session: Session, event: Event, e: Envelope, task: Task) -> l
         case "claimed":
             session.refresh(task)  # jugé sur l'état courant, pas sur la lecture initiale
             if task.lead_agent != event.actor:
-                attempt("lead_agent", lambda: tasks.update_task(
-                    session, task, {"lead_agent": event.actor}, event.actor
-                ))
+                attempt(
+                    "lead_agent",
+                    lambda: tasks.update_task(
+                        session, task, {"lead_agent": event.actor}, event.actor
+                    ),
+                    watched=("lead_agent",),
+                    unchanged=f"{event.actor} est déjà l'agent principal",
+                )
         case "working":
             move("in_progress")
         case "blocked":
@@ -439,9 +460,14 @@ def _apply_effects(session: Session, event: Event, e: Envelope, task: Task) -> l
             if stale:
                 effects.append({"action": "handoff", "applied": False, "reason": stale})
                 return effects
-            attempt("handoff", lambda: tasks.update_task(
-                session, task,
-                {"lead_agent": e.needs[0], "next_action": e.payload["next_action"]},
-                event.actor,
-            ))
+            session.refresh(task)  # judged on the current task, not the copy read before the event
+            lead, next_action = e.needs[0], e.payload["next_action"].strip()
+            attempt(
+                "handoff",
+                lambda: tasks.update_task(
+                    session, task, {"lead_agent": lead, "next_action": next_action}, event.actor
+                ),
+                watched=("lead_agent", "next_action"),
+                unchanged=f"{lead} a déjà la main, avec la même prochaine action",
+            )
     return effects

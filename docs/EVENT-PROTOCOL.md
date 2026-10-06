@@ -131,6 +131,8 @@ Terminé avec preuve :
 
 Un événement valide est **toujours enregistré** (c'est un fait déclaré). Ses effets sur la tâche passent par les règles des tâches ; un effet refusé est consigné dans `effects` avec sa raison, sans faire échouer la publication.
 
+Un effet qui ne change rien est consigné comme **non appliqué**, avec sa raison, et n'ajoute aucune ligne à l'historique de la tâche ni ne change sa date de modification. C'est le cas d'un `handoff` vers l'agent déjà principal avec la même prochaine action (espaces autour exclus). Un `claimed` de l'agent déjà principal, lui, n'a aucun effet à consigner : `effects` reste vide.
+
 | Kind | Effet sur la tâche |
 |---|---|
 | `claimed` | l'émetteur devient agent principal |
