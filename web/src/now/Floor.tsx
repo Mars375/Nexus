@@ -1,21 +1,19 @@
 import clsx from 'clsx'
-import type { DragEvent, ReactNode } from 'react'
+import type { DragEvent, KeyboardEvent, ReactNode } from 'react'
 import type { NodeState, NowSnapshot } from '@/api'
 import { age } from '@/format'
 import { isStale } from '@/freshness'
 import { useNow } from '@/useNow'
-import { DESK, RACK, box, drawOrder, layoutFloor, toPercent, type Box, type Dir, type Layout } from './iso'
-import { AGE_TICK_MS, displayName, rackLabel, rackTone, seatModels, type RackTone, type SeatModel } from './model'
+import { DESK, box, drawOrder, layoutFloor, toPercent, type Dir, type Layout } from './iso'
+import { AGE_TICK_MS, displayName, floorAlert, floorAlertCount, floorAlertSides, nodeFloors, rackDetail, rackLabel, rackTone, seatModels, type FloorAlert, type RackView, type SeatModel } from './model'
+import { Faces, Rack } from './Rack'
+import { RackLabels, ServerRoom } from './ServerRoom'
 import { useArrivals } from './useArrivals'
+import { prefersReducedMotion, useFloorLevel, type FloorLayer } from './useFloorLevel'
 import { useFloorRotation, type FloorStage } from './useFloorRotation'
 import './floor.css'
 
 const MAX_TICKETS = 3
-
-/** Top face and visible side faces of one box. */
-function Faces({ b, topClass }: { b: Box; topClass?: string }) {
-  return (<><polygon className={clsx('f-top', topClass)} points={b.top} />{b.sides.map((s) => <polygon key={s.dir} className={s.shade} points={s.points} />)}</>)
-}
 
 /** Path of a request thread from a seat to the table, along the floor in right angles. */
 function routePath(l: Layout, s: { x: number; y: number; back: boolean }): string {
@@ -49,54 +47,100 @@ function Desk({ l, seat, m }: { l: Layout; seat: Layout['seats'][number]; m: Sea
 const LED_FACES: Dir[] = ['+x', '-x', '+y', '-y']
 const NORMAL: Record<Dir, readonly [number, number]> = { '+x': [1, 0], '-x': [-1, 0], '+y': [0, 1], '-y': [0, -1] }
 
-/** One indicator light on a rack side face, `z` being its top edge. */
-function ledPoints(l: Layout, r: { x: number; y: number }, dir: Dir, z: number): string {
-  const along = [r.x + 0.25, r.x + 1.15], across = [r.y + 0.25, r.y + 1.15]
-  const fixed = dir === '+x' ? r.x + RACK.w : dir === '-x' ? r.x : dir === '+y' ? r.y + RACK.d : r.y
-  const at = (u: number, zz: number) => (dir === '+x' || dir === '-x' ? l.project(fixed, u, zz) : l.project(u, fixed, zz))
-  const [a, b] = dir === '+x' || dir === '-x' ? across : along
-  return [at(a, z), at(b, z), at(b, z - 0.16), at(a, z - 0.16)].map((q) => q.join(',')).join(' ')
-}
-
-type RackView = { node: NodeState; tone: RackTone; text: string }
-
 type FloorProps = { snapshot: NowSnapshot; nodes: NodeState[] | undefined; nodesFailed?: boolean }
 
 const ROTATE_BUTTON = 'pointer-events-auto grid size-9 place-items-center rounded-md border border-line bg-surface/80 text-base text-ink hover:bg-sunken focus-visible:outline-2 focus-visible:outline-accent'
+/** Alert wording for a floor: « un nœud hors ligne », « 3 nœuds en état inconnu ». */
+const alertText = (alert: FloorAlert, count: number): string => `${count === 1 ? 'un nœud' : `${count} nœuds`} ${alert === 'off' ? 'hors ligne' : 'en état inconnu'}`
 
-/** The floor with its rotation: drag, arrow keys and two buttons; the angle settles on quarter turns. */
+/** The floor with its rotation and its floors: drag, arrow keys, PageUp / PageDown and buttons; the angle settles on quarter turns. */
 export function Floor(props: FloorProps) {
+  const { nodes, nodesFailed = false } = props
   const { angle, rotateBy, stage } = useFloorRotation()
+  const level = useFloorLevel(nodeFloors(nodes).length, { loaded: nodes !== undefined })
+  const now = useNow(AGE_TICK_MS)
+  const floors = nodeFloors(nodes)
+  const stale = (n: NodeState) => nodesFailed || isStale(n.measured_at, 'nodes', now)
+  const alerts = floors.map((f) => floorAlert(f, stale))
+  // Alerts of the floors out of sight sit on ▲ / ▼ and in the label, never for the floor shown.
+  const sides = floorAlertSides(alerts, level.floor, floors.map((f) => floorAlertCount(f, stale)))
+  // A new alert on a floor out of sight pulses the pip of its side once; never under reduced motion.
+  const freshAlerts = useArrivals(nodes === undefined ? null : alerts.flatMap((a, i) => a ? [`${i + 1}:${a}`] : []))
+/** True when a fresh alert on the floors of that side should make its pip pulse once. */
+  const pulse = (side: 'up' | 'down') => !prefersReducedMotion() && sides.others.some((o) => (side === 'up' ? o.floor > level.floor : o.floor < level.floor) && freshAlerts.has(`${o.floor}:${o.alert}`))
+/** « étage 3 » or « étages 2, 3, 5 », for the alert line of the label. */
+  const listFloors = (fs: number[]) => `${fs.length === 1 ? 'étage' : 'étages'} ${fs.join(', ')}`
+  const labelText = `Étage ${level.floor} / ${level.count}${sides.others.length > 0 ? ` · alerte : ${listFloors(sides.others.map((o) => o.floor))}` : ''}`
+/** Accessible wording of the alerts on the floors above (`up`) or below (`down`) the one shown. */
+  const describe = (side: 'up' | 'down') => sides.others.filter((o) => (side === 'up' ? o.floor > level.floor : o.floor < level.floor)).map((o) => `${alertText(o.alert, o.count)} à l'étage ${o.floor}`).join(', ')
+/** The ▲ or ▼ button: pip of the most severe alert on its side, names the floors in alert, aria-disabled at the limit. */
+  const stepButton = (side: 'up' | 'down') => {
+    const text = describe(side), pipAlert = side === 'up' ? sides.above : sides.below
+    const atLimit = side === 'up' ? level.floor >= level.count : level.floor <= 1
+    return (
+      <button type="button" className={clsx(ROTATE_BUTTON, 'relative')} aria-label={`${side === 'up' ? 'Monter' : 'Descendre'} d'un étage${text ? ` : ${text}` : ''}`}
+        {...(atLimit && { 'aria-disabled': true })} onClick={() => level.go(side === 'up' ? 1 : -1)}>
+        <span aria-hidden="true">{side === 'up' ? '▲' : '▼'}</span>
+        {pipAlert && <span aria-hidden="true" data-side={side} data-alert={pipAlert} className={clsx('floor-pip', pulse(side) && 'is-fresh')} />}
+      </button>
+    )
+  }
+/** Arrow keys rotate (stage handler), PageUp / PageDown change floor; modified keys are left to the browser. */
+  const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+    stage.onKeyDown(e)
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || level.count < 2) return
+    if (e.key === 'PageUp' || e.key === 'PageDown') { e.preventDefault(); level.go(e.key === 'PageUp' ? 1 : -1) }
+  }
   return (
-    <FloorScene {...props} angle={angle} stage={stage}>
+    <FloorScene {...props} angle={angle} stage={{ ...stage, onKeyDown }} floor={level.floor} floorCount={level.count} layers={level.layers} dir={level.dir} lifted={level.lifted} arriving={level.arriving} snap={level.snap}>
       <div className="absolute left-0 top-0 flex gap-1">
         <button type="button" className={ROTATE_BUTTON} aria-label="Tourner l'étage vers la gauche" onClick={() => rotateBy(-90)}><span aria-hidden="true">↺</span></button>
         <button type="button" className={ROTATE_BUTTON} aria-label="Tourner l'étage vers la droite" onClick={() => rotateBy(90)}><span aria-hidden="true">↻</span></button>
       </div>
+      {level.count > 1 && (
+        <div className="floor-pick pointer-events-none absolute left-0 top-10 flex items-center gap-1">
+          {stepButton('up')}
+          {stepButton('down')}
+          <span data-floor-label aria-live="polite" title={labelText} className="flex w-[130px] min-w-0 flex-col font-data text-[11px] leading-[13px] text-ink">
+            <span>Étage <span key={level.floor} className="floor-roll" {...(level.lifted !== undefined && level.dir && { 'data-roll': level.dir })}><span>{level.floor}</span></span> / {level.count}</span>
+            {sides.others.length > 0 && <span data-alert-line className={clsx('line-clamp-2 break-words', sides.others.some((o) => o.alert === 'off') ? 'text-danger' : 'text-attention')}> · alerte : {listFloors(sides.others.map((o) => o.floor))}</span>}
+          </span>
+        </div>
+      )}
     </FloorScene>
   )
 }
 
-/** The floor seen at `angle` degrees: pure drawing, the angle is owned by the caller. */
-export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage, children }: FloorProps & { angle: number; stage?: FloorStage; children?: ReactNode }) {
+type SceneProps = FloorProps & { angle: number; stage?: FloorStage; children?: ReactNode; floor?: number; floorCount?: number; layers?: FloorLayer[]; dir?: 'up' | 'down'; lifted?: number; arriving?: number; snap?: boolean }
+
+/** The floor seen at `angle` degrees: pure drawing, the angle and the floor shown are owned by the caller. */
+export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage, children, floor = 1, floorCount = 1, layers, dir, lifted, arriving, snap }: SceneProps) {
   const now = useNow(AGE_TICK_MS)
   const seats = seatModels(snapshot)
   // Une mesure trop ancienne, ou une relecture en échec : jamais de vert sur une donnée périmée.
-  const racks: RackView[] = (nodes ?? []).map((node) => {
+/** Racks of a floor: tone, state text (« périmée » when stale or when the read failed) and legend line. */
+  const racksOf = (list: NodeState[]): RackView[] => list.map((node) => {
     const stale = nodesFailed || isStale(node.measured_at, 'nodes', now)
-    return { node, tone: stale ? 'unknown' : rackTone(node), text: `${node.id.toUpperCase()} · ${stale ? 'périmée' : rackLabel(node)}` }
+    const state = stale ? 'périmée' : rackLabel(node)
+    return { node, tone: stale ? 'unknown' : rackTone(node), state, text: `${node.id.toUpperCase()} · ${state}` }
   })
-  const l = layoutFloor(seats.length, nodes === undefined ? 1 : racks.length, angle) // la salle garde sa place pendant la lecture
+  const floors = nodeFloors(nodes)
+  const shown = racksOf(floors[Math.min(floor, floors.length) - 1] ?? [])
+  const office = racksOf(floors[0])
+  // Floor 1 sets the frame (the room is drawn inside it): it keeps its place while nodes are read.
+  const l = layoutFloor(seats.length, nodes === undefined ? 1 : office.length, angle, floorCount)
   const freshAsks = useArrivals(snapshot.asks.map((q) => q.event))
   const freshRoutes = new Set(snapshot.asks.filter((q) => freshAsks.has(q.event)).map((q) => q.agent))
   const p = l.project
-  const floor = box(l, 0, 0, -0.35, l.width, l.depth, 0.35)
+  const slab = box(l, 0, 0, -0.35, l.width, l.depth, 0.35)
   let grid = ''
   for (let i = 1; i < l.width; i++) grid += `M${p(i, 0)} L${p(i, l.depth)} `
   for (let j = 1; j < l.depth; j++) grid += `M${p(0, j)} L${p(l.width, j)} `
   const tickets = snapshot.asks.slice(0, MAX_TICKETS)
   const extra = snapshot.asks.length - tickets.length
   const label = (ask: number) => ask === 0 ? 'aucune demande reçue (7 j)' : `${ask} demande${ask > 1 ? 's' : ''}`
+  const onRoom = Math.min(floor, floors.length) > 1
+  const mounted: FloorLayer[] = layers ?? [{ floor, role: 'current', from: 'above' }]
 
   const dais = (
     <g key="table" className="dais" data-on={String(snapshot.asks.length > 0)}>
@@ -109,34 +153,40 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
       })}
     </g>
   )
-  const rackView = (index: number) => {
-    const rv = racks[index]
+/** Rack of floor 1, on its LED face chosen by the angle. */
+  const officeRack = (index: number) => {
+    const rv = office[index]
     if (!rv) return null
-    const r = l.racks[index], { node: n, tone } = rv
     const face = LED_FACES.find((d) => l.sees(...NORMAL[d])) ?? '+x'
-    return (
-      <g key={`rack-${n.id}`} className="rack" data-node={n.id} data-tone={tone}>
-        <Faces b={box(l, r.x, r.y, 0, RACK.w, RACK.d, RACK.h)} />
-        {[0, 1, 2, 3, 4].map((j) => {
-          // Three stacked layers whose opacity follows the tone, so a change fades instead of jumping.
-          const pts = ledPoints(l, r, face, 2.1 - j * 0.38)
-          return <g key={j}><polygon className="led" data-face={face} points={pts} /><polygon className="led-on" points={pts} /><polygon className="led-ring" points={pts} /></g>
-        })}
-      </g>
-    )
+    return <Rack key={`rack-${rv.node.id}`} l={l} at={l.racks[index]} node={rv.node} tone={rv.tone} face={face} index={index} />
   }
+  const viewBox = `${l.viewBox.x} ${l.viewBox.y} ${l.viewBox.w} ${l.viewBox.h}`
+/** HTML labels of the desks, laid over the floor-1 SVG. */
+  const labels = seats.map((m, i) => {
+    const [left, top] = toPercent(l, [l.labels[i].x, l.labels[i].y])
+    const blocked = snapshot.blocks.find((b) => b.lead_agent === m.agent)
+    // Un poste dont l'agent est seulement bloqué ouvre la tâche bloquée.
+    const target = m.task ?? (m.block ? blocked?.task ?? null : null)
+    const targetTitle = m.title ?? blocked?.title ?? target
+    const meta = m.task ? `${m.task} · ${m.since ? age(m.since, now).replace(/^il y a /, '') : 'durée inconnue'}` : m.block ? (blocked ? `${blocked.task} · bloquée` : 'tâche bloquée') : 'inactif'
+    // Narrow floor (< 800 px): the task alone on one line, cut with « … »; the duration comes back from 800 px.
+    const brief = m.task ?? (m.block ? (blocked?.task ?? 'tâche bloquée') : 'inactif')
+    const name = <><span className="block font-orbital-display text-[13px] font-semibold tracking-[0.14em] leading-[14px]">{displayName(m.agent).toUpperCase()}</span>
+      {m.title && <span className="mx-auto hidden max-w-[15ch] truncate font-data text-[11px] leading-[13px] text-ink @min-[1150px]:block">{m.title}</span>}
+      <span className="mx-auto block max-w-[16ch] truncate font-data text-[11px] leading-[13px] text-muted @min-[800px]:hidden">{brief}</span>
+      <span className="hidden font-data text-[11px] leading-[13px] text-muted @min-[800px]:block">{meta}</span></>
+    const cls = clsx('absolute whitespace-nowrap text-center -translate-x-1/2', l.labels[i].below ? 'translate-y-0' : '-translate-y-full',
+      m.wait ? '[&>span:first-child]:text-attention' : m.block ? '[&>span:first-child]:text-danger' : m.run ? '' : '[&>span:first-child]:text-unknown')
+    const style = { left: `${left}%`, top: `${top}%` }
+    return target
+      ? <a key={m.agent} href={`#/travail/${target}`} data-label={m.agent} draggable={false} className={clsx(cls, 'cursor-pointer bg-transparent no-underline')} style={style} aria-label={`${displayName(m.agent)}, ${targetTitle} : ouvrir la tâche`}>{name}</a>
+      : <div key={m.agent} data-label={m.agent} className={cls} style={style}>{name}</div>
+  })
 
-  return (
-    <div className="@container relative mx-auto w-full select-none focus-visible:outline-2 focus-visible:outline-accent" style={{ aspectRatio: `${l.viewBox.w} / ${l.viewBox.h}`, maxHeight: '100%', touchAction: 'pan-y' }}
-      {...(stage && { ...stage, onDragStart: (e: DragEvent<HTMLElement>) => e.preventDefault(), role: 'group', tabIndex: 0, 'data-stage': '', 'data-angle': Math.round(angle * 10) / 10, 'aria-label': 'Étage : glisser, ou flèches gauche et droite, pour le faire pivoter' })}>
-      <svg viewBox={`${l.viewBox.x} ${l.viewBox.y} ${l.viewBox.w} ${l.viewBox.h}`} className="absolute inset-0 size-full" role="img"
-        aria-label="Étage de Nexus : un poste par agent, ta table au centre, la salle des serveurs">
-        <defs>
-          <radialGradient id="now-run"><stop offset="0" stopColor="#5eead4" stopOpacity=".30" /><stop offset="1" stopColor="#5eead4" stopOpacity="0" /></radialGradient>
-          <radialGradient id="now-att"><stop offset="0" stopColor="#fb923c" stopOpacity=".26" /><stop offset="1" stopColor="#fb923c" stopOpacity="0" /></radialGradient>
-          <pattern id="now-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="#f87171" strokeOpacity=".55" strokeWidth="1.4" /></pattern>
-        </defs>
-        <polygon className="floor-top" points={floor.top} />{floor.sides.map((s) => <polygon key={s.dir} className={s.shade === 'f-left' ? 'floor-left' : 'floor-right'} points={s.points} />)}
+  const officeLevel = (
+    <>
+      <svg viewBox={viewBox} className="absolute inset-0 size-full" role="img" aria-label="Étage de Nexus : un poste par agent, ta table au centre, la salle des serveurs">
+        <polygon className="floor-top" points={slab.top} />{slab.sides.map((s) => <polygon key={s.dir} className={s.shade === 'f-left' ? 'floor-left' : 'floor-right'} points={s.points} />)}
         <path className="floor-grid" d={grid.trim()} />
         {seats.map((m, i) => m.wait && (
           <g key={m.agent} className={clsx('route', freshRoutes.has(m.agent) && 'is-fresh')} data-route={m.agent}>
@@ -144,45 +194,65 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
             <path className="r-spark" d={routePath(l, l.seats[i])} pathLength={100} />
           </g>
         ))}
-        {drawOrder(l).map((o) => o.kind === 'seat' ? <Desk key={seats[o.index].agent} l={l} seat={l.seats[o.index]} m={seats[o.index]} /> : o.kind === 'rack' ? rackView(o.index) : dais)}
+        {drawOrder(l).map((o) => o.kind === 'seat' ? <Desk key={seats[o.index].agent} l={l} seat={l.seats[o.index]} m={seats[o.index]} /> : o.kind === 'rack' ? officeRack(o.index) : dais)}
         {seats.map((m, i) => {
           const end = l.labels[i]
           return <path key={m.agent} className="leader" d={`M${end.anchor} L${end.x} ${end.y}`} />
         })}
       </svg>
+      {labels}
+    </>
+  )
+/** The SVG and the labels of a server floor. */
+  const roomLevel = (n: number) => {
+    const racks = racksOf(floors[n - 1] ?? [])
+    return (
+      <>
+      <svg viewBox={viewBox} className="absolute inset-0 size-full" role="img" aria-label={`Étage ${n} de Nexus : salle des serveurs, ${racks.length} baie${racks.length > 1 ? 's' : ''}`}>
+        <ServerRoom l={l} floor={n} racks={racks} />
+      </svg>
+      <RackLabels l={l} racks={racks} now={now} />
+      </>
+    )
+  }
 
-      {seats.map((m, i) => {
-        const [left, top] = toPercent(l, [l.labels[i].x, l.labels[i].y])
-        const blocked = snapshot.blocks.find((b) => b.lead_agent === m.agent)
-        // Un poste dont l'agent est seulement bloqué ouvre la tâche bloquée.
-        const target = m.task ?? (m.block ? blocked?.task ?? null : null)
-        const targetTitle = m.title ?? blocked?.title ?? target
-        const meta = m.task ? `${m.task} · ${m.since ? age(m.since, now).replace(/^il y a /, '') : 'durée inconnue'}` : m.block ? (blocked ? `${blocked.task} · bloquée` : 'tâche bloquée') : 'inactif'
-        // Narrow floor (< 800 px): the task alone on one line, cut with « … »; the duration comes back from 800 px.
-        const brief = m.task ?? (m.block ? (blocked?.task ?? 'tâche bloquée') : 'inactif')
-        const name = <><span className="block font-orbital-display text-[13px] font-semibold tracking-[0.14em] leading-[14px]">{displayName(m.agent).toUpperCase()}</span>
-          {m.title && <span className="mx-auto hidden max-w-[15ch] truncate font-data text-[11px] leading-[13px] text-ink @min-[1150px]:block">{m.title}</span>}
-          <span className="mx-auto block max-w-[16ch] truncate font-data text-[11px] leading-[13px] text-muted @min-[800px]:hidden">{brief}</span>
-          <span className="hidden font-data text-[11px] leading-[13px] text-muted @min-[800px]:block">{meta}</span></>
-        const cls = clsx('absolute whitespace-nowrap text-center -translate-x-1/2', l.labels[i].below ? 'translate-y-0' : '-translate-y-full',
-          m.wait ? '[&>span:first-child]:text-attention' : m.block ? '[&>span:first-child]:text-danger' : m.run ? '' : '[&>span:first-child]:text-unknown')
-        const style = { left: `${left}%`, top: `${top}%` }
-        return target
-          ? <a key={m.agent} href={`#/travail/${target}`} data-label={m.agent} draggable={false} className={clsx(cls, 'cursor-pointer bg-transparent no-underline')} style={style} aria-label={`${displayName(m.agent)}, ${targetTitle} : ouvrir la tâche`}>{name}</a>
-          : <div key={m.agent} data-label={m.agent} className={cls} style={style}>{name}</div>
-      })}
+  return (
+    <div className="@container relative mx-auto w-full select-none focus-visible:outline-2 focus-visible:outline-accent" style={{ aspectRatio: `${l.viewBox.w} / ${l.viewBox.h}`, maxHeight: '100%', touchAction: 'pan-y' }}
+      {...(stage && { ...stage, onDragStart: (e: DragEvent<HTMLElement>) => e.preventDefault(), role: 'group', tabIndex: 0, 'data-stage': '', 'data-angle': Math.round(angle * 10) / 10, 'aria-label': `Étage : glisser, ou flèches gauche et droite, pour le faire pivoter${floorCount > 1 ? ' ; PageUp et PageDown pour changer d\'étage' : ''}` })}
+      data-floor={floor} data-floor-count={floorCount} {...(dir && { 'data-floor-dir': dir })}>
+      {/* Gradients and hatching live once here: every floor layer refers to them by id. */}
+      <svg width="0" height="0" className="absolute" aria-hidden="true" focusable="false">
+        <defs>
+          <radialGradient id="now-run"><stop offset="0" stopColor="#5eead4" stopOpacity=".30" /><stop offset="1" stopColor="#5eead4" stopOpacity="0" /></radialGradient>
+          <radialGradient id="now-att"><stop offset="0" stopColor="#fb923c" stopOpacity=".26" /><stop offset="1" stopColor="#fb923c" stopOpacity="0" /></radialGradient>
+          <pattern id="now-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="#f87171" strokeOpacity=".55" strokeWidth="1.4" /></pattern>
+        </defs>
+      </svg>
+      {/* Layers keep a fixed DOM order (by floor): moving a node would cancel its transition. The one shown is raised by CSS. */}
+      <div className="levels absolute inset-0">
+      {[...mounted].sort((a, b) => a.floor - b.floor).map((m) => (
+        <div key={m.floor} className="level absolute inset-0" data-level={m.floor} data-role={m.role}
+          // The slide only exists for a floor leaving or the one reached by a move: never at first render, never on a fall back.
+          {...((m.role === 'leaving' || m.floor === lifted) && { 'data-from': m.from })} {...(m.role === 'current' && m.floor === arriving && { 'data-arriving': '' })} {...(snap && { 'data-snap': '' })}
+          {...(m.role === 'leaving' && { inert: true, 'aria-hidden': true })}>
+          {m.floor === 1 ? officeLevel : roomLevel(m.floor)}
+        </div>
+      ))}
+      </div>
 
       <div data-table-corner className="pointer-events-none absolute bottom-0 left-0 whitespace-nowrap">
         <span className={clsx('block font-orbital-display text-[13px] font-semibold tracking-[0.14em]', snapshot.asks.length ? 'text-attention' : 'text-muted')}>TA TABLE</span>
         <span className="block font-data text-[11px] text-muted">{label(snapshot.asks.length)}{extra > 0 && ` · +${extra} sur la table`}</span>
       </div>
 
-      <ul data-legend className="pointer-events-none absolute bottom-0 right-0 m-0 flex list-none flex-col gap-1 p-0 font-data text-[11px]">
+      {/* On a server floor the legend is read by screen readers only; sighted users get the labels and a one-line summary. */}
+      <ul data-legend className={clsx('pointer-events-none absolute bottom-0 right-0 m-0 flex list-none flex-col gap-1 p-0 font-data text-[11px]', onRoom && 'sr-only')}>
         {nodes === undefined && <li className="text-muted">{nodesFailed ? 'nœuds illisibles' : 'lecture des nœuds…'}</li>}
-        {racks.map(({ node: n, tone, text }) => (
-          <li key={n.id} className={clsx('flex items-center gap-2', tone === 'ok' ? 'text-ink' : 'text-muted')}><span className="legend-dot" data-tone={tone} aria-hidden="true" />{text}</li>
+        {shown.map((r) => (
+          <li key={r.node.id} className={clsx('flex items-center gap-2', r.tone === 'ok' ? 'text-ink' : 'text-muted')}><span className="legend-dot" data-tone={r.tone} aria-hidden="true" />{onRoom ? rackDetail(r, now).text : r.text}</li>
         ))}
       </ul>
+      {onRoom && <p aria-hidden="true" data-legend-summary className="pointer-events-none absolute bottom-0 right-0 m-0 font-data text-[11px] text-ink">{shown.filter((r) => r.tone === 'ok').length} / {shown.length} en ligne</p>}
       {children}
     </div>
   )

@@ -17,7 +17,7 @@ def by_id(states):
 def test_reads_the_four_nodes_with_provenance():
     states = nodes.probe(tailscale_json)
 
-    assert [s.id for s in states] == ["helios", "cortex", "synapse", "artemis"]
+    assert [s.id for s in states] == ["cortex", "synapse", "artemis", "helios"]
     for s in states:
         assert s.source == "tailscale"
         assert datetime.fromisoformat(s.measured_at).tzinfo is not None
@@ -139,9 +139,15 @@ def test_hanging_tailscale_does_not_block_the_api(settings):
 def test_api_returns_the_four_nodes(client):
     body = client.get("/api/nodes").json()
 
-    assert [n["id"] for n in body] == ["helios", "cortex", "synapse", "artemis"]
-    assert body[3]["status"] == "offline-by-design"
+    assert [n["id"] for n in body] == ["cortex", "synapse", "artemis", "helios"]
+    assert body[2]["status"] == "offline-by-design"
     assert all(n["source"] == "tailscale" and n["measured_at"] for n in body)
+
+
+def test_nodes_order_is_importance_order():
+    # The UI keeps the received order: it fixes the floor of each node (#36).
+    assert [spec.id for spec in nodes.NODES] == ["cortex", "synapse", "artemis", "helios"]
+    assert [s.id for s in nodes.pending_snapshot()] == [spec.id for spec in nodes.NODES]
 
 
 def test_api_survives_tailscale_being_absent(settings):
