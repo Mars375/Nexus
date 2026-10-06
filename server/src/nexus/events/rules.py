@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from nexus.actors import ACTORS, HUMANS
+from nexus.events.limits import RUN_MAX
 from nexus.secrets import is_blank, is_blank_reference
 from nexus.tasks.rules import RuleViolation
 
@@ -80,9 +81,12 @@ def validate(e: Envelope) -> str:
     if e.kind in TASK_REQUIRED and not e.task:
         raise RuleViolation("task_required", f"un événement {e.kind} doit viser une tâche")
     run_ref = e.payload.get("run_ref")
-    if run_ref is not None and not (isinstance(run_ref, str) and 0 < len(run_ref.strip()) <= 128):
+    if run_ref is not None and not (
+        isinstance(run_ref, str) and 0 < len(run_ref.strip()) <= RUN_MAX
+    ):
         raise RuleViolation(
-            "invalid_run_ref", "payload.run_ref doit être un texte de 128 caractères au plus"
+            "invalid_run_ref",
+            f"payload.run_ref doit être un texte de {RUN_MAX} caractères au plus",
         )
     if _text(run_ref) and _text(e.run) and _text(run_ref) != _text(e.run):
         raise RuleViolation(

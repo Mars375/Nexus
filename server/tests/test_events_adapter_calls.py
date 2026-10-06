@@ -5,6 +5,7 @@ from datetime import datetime
 import pytest
 
 from nexus.events import service
+from nexus.events.limits import RUN_MAX
 from nexus.events.rules import Envelope
 from nexus.models import Event
 from nexus.tasks.rules import RuleViolation
@@ -181,3 +182,140 @@ def test_valid_scalars_and_unknown_values_keep_their_behaviour(client):
     with pytest.raises(RuleViolation) as exc:
         direct(client, question(), "")
     assert exc.value.code == "event_id_required"
+
+
+# Limits the HTTP model caps (#42): (field, limit, code, how to build the direct call).
+LIMITS = [
+    ("id", 128, "too_long_id"),
+    ("run", 128, "too_long_run"),
+    ("subject", 500, "too_long_subject"),
+    ("evidence", 512, "too_long_evidence"),
+]
+
+
+def _direct_call(field, size):
+    """Direct-call arguments (envelope, id) with one field of `size` characters."""
+    value = "x" * size
+    if field == "id":
+        return question(), value
+    if field == "evidence":
+        return question(evidence=[value]), "evt_a"
+    return question(**{field: value}), "evt_a"
+
+
+def _http_body(field, size):
+    value = "x" * size
+    body = {"id": "evt_a", "at": AT.isoformat(), "actor": "helios", "kind": "question",
+            "subject": "Où est la clé ?", "needs": ["loic"]}
+    body["evidence" if field == "evidence" else field] = [value] if field == "evidence" else value
+    return body
+
+
+@pytest.mark.parametrize(("field", "limit", "code"), LIMITS)
+def test_value_at_the_limit_is_accepted_from_an_adapter(client, field, limit, code):
+    envelope, event_id = _direct_call(field, limit)
+
+    _, created = direct(client, envelope, event_id)
+
+    assert created is True
+
+
+@pytest.mark.parametrize(("field", "limit", "code"), LIMITS)
+def test_value_over_the_limit_is_refused_from_an_adapter(client, field, limit, code):
+    envelope, event_id = _direct_call(field, limit + 1)
+
+    with pytest.raises(RuleViolation) as exc:
+        direct(client, envelope, event_id)
+
+    assert exc.value.code == code
+    assert str(limit) in exc.value.message
+    assert "xxxxx" not in exc.value.message  # the received value is never echoed
+    with client.app.state.sessionmaker() as session:
+        assert session.query(Event).count() == 0
+    assert client.get("/api/events").status_code == 200
+
+
+@pytest.mark.parametrize(("field", "limit", "code"), LIMITS)
+def test_http_route_refuses_the_same_overlong_values(client, field, limit, code):
+    # Proves the service and the API enforce the same limits (shared constants).
+    assert client.post("/api/events", json=_http_body(field, limit)).status_code == 201
+    over = _http_body(field, limit + 1)
+    if field != "id":
+        over["id"] = "evt_b"
+
+    assert client.post("/api/events", json=over).status_code == 422
+
+
+def test_evidence_length_is_measured_after_stripping_like_the_api(client):
+    padded = "  " + "e" * 512 + "  "
+
+    assert client.post("/api/events", json=_http_body("evidence", 0) | {"evidence": [padded]}
+                       ).status_code == 201
+    event_id, created = direct(client, question(evidence=[padded], subject="Autre"), "evt_c")
+    assert created is True
+
+    with pytest.raises(RuleViolation) as exc:
+        direct(client, question(evidence=["  " + "e" * 513 + "  "]), "evt_b")
+    assert exc.value.code == "too_long_evidence"
+
+    # What is stored is what was measured: the stripped item, as over HTTP.
+    with client.app.state.sessionmaker() as session:
+        assert session.get(Event, event_id).evidence == ["e" * 512]
+    # The same fact resent without the padding is a read back, not a reused id.
+    assert direct(client, question(evidence=["e" * 512], subject="Autre"), "evt_c") == (
+        event_id, False)
+
+
+def test_payload_run_ref_limit_is_enforced_from_an_adapter(client):
+    direct(client, question(payload={"run_ref": "r" * RUN_MAX}), "evt_a")
+
+    with pytest.raises(RuleViolation) as exc:
+        direct(client, question(payload={"run_ref": "r" * (RUN_MAX + 1)}), "evt_b")
+
+    assert exc.value.code == "invalid_run_ref"
+    assert str(RUN_MAX) in exc.value.message
+    with client.app.state.sessionmaker() as session:
+        assert session.query(Event).count() == 1
+
+
+def test_payload_run_ref_limit_is_the_same_over_http(client):
+    body = _http_body("subject", 0) | {"subject": "Où est la clé ?"}
+
+    ok = client.post("/api/events", json=body | {"payload": {"run_ref": "r" * RUN_MAX}})
+    over = client.post("/api/events", json=body | {"id": "evt_b",
+                                                   "payload": {"run_ref": "r" * (RUN_MAX + 1)}})
+
+    assert ok.status_code == 201
+    assert over.json()["detail"]["code"] == "invalid_run_ref"
+
+
+@pytest.mark.parametrize(
+    ("suffix", "accepted"),
+    [("\u001c", False), ("\u001f", False), ("\u00a0", True), ("\u3000", True), (" ", True)],
+)
+def test_evidence_strip_is_the_one_of_the_api(client, suffix, accepted):
+    # `str.strip()` removes U+001C..U+001F, Pydantic does not: the measure must be Pydantic's.
+    item = "e" * 512 + suffix
+    over_http = client.post("/api/events", json=_http_body("evidence", 0) | {"evidence": [item]})
+    assert (over_http.status_code == 201) is accepted
+
+    if accepted:
+        # Another subject: the same fact under another id would be refused as noise.
+        direct(client, question(evidence=[item], subject="Autre"), "evt_b")
+    else:
+        with pytest.raises(RuleViolation) as exc:
+            direct(client, question(evidence=[item]), "evt_b")
+        assert exc.value.code == "too_long_evidence"
+
+
+@pytest.mark.parametrize("item", ["", " ", "\t\n", "\u00a0\u3000"])
+def test_blank_evidence_item_is_refused_like_the_api(client, item):
+    over_http = client.post("/api/events", json=_http_body("evidence", 0) | {"evidence": [item]})
+    assert over_http.status_code == 422
+
+    with pytest.raises(RuleViolation) as exc:
+        direct(client, question(evidence=["ok", item]), "evt_b")
+
+    assert exc.value.code == "invalid_evidence"
+    with client.app.state.sessionmaker() as session:
+        assert session.query(Event).count() == 0
