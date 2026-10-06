@@ -145,6 +145,9 @@ def publish(
     envelope.needs = _text_list(envelope.needs, "needs")
     envelope.evidence = _text_list(envelope.evidence, "evidence")
     _check_lengths(envelope, actor_event_id)
+    # Stored stripped, as the API does: measured and stored values are the same, and a resend
+    # padded differently is still the same fact.
+    envelope.evidence = [_API_STRIP.validate_python(item) for item in envelope.evidence]
     incoming = (envelope.subject, envelope.body, envelope.payload, envelope.evidence,
                 envelope.needs, envelope.run, actor_event_id)
     if has_unencodable(incoming):

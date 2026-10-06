@@ -251,12 +251,19 @@ def test_evidence_length_is_measured_after_stripping_like_the_api(client):
 
     assert client.post("/api/events", json=_http_body("evidence", 0) | {"evidence": [padded]}
                        ).status_code == 201
-    _, created = direct(client, question(evidence=[padded], subject="Autre"), "evt_c")
+    event_id, created = direct(client, question(evidence=[padded], subject="Autre"), "evt_c")
     assert created is True
 
     with pytest.raises(RuleViolation) as exc:
         direct(client, question(evidence=["  " + "e" * 513 + "  "]), "evt_b")
     assert exc.value.code == "too_long_evidence"
+
+    # What is stored is what was measured: the stripped item, as over HTTP.
+    with client.app.state.sessionmaker() as session:
+        assert session.get(Event, event_id).evidence == ["e" * 512]
+    # The same fact resent without the padding is a read back, not a reused id.
+    assert direct(client, question(evidence=["e" * 512], subject="Autre"), "evt_c") == (
+        event_id, False)
 
 
 def test_payload_run_ref_limit_is_enforced_from_an_adapter(client):
@@ -293,7 +300,8 @@ def test_evidence_strip_is_the_one_of_the_api(client, suffix, accepted):
     assert (over_http.status_code == 201) is accepted
 
     if accepted:
-        direct(client, question(evidence=[item]), "evt_b")
+        # Another subject: the same fact under another id would be refused as noise.
+        direct(client, question(evidence=[item], subject="Autre"), "evt_b")
     else:
         with pytest.raises(RuleViolation) as exc:
             direct(client, question(evidence=[item]), "evt_b")
