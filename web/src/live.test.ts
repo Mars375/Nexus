@@ -78,8 +78,8 @@ describe('liveUrl', () => {
   test('avec une base configurée, ignore la page : ws/wss suit la base', () => {
     const page = { protocol: 'http:', host: 'tauri.localhost' }
     expect(liveUrl(null, page, 'http://127.0.0.1:8765')).toBe('ws://127.0.0.1:8765/api/ws')
-    expect(liveUrl({ history: 3, events: 4 }, page, 'https://nexus.local/proxy')).toBe(
-      'wss://nexus.local/proxy/api/ws?history_after=3&events_after=4',
+    expect(liveUrl({ history: 3, events: 4 }, page, 'https://nexus.local')).toBe(
+      'wss://nexus.local/api/ws?history_after=3&events_after=4',
     )
   })
 })
@@ -374,5 +374,28 @@ describe('connectLive', () => {
       for (const m of valid) h.send(m)
       expect(h.messages).toEqual(valid)
     })
+  })
+})
+
+describe('connectLive avec VITE_NEXUS_API_URL', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.resetModules()
+  })
+  test("ouvre le WebSocket sur l'API configurée, pas sur la page", async () => {
+    vi.stubEnv('VITE_NEXUS_API_URL', 'http://127.0.0.1:8765')
+    vi.resetModules()
+    const live = await import('./live')
+    const urls: string[] = []
+    const stop = live.connectLive({
+      open: (url) => {
+        urls.push(url)
+        return { onopen: null, onmessage: null, onclose: null, close() {} }
+      },
+      onMessage: () => {},
+      onState: () => {},
+    })
+    stop()
+    expect(urls).toEqual(['ws://127.0.0.1:8765/api/ws'])
   })
 })
