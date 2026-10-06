@@ -44,6 +44,16 @@ export function liveUrl(
   return `${scheme}://${location.host}/api/ws${query}`
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const isNonEmptyString = (value: unknown): value is string => typeof value === 'string' && value !== ''
+
+const isCursor = (value: unknown): value is Cursor =>
+  isRecord(value) &&
+  Number.isInteger(value.history) && (value.history as number) >= 0 &&
+  Number.isInteger(value.events) && (value.events as number) >= 0
+
 export function connectLive(options: {
   open: (url: string) => LiveSocket
   onMessage: (message: LiveMessage) => void
@@ -93,21 +103,27 @@ export function connectLive(options: {
     reconnectTimer = setTimeout(connect, reconnectDelay(attempt, options.random))
   }
 
-  // Validate message has correct type, valid cursor with non-negative integers
+  // Validate a pushed message per type before any state is touched (review checklist §2).
   const isValidMessage = (data: unknown): data is LiveMessage => {
-    if (!data || typeof data !== 'object') return false
-    const msg = data as Record<string, unknown>
-    const type = msg.type
-    if (!['hello', 'task_changed', 'event', 'resync', 'ping'].includes(type as string)) return false
-    const cursor = msg.cursor
-    if (!cursor || typeof cursor !== 'object') return false
-    const cursorObj = cursor as Record<string, unknown>
-    const history = cursorObj.history
-    const events = cursorObj.events
-    return (
-      Number.isInteger(history) && (history as number) >= 0 &&
-      Number.isInteger(events) && (events as number) >= 0
-    )
+    if (!isRecord(data)) return false
+    if (!isCursor(data.cursor)) return false
+    switch (data.type) {
+      case 'hello':
+        return typeof data.reset === 'boolean'
+      case 'task_changed':
+        return isNonEmptyString(data.task)
+      case 'event':
+        return (
+          isNonEmptyString(data.event) &&
+          isNonEmptyString(data.kind) &&
+          (data.task === null || typeof data.task === 'string')
+        )
+      case 'resync':
+      case 'ping':
+        return true
+      default:
+        return false
+    }
   }
 
   const connect = () => {

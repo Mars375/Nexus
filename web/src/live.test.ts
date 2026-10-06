@@ -307,4 +307,51 @@ describe('connectLive', () => {
     secondSocket.onmessage?.({ data: JSON.stringify({ type: 'ping', cursor: { history: 0, events: 0 } }) } as MessageEvent)
     expect(h.messages).toHaveLength(1) // le message de la bonne socket est reçu
   })
+
+  describe('validation par type de message (#25)', () => {
+    const C = { history: 9, events: 9 }
+    const invalid: [string, unknown][] = [
+      ['hello sans reset', { type: 'hello', cursor: C }],
+      ['hello avec reset non booléen', { type: 'hello', cursor: C, reset: 'true' }],
+      ['task_changed sans task', { type: 'task_changed', cursor: C }],
+      ['task_changed avec task vide', { type: 'task_changed', cursor: C, task: '' }],
+      ['task_changed avec task numérique', { type: 'task_changed', cursor: C, task: 3 }],
+      ['event sans event', { type: 'event', cursor: C, kind: 'done', task: null }],
+      ['event avec event vide', { type: 'event', cursor: C, event: '', kind: 'done', task: null }],
+      ['event sans kind', { type: 'event', cursor: C, event: 'e1', task: null }],
+      ['event avec kind vide', { type: 'event', cursor: C, event: 'e1', kind: '', task: null }],
+      ['event sans task (undefined)', { type: 'event', cursor: C, event: 'e1', kind: 'done' }],
+      ['event avec task numérique', { type: 'event', cursor: C, event: 'e1', kind: 'done', task: 4 }],
+      ['curseur tableau', { type: 'ping', cursor: [1, 2] }],
+      ['message tableau', [{ type: 'ping', cursor: C }]],
+    ]
+    test.each(invalid)('%s : ignoré, curseur conservé, pas de connexion', (_name, bad) => {
+      const h = harness()
+      h.open()
+      h.send(bad)
+      expect(h.messages).toEqual([])
+      expect(h.states.some((s) => s.status === 'connected')).toBe(false)
+      h.send(HELLO)
+      h.send(bad)
+      expect(h.messages).toEqual([HELLO])
+      h.drop()
+      vi.advanceTimersByTime(500)
+      expect(h.last().url).toContain('history_after=3&events_after=4')
+    })
+
+    test('les messages valides de chaque type passent', () => {
+      const h = harness()
+      h.open()
+      const valid = [
+        { type: 'hello', cursor: C, reset: true },
+        { type: 'task_changed', cursor: C, task: 'nx-task-1' },
+        { type: 'event', cursor: C, event: 'e1', kind: 'done', task: null },
+        { type: 'event', cursor: C, event: 'e1', kind: 'done', task: 'nx-task-1' },
+        { type: 'resync', cursor: C },
+        { type: 'ping', cursor: C },
+      ]
+      for (const m of valid) h.send(m)
+      expect(h.messages).toEqual(valid)
+    })
+  })
 })
