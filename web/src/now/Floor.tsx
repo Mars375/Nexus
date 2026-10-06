@@ -60,9 +60,9 @@ export function Floor(props: FloorProps) {
   const level = useFloorLevel(nodeFloors(nodes).length, { loaded: nodes !== undefined })
   const now = useNow(AGE_TICK_MS)
   const floors = nodeFloors(nodes)
-  const alerts = floors.map((f) => floorAlert(f, (n) => nodesFailed || isStale(n.measured_at, 'nodes', now)))
-  // Alerts of the floors out of sight sit on ▲ / ▼ and in the label, never for the floor shown.
   const stale = (n: NodeState) => nodesFailed || isStale(n.measured_at, 'nodes', now)
+  const alerts = floors.map((f) => floorAlert(f, stale))
+  // Alerts of the floors out of sight sit on ▲ / ▼ and in the label, never for the floor shown.
   const sides = floorAlertSides(alerts, level.floor, floors.map((f) => floorAlertCount(f, stale)))
   // A new alert on a floor out of sight pulses the pip of its side once; never under reduced motion.
   const freshAlerts = useArrivals(nodes === undefined ? null : alerts.flatMap((a, i) => a ? [`${i + 1}:${a}`] : []))
@@ -218,7 +218,7 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
 
   return (
     <div className="@container relative mx-auto w-full select-none focus-visible:outline-2 focus-visible:outline-accent" style={{ aspectRatio: `${l.viewBox.w} / ${l.viewBox.h}`, maxHeight: '100%', touchAction: 'pan-y' }}
-      {...(stage && { ...stage, onDragStart: (e: DragEvent<HTMLElement>) => e.preventDefault(), role: 'group', tabIndex: 0, 'data-stage': '', 'data-angle': Math.round(angle * 10) / 10, 'aria-label': 'Étage : glisser, ou flèches gauche et droite, pour le faire pivoter' })}
+      {...(stage && { ...stage, onDragStart: (e: DragEvent<HTMLElement>) => e.preventDefault(), role: 'group', tabIndex: 0, 'data-stage': '', 'data-angle': Math.round(angle * 10) / 10, 'aria-label': `Étage : glisser, ou flèches gauche et droite, pour le faire pivoter${floorCount > 1 ? ' ; PageUp et PageDown pour changer d\'étage' : ''}` })}
       data-floor={floor} data-floor-count={floorCount} {...(dir && { 'data-floor-dir': dir })}>
       {/* Gradients and hatching live once here: every floor layer refers to them by id. */}
       <svg width="0" height="0" className="absolute" aria-hidden="true" focusable="false">

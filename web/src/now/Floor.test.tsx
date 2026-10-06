@@ -299,6 +299,14 @@ const screens = (c: HTMLElement) => c.querySelectorAll('.desk .screen').length
 beforeEach(() => { resetFloorRotation(); resetFloorLevel(); vi.stubGlobal('PointerEvent', TestPointerEvent); vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('reduce'), media: q })) })
 afterEach(() => { vi.unstubAllGlobals() })
 
+test('le nom de la scène cite PageUp et PageDown seulement quand il y a plusieurs étages', () => {
+  const { container, unmount } = render(<Floor snapshot={snap()} nodes={twelve()} />)
+  expect(stageOf(container).getAttribute('aria-label')).toMatch(/PageUp.*PageDown/)
+  unmount()
+  const four = render(<Floor snapshot={snap()} nodes={twelve().slice(0, 4)} />)
+  expect(stageOf(four.container).getAttribute('aria-label')).not.toMatch(/Page/)
+})
+
 test('la scène est focalisable et porte un nom accessible', () => {
   render(<Floor snapshot={snap()} nodes={[]} />)
   const stage = screen.getByRole('group', { name: /pivoter/i })
