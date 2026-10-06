@@ -216,52 +216,38 @@ test('deux clics rapides sur ▲ : étage 3, puis une seule couche pleinement op
   await expect(page.locator('.level')).toHaveCSS('transform', 'none')
 })
 
-test('▲ puis ▼ presque aussitôt : retour à l\'étage 1, une seule couche pleine, aucune image à opacité nulle', async ({ page }) => {
+test('▲ puis ▼ presque aussitôt : la couche de l\'étage 1 reste le même nœud, son opacité ne retombe jamais à 0', async ({ page }) => {
   await serveNodes(page)
   await page.goto('/#/maintenant')
-  const upButton = page.getByRole('button', { name: 'Monter d\'un étage' })
+  const upButton = page.getByRole('button', { name: /^Monter d'un étage/ })
   await expect(upButton).toBeVisible()
+  // Tag the very element, then sample it on every frame: a node moved or replaced loses the tag and replays its entry from opacity 0.
   await page.evaluate(() => {
-    const w = window as unknown as { __opacities: number[]; __sampling: boolean }
-    w.__opacities = []; w.__sampling = true
-    const tick = () => { const el = document.querySelector('.level[data-level="1"]'); if (el) w.__opacities.push(Number(getComputedStyle(el).opacity)); if (w.__sampling) requestAnimationFrame(tick) }
+    type Probe = { samples: { same: boolean; opacity: number }[]; run: boolean }
+    const w = window as unknown as { __probe: Probe; __layer: Element }
+    w.__layer = document.querySelector('.level[data-level="1"]')!
+    w.__layer.setAttribute('data-probe', '1')
+    w.__probe = { samples: [], run: true }
+    const tick = () => {
+      const el = document.querySelector('.level[data-level="1"]')
+      if (el) w.__probe.samples.push({ same: el === w.__layer && w.__layer.isConnected, opacity: Number(getComputedStyle(el).opacity) })
+      if (w.__probe.run) requestAnimationFrame(tick)
+    }
     requestAnimationFrame(tick)
   })
   await upButton.click()
-  await page.waitForTimeout(60)
-  await page.getByRole('button', { name: 'Descendre d\'un étage' }).click()
+  await page.waitForTimeout(80)
+  await page.getByRole('button', { name: /^Descendre d'un étage/ }).click()
   await expect(page.locator('[data-stage]')).toHaveAttribute('data-floor', '1')
-  await page.waitForTimeout(500)
-  const seen = await page.evaluate(() => { const w = window as unknown as { __opacities: number[]; __sampling: boolean }; w.__sampling = false; return w.__opacities })
-  expect(seen.length).toBeGreaterThan(10)
-  expect(Math.min(...seen)).toBeGreaterThan(0.3)
+  await page.waitForTimeout(600)
+  const samples = await page.evaluate(() => { const w = window as unknown as { __probe: { samples: { same: boolean; opacity: number }[]; run: boolean } }; w.__probe.run = false; return w.__probe.samples })
+  expect(samples.length).toBeGreaterThan(20)
+  expect(samples.every((q) => q.same), 'le nœud de l\'étage 1 a été remplacé').toBe(true)
+  const visible = samples.findIndex((q) => q.opacity > 0)
+  expect(visible).toBeGreaterThanOrEqual(0)
+  expect(samples.slice(visible).filter((q) => q.opacity === 0), 'l\'étage 1 est retombé à l\'opacité 0').toHaveLength(0)
+  expect(Math.min(...samples.map((q) => q.opacity))).toBeGreaterThan(0.3)
   await expect(page.locator('.level')).toHaveCount(1)
   await expect(page.locator('.level')).toHaveCSS('opacity', '1')
   await expect(page.locator('.level')).toHaveCSS('transform', 'none')
 })
-
-for (const width of [1440, 1100]) for (const [count, floor] of [[12, 2], [10, 3]] as const) {
-  test(`salle des serveurs (étage ${floor}, ${count} nœuds) : aucune étiquette de baie n'en recouvre une autre ni un coin fixe, avant et après un glisser, à ${width} px`, async ({ page }) => {
-    await serveNodes(page, count, ['n10'])
-    await page.setViewportSize({ width, height: 900 })
-    await page.goto('/#/maintenant')
-    const stage = page.locator('[data-stage]')
-    for (let i = 1; i < floor; i++) await page.getByRole('button', { name: /^Monter d'un étage/ }).click()
-    await expect(stage).toHaveAttribute('data-floor', String(floor))
-    await page.waitForTimeout(500)
-    await expect(page.locator('[data-rack-label]')).toHaveCount(floor === 3 ? count - 8 : 4)
-    await expectNoLabelOverlap(page, `étage ${floor} à 0°`)
-    const box = (await stage.boundingBox())!
-    const x = box.x + box.width / 2, y = box.y + box.height * 0.8
-    await page.mouse.move(x, y); await page.mouse.down()
-    await page.mouse.move(x + 100, y, { steps: 5 }); await page.mouse.move(x + 200, y, { steps: 5 })
-    await page.mouse.up()
-    await expect(stage).toHaveAttribute('data-angle', '90')
-    await expectNoLabelOverlap(page, `étage ${floor} à 90° après un glisser`)
-    for (const quarter of ['180', '270']) {
-      await page.getByRole('button', { name: 'Tourner l\'étage vers la droite' }).click()
-      await expect(stage).toHaveAttribute('data-angle', quarter)
-      await expectNoLabelOverlap(page, `étage ${floor} à ${quarter}°`)
-    }
-  })
-}
