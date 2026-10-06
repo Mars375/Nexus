@@ -31,21 +31,15 @@ function invalidationsFor(message: LiveMessage): Invalidation[] {
   }
 }
 
-/** Immediate application of one message (no batching); the hook uses `createLiveBatcher`. */
-export function applyLiveMessage(client: QueryClient, message: LiveMessage): void {
-  for (const invalidation of invalidationsFor(message)) {
-    if (invalidation === 'all') void client.invalidateQueries()
-    else void client.invalidateQueries(invalidation)
-  }
-}
-
 /**
  * Collects the invalidations of a burst and flushes them once, LIVE_BATCH_MS after the first
  * message (the window is not extended, so a steady stream still flushes every window).
  * While a mutation runs (a drag-move PATCH) the flush is postponed so a refetch cannot
- * overwrite the optimistic card; the pending set is kept. The first `hello` of a batcher
- * invalidates everything: the server starts from "now", so a change committed between the
- * first REST read and that `hello` would otherwise wait for the 10 s refetch.
+ * overwrite the optimistic card; so it is while a query is on its initial read, whose
+ * in-flight promise would swallow the invalidation. The pending set is kept. The first
+ * `hello` of a batcher invalidates everything: the server starts from "now", so a change
+ * committed between the first REST read and that `hello` would otherwise wait for the 10 s
+ * refetch.
  */
 export function createLiveBatcher(client: QueryClient): {
   push: (message: LiveMessage) => void
@@ -60,7 +54,14 @@ export function createLiveBatcher(client: QueryClient): {
   const flush = () => {
     timer = undefined
     if (disposed) return
-    if (client.isMutating() > 0) {
+    // A query still on its initial read (no data) would swallow an invalidation: react-query
+    // returns the in-flight promise and resets `isInvalidated` on its success. Wait for it
+    // (bounded by the 10 s request timeout).
+    const firstReadInFlight = client
+      .getQueryCache()
+      .findAll({ fetchStatus: 'fetching' })
+      .some((q) => q.state.data === undefined)
+    if (client.isMutating() > 0 || firstReadInFlight) {
       timer = setTimeout(flush, LIVE_BATCH_MS)
       return
     }

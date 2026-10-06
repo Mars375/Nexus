@@ -1,7 +1,8 @@
-import { QueryClient } from '@tanstack/react-query'
+import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { LiveMessage } from './live'
-import { applyLiveMessage, createLiveBatcher, LIVE_BATCH_MS } from './liveUpdates'
+import { tasksKey } from './tasks/queries'
+import { createLiveBatcher, LIVE_BATCH_MS } from './liveUpdates'
 
 const CURSOR = { history: 1, events: 1 }
 
@@ -10,54 +11,6 @@ function spyClient() {
   const invalidate = vi.spyOn(client, 'invalidateQueries').mockResolvedValue(undefined)
   return { client, invalidate }
 }
-
-describe('applyLiveMessage', () => {
-  test('une tâche changée relit la liste et le détail de cette tâche', () => {
-    const { client, invalidate } = spyClient()
-    applyLiveMessage(client, { type: 'task_changed', task: 'nx-task-3', cursor: CURSOR })
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['tasks'], exact: true })
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['tasks', 'nx-task-3'] })
-  })
-
-  test('un événement relit les événements et sa tâche', () => {
-    const { client, invalidate } = spyClient()
-    applyLiveMessage(client, { type: 'event', event: 'nx-evt-9', task: 'nx-task-3', kind: 'done', cursor: CURSOR })
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['events'] })
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['tasks', 'nx-task-3'] })
-  })
-
-  test('un événement sans tâche relit les événements et Maintenant', () => {
-    const { client, invalidate } = spyClient()
-    applyLiveMessage(client, { type: 'event', event: 'nx-evt-9', task: null, kind: 'unknown', cursor: CURSOR })
-    expect(invalidate).toHaveBeenCalledTimes(2)
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['events'] })
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['now'] })
-  })
-
-  test('resync ou reset relisent tout', () => {
-    const { client, invalidate } = spyClient()
-    applyLiveMessage(client, { type: 'resync', cursor: CURSOR })
-    applyLiveMessage(client, { type: 'hello', cursor: CURSOR, reset: true })
-    expect(invalidate).toHaveBeenCalledTimes(2)
-    expect(invalidate).toHaveBeenNthCalledWith(1)
-    expect(invalidate).toHaveBeenNthCalledWith(2)
-  })
-
-  test('hello ordinaire et ping ne relisent rien', () => {
-    const { client, invalidate } = spyClient()
-    applyLiveMessage(client, { type: 'hello', cursor: CURSOR, reset: false })
-    applyLiveMessage(client, { type: 'ping', cursor: CURSOR })
-    expect(invalidate).not.toHaveBeenCalled()
-  })
-
-  test('un changement de tâche ou un événement relit aussi Maintenant', () => {
-    const { client, invalidate } = spyClient()
-    applyLiveMessage(client, { type: 'task_changed', task: 'nx-task-3', cursor: CURSOR })
-    applyLiveMessage(client, { type: 'event', event: 'nx-evt-9', task: null, kind: 'question', cursor: CURSOR })
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['now'] })
-    expect(invalidate.mock.calls.filter(([f]) => JSON.stringify(f) === JSON.stringify({ queryKey: ['now'] }))).toHaveLength(2)
-  })
-})
 
 describe('createLiveBatcher', () => {
   beforeEach(() => vi.useFakeTimers())
@@ -195,6 +148,75 @@ describe('createLiveBatcher', () => {
     batcher.push(task('nx-task-2')) // après dispose : ignoré
     vi.advanceTimersByTime(1000)
     expect(invalidate).not.toHaveBeenCalled()
+  })
+
+  describe('invalidations par type de message', () => {
+    const run = (message: LiveMessage[]) => {
+      const { client, invalidate } = spyClient()
+      const batcher = createLiveBatcher(client)
+      for (const m of message) batcher.push(m)
+      vi.advanceTimersByTime(LIVE_BATCH_MS)
+      return invalidate
+    }
+
+    test('une tâche changée relit la liste et le détail de cette tâche', () => {
+      const invalidate = run([task('nx-task-3')])
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ['tasks'], exact: true })
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ['tasks', 'nx-task-3'] })
+    })
+
+    test('un événement relit les événements et sa tâche', () => {
+      const invalidate = run([{ type: 'event', event: 'nx-evt-9', task: 'nx-task-3', kind: 'done', cursor: CURSOR }])
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ['events'] })
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ['tasks', 'nx-task-3'] })
+    })
+
+    test('un événement sans tâche relit seulement les événements et Maintenant', () => {
+      const invalidate = run([{ type: 'event', event: 'nx-evt-9', task: null, kind: 'unknown', cursor: CURSOR }])
+      expect(invalidate).toHaveBeenCalledTimes(2)
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ['events'] })
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ['now'] })
+      expect(filters(invalidate).some((f) => f.includes('"tasks"'))).toBe(false)
+    })
+
+    test('resync ou reset relisent tout, en une seule relecture', () => {
+      const invalidate = run([
+        { type: 'resync', cursor: CURSOR },
+        { type: 'hello', cursor: CURSOR, reset: true },
+      ])
+      expect(invalidate).toHaveBeenCalledTimes(1)
+      expect(invalidate).toHaveBeenCalledWith()
+    })
+
+    test('ping ne relit rien', () => {
+      const invalidate = run([{ type: 'ping', cursor: CURSOR }])
+      expect(invalidate).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('pendant une première lecture (requête sans données)', () => {
+    test('retarde la relecture, puis relit quand la première lecture a abouti', async () => {
+      const client = new QueryClient()
+      const resolvers: ((v: string) => void)[] = []
+      const queryFn = vi.fn(() => new Promise<string>((resolve) => resolvers.push(resolve)))
+      const observer = new QueryObserver(client, { queryKey: tasksKey, queryFn })
+      const unsubscribe = observer.subscribe(() => {})
+      expect(queryFn).toHaveBeenCalledTimes(1)
+
+      const batcher = createLiveBatcher(client)
+      batcher.push({ type: 'hello', cursor: CURSOR, reset: false }) // first hello => 'all'
+      await vi.advanceTimersByTimeAsync(LIVE_BATCH_MS * 3)
+      expect(queryFn).toHaveBeenCalledTimes(1) // flush postponed: nothing swallowed by the initial read
+
+      resolvers[0]('old')
+      await vi.advanceTimersByTimeAsync(LIVE_BATCH_MS)
+      expect(queryFn).toHaveBeenCalledTimes(2) // invalidation applied on top of the settled read
+      resolvers[1]('new')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(observer.getCurrentResult().data).toBe('new')
+      unsubscribe()
+      batcher.dispose()
+    })
   })
 
   describe('pendant un déplacement (mutation en cours)', () => {

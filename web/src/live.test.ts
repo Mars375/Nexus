@@ -322,8 +322,10 @@ describe('connectLive', () => {
       ['event avec kind vide', { type: 'event', cursor: C, event: 'e1', kind: '', task: null }],
       ['event sans task (undefined)', { type: 'event', cursor: C, event: 'e1', kind: 'done' }],
       ['event avec task numérique', { type: 'event', cursor: C, event: 'e1', kind: 'done', task: 4 }],
-      ['curseur tableau', { type: 'ping', cursor: [1, 2] }],
-      ['message tableau', [{ type: 'ping', cursor: C }]],
+      ['event avec task vide', { type: 'event', cursor: C, event: 'e1', kind: 'done', task: '' }],
+      ['curseur au-delà de 12 chiffres (1e13)', { type: 'ping', cursor: { history: 1e13, events: 1 } }],
+      ['curseur flottant 1e21', { type: 'ping', cursor: { history: 1, events: 1e21 } }],
+      ['curseur 2**53 non sûr', { type: 'ping', cursor: { history: 2 ** 53, events: 1 } }],
     ]
     test.each(invalid)('%s : ignoré, curseur conservé, pas de connexion', (_name, bad) => {
       const h = harness()
@@ -337,6 +339,18 @@ describe('connectLive', () => {
       h.drop()
       vi.advanceTimersByTime(500)
       expect(h.last().url).toContain('history_after=3&events_after=4')
+    })
+
+    test('un curseur de 12 chiffres (999999999999) est accepté et rejoué à la reconnexion', () => {
+      const h = harness()
+      h.open()
+      const big = { type: 'ping', cursor: { history: 999999999999, events: 0 } }
+      h.send(big)
+      expect(h.messages).toEqual([big])
+      h.send({ type: 'ping', cursor: { history: 1e13, events: 0 } }) // refused: last good cursor kept
+      h.drop()
+      vi.advanceTimersByTime(500)
+      expect(h.last().url).toContain('history_after=999999999999&events_after=0')
     })
 
     test('les messages valides de chaque type passent', () => {

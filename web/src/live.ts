@@ -49,10 +49,14 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const isNonEmptyString = (value: unknown): value is string => typeof value === 'string' && value !== ''
 
+/** Server cursors are at most 12 ASCII digits (server/src/nexus/live.py). */
+const MAX_CURSOR = 999_999_999_999
+
+const isCursorValue = (value: unknown): boolean =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= MAX_CURSOR
+
 const isCursor = (value: unknown): value is Cursor =>
-  isRecord(value) &&
-  Number.isInteger(value.history) && (value.history as number) >= 0 &&
-  Number.isInteger(value.events) && (value.events as number) >= 0
+  isRecord(value) && isCursorValue(value.history) && isCursorValue(value.events)
 
 export function connectLive(options: {
   open: (url: string) => LiveSocket
@@ -116,7 +120,7 @@ export function connectLive(options: {
         return (
           isNonEmptyString(data.event) &&
           isNonEmptyString(data.kind) &&
-          (data.task === null || typeof data.task === 'string')
+          (data.task === null || isNonEmptyString(data.task))
         )
       case 'resync':
       case 'ping':
