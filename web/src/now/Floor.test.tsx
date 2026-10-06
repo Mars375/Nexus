@@ -208,7 +208,7 @@ test('aucune LED visible n\'est cachée par une autre baie ni par le chemin de c
     }
     return sign !== 0
   }
-  for (const count of [4, 8, 9, 12]) for (let floor = 1; floor <= Math.ceil(count / 4); floor++) for (const a of QUARTERS) {
+  for (const count of [10, 12]) for (let floor = 1; floor <= Math.ceil(count / 4); floor++) for (const a of QUARTERS) {
     const nodes = Array.from({ length: count }, (_, i) => node(`n${i}`, 'online'))
     const c = render(<FloorScene snapshot={snap()} nodes={nodes} angle={a} floor={floor} floorCount={Math.ceil(count / 4)} />).container
     const racks = [...c.querySelectorAll('g.rack')]

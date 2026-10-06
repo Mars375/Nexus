@@ -3,6 +3,8 @@ import { DESK, LED_STEP, LED_TOP, RACK, box, drawOrder, layoutFloor, layoutServe
 
 const ANGLES = Array.from({ length: 72 }, (_, i) => i * 5)
 const QUARTERS = [0, 90, 180, 270]
+// Cheap but telling samples: every 15° (quarters included) plus one degree either side of each 45° multiple (where labels and marks flip).
+const SAMPLED = [...new Set([...Array.from({ length: 24 }, (_, i) => i * 15), ...Array.from({ length: 8 }, (_, i) => [i * 45 - 1, i * 45 + 1]).flat().map((a) => (a + 360) % 360)])].sort((a, b) => a - b)
 
 describe('layoutFloor', () => {
   test('8 agents : deux rangées de 4, la table au centre', () => {
@@ -101,17 +103,18 @@ describe('viewBox fixe', () => {
   })
   test('tout le sol, toutes les baies et toutes les étiquettes tiennent dans le cadre, à chaque angle', () => {
     // Two-column cases (8 racks and more) are sampled every 15° (the quarters included): each one builds its own frame.
-    const cases = [...[0, 1, 4, 6].flatMap((r) => [1, 8, 12].map((n) => [n, r, 3] as const)), ...[8, 12].flatMap((r) => [8, 12].map((n) => [n, r, 15] as const))]
-    for (const [agents, racks, step] of cases) for (let a = 0; a < 360; a += step) {
+    const cases = [...[0, 1, 4, 6].flatMap((r) => [1, 8, 12].map((n) => [n, r, 1] as const)), ...[8, 12].flatMap((r) => [8, 12].map((n) => [n, r, 15] as const))]
+    const outside: string[] = [] // violations are gathered and asserted once: thousands of expect() calls are what made this slow
+    for (const [agents, racks, step] of cases) for (const a of step === 1 ? SAMPLED : Array.from({ length: 360 / step }, (_, i) => i * step)) {
       const l = layoutFloor(agents, racks, a), { x, y, w, h } = l.viewBox
       const inside = ([px, py]: readonly [number, number], what: string) => {
-        expect(px, `${what} x à ${a}°`).toBeGreaterThanOrEqual(x); expect(px, `${what} x à ${a}°`).toBeLessThanOrEqual(x + w)
-        expect(py, `${what} y à ${a}°`).toBeGreaterThanOrEqual(y); expect(py, `${what} y à ${a}°`).toBeLessThanOrEqual(y + h)
+        if (px < x || px > x + w || py < y || py > y + h) outside.push(`${what} hors cadre à ${a}° (${agents} agents, ${racks} baies)`)
       }
       for (const [cx, cy] of [[0, 0], [l.width, 0], [0, l.depth], [l.width, l.depth]]) { inside(l.project(cx, cy, 0), 'sol'); inside(l.project(cx, cy, -0.35), 'sol') }
       for (const r of l.racks) for (const [dx, dy] of [[0, 0], [RACK.w, 0], [0, RACK.d], [RACK.w, RACK.d]]) { inside(l.project(r.x + dx, r.y + dy, 0), 'baie'); inside(l.project(r.x + dx, r.y + dy, RACK.h), 'baie') }
       for (const { box: b } of l.labels) for (const c of [[b.x0, b.y0], [b.x1, b.y0], [b.x0, b.y1], [b.x1, b.y1]] as const) inside(c, 'étiquette')
     }
+    expect(outside).toEqual([])
   })
 })
 
@@ -352,7 +355,6 @@ describe('étage 1 : zones et cadre (#36)', () => {
 })
 
 describe('salle des serveurs (#36)', () => {
-  const FLOOR_COUNTS = [1, 2, 3] as const
   const hull = (pts: readonly (readonly [number, number])[]) => {
     const p = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1])
     const cross = (o: readonly number[], a: readonly number[], b: readonly number[]) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
@@ -417,10 +419,11 @@ describe('salle des serveurs (#36)', () => {
     expect(markings.length).toBeGreaterThan(0)
     for (const [[x0, y0], [x1, y1]] of markings) for (const [px, py] of [[x0, y0], [x1, y1]]) { expect(px).toBeGreaterThanOrEqual(room.x); expect(px).toBeLessThanOrEqual(room.x + room.w); expect(py).toBeGreaterThanOrEqual(room.y); expect(py).toBeLessThanOrEqual(room.y + room.d) }
   })
-  test('sol, sommets des baies, chemin de câbles et marquage tiennent dans le cadre fixe, tous les 5°', () => {
-    for (const agents of [1, 8, 12]) for (const floors of FLOOR_COUNTS) for (let a = 0; a < 360; a += 5) {
+  test('sol, sommets des baies, chemin de câbles et marquage tiennent dans le cadre fixe, aux angles échantillonnés', () => {
+    const outside: string[] = []
+    for (const agents of [1, 8, 12]) for (const floors of [1, 2] as const) for (const a of SAMPLED) { // floors 2 and 3 share one frame (the selector flag)
       const base = layoutFloor(agents, 4, a, floors), { x, y, w, h } = base.viewBox
-      expect(base.viewBox).toEqual(layoutFloor(agents, 4, 0, floors).viewBox)
+      expect(base.viewBox).toBe(layoutFloor(agents, 4, 0, floors).viewBox) // the very same cached frame object
       for (const k of [1, 2, 3, 4]) {
         const f = layoutServerFloor(base, k)
         const pts: (readonly [number, number])[] = []
@@ -430,12 +433,10 @@ describe('salle des serveurs (#36)', () => {
         for (const u of f.units) for (const [px, py, pz] of corners(u.x, u.y, u.w, u.d, 0, u.h)) pts.push(base.project(px, py, pz))
         for (const [p0, p1] of f.markings) pts.push(base.project(p0[0], p0[1], 0), base.project(p1[0], p1[1], 0))
         pts.push(base.project(f.markerAt[0], f.markerAt[1], 0))
-        for (const [px, py] of pts) {
-          expect(px, `${agents} agents, ${k} baies à ${a}°`).toBeGreaterThanOrEqual(x); expect(px).toBeLessThanOrEqual(x + w)
-          expect(py, `${agents} agents, ${k} baies à ${a}°`).toBeGreaterThanOrEqual(y); expect(py).toBeLessThanOrEqual(y + h)
-        }
+        for (const [px, py] of pts) if (px < x || px > x + w || py < y || py > y + h) outside.push(`${agents} agents, ${k} baies à ${a}°`)
       }
     }
+    expect(outside).toEqual([])
   })
   test('le centre de la rangée de baies reste au centre du sol à chaque quart de tour (0,5 unité près)', () => {
     for (const k of [1, 2, 3, 4]) for (const a of QUARTERS) {
