@@ -269,7 +269,7 @@ test('la légende des baies est un coin HTML fixe : une pastille au ton de la ba
     expect(legend.closest('svg')).toBeNull()
     expect(legend.className).toContain('bottom-0'); expect(legend.className).toContain('right-0')
     const rows = [...legend.querySelectorAll('li')]
-    expect(rows.map((r) => r.textContent)).toEqual(['HELIOS · en ligne', 'SYNAPSE · unknown', 'ARTEMIS · hors ligne, prévu'])
+    expect(rows.map((r) => r.textContent)).toEqual(['HELIOS · en ligne', 'SYNAPSE · inconnu', 'ARTEMIS · hors ligne, prévu'])
     expect(rows.map((r) => r.querySelector('[data-tone]')?.getAttribute('data-tone'))).toEqual(['ok', 'unknown', 'off'])
     expect(rows.map((r) => r.querySelector('[data-tone]')?.getAttribute('data-tone'))).toEqual(['helios', 'synapse', 'artemis'].map((id) => c.querySelector(`[data-node="${id}"]`)!.getAttribute('data-tone')))
   }
@@ -682,7 +682,7 @@ test('salle : chaque baie a son étiquette, nom, état français, « vu il y a �
   fireEvent.click(up())
   expect(lines(rackLabelOf(container, 'n5'))).toEqual(['N5', 'en ligne', 'gardien : Claude'])
   expect(lines(rackLabelOf(container, 'n6'))).toEqual(['N6', 'en ligne', 'gardien : Codex'])
-  expect(lines(rackLabelOf(container, 'n7'))).toEqual(['N7', 'unknown', 'gardien : Orca']) // unknown without last_seen: nothing invented
+  expect(lines(rackLabelOf(container, 'n7'))).toEqual(['N7', 'inconnu', 'gardien : Orca']) // unknown without last_seen: nothing invented
   expect(lines(rackLabelOf(container, 'n8')).slice(0, 2)).toEqual(['N8', 'en ligne'])
   fireEvent.click(down())
   expect(container.querySelectorAll('[data-rack-label]')).toHaveLength(0)
@@ -693,7 +693,7 @@ test('salle : hors ligne et inconnu avec last_seen, hors ligne prévu sans « vu
   const { container } = render(<Floor snapshot={snap()} nodes={[...nodes.slice(4), ...nodes.slice(0, 4)]} />)
   fireEvent.click(up())
   expect(lines(rackLabelOf(container, 'm1'))).toEqual(['M1', 'hors ligne · vu il y a 3 h', 'gardien : Aether'])
-  expect(lines(rackLabelOf(container, 'm3'))).toEqual(['M3', 'unknown · vu il y a 2 h', 'gardien : Helios'])
+  expect(lines(rackLabelOf(container, 'm3'))).toEqual(['M3', 'inconnu · vu il y a 2 h', 'gardien : Helios'])
   expect(lines(rackLabelOf(container, 'm2'))).toEqual(['M2', 'hors ligne, prévu', 'gardien : Artemis'])
 })
 
@@ -714,7 +714,7 @@ test('salle : les étiquettes visuelles sont aria-hidden, la légende complète 
   for (const el of container.querySelectorAll('[data-rack-label]')) expect(el.closest('[aria-hidden="true"]')).not.toBeNull()
   const legend = container.querySelector('[data-legend]')!
   expect(legend.className).toContain('sr-only')
-  expect([...legend.querySelectorAll('li')].map((li) => li.textContent)).toEqual(['N5 · en ligne', 'N6 · en ligne', 'N7 · unknown', 'N8 · en ligne'])
+  expect([...legend.querySelectorAll('li')].map((li) => li.textContent)).toEqual(['N5 · en ligne', 'N6 · en ligne', 'N7 · inconnu', 'N8 · en ligne'])
   const summary = container.querySelector('[data-legend-summary]') as HTMLElement
   expect(summary.textContent).toBe('3 / 4 en ligne')
   expect(summary.closest('[aria-hidden="true"]')).not.toBeNull()

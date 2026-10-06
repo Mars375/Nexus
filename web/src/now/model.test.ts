@@ -31,7 +31,7 @@ test('état des baies : jamais vert sans preuve', () => {
   expect(rackTone(node('offline'))).toBe('off')
   expect(rackTone(node('offline-by-design'))).toBe('off')
   expect(rackLabel(node('offline-by-design'))).toBe('hors ligne, prévu')
-  expect(rackLabel(node('unknown'))).toBe('unknown')
+  expect(rackLabel(node('unknown'))).toBe('inconnu')
 })
 
 const nodeOf = (id: string, status: NodeState['status'] = 'online'): NodeState => ({ id, kind: 'homelab', guardian_agent: 'aether', status, last_seen: null, detail: null, source: 'tailscale', measured_at: '2026-10-01T10:00:00+02:00' })

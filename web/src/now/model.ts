@@ -70,7 +70,7 @@ export function floorAlertSides(alerts: readonly (FloorAlert | null)[], current:
 }
 
 const LABEL: Record<NodeState['status'], string> = {
-  online: 'en ligne', unknown: 'unknown', offline: 'hors ligne', 'offline-by-design': 'hors ligne, prévu',
+  online: 'en ligne', unknown: 'inconnu', offline: 'hors ligne', 'offline-by-design': 'hors ligne, prévu',
 }
 export function rackLabel(n: NodeState): string {
   return LABEL[n.status]
