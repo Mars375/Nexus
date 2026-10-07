@@ -1,6 +1,6 @@
 # Authentification des acteurs et matrice §3 — conception (#16)
 
-**Date :** 2026-10-07 · **Statut :** proposition à valider par Loïc (« ok recommandations » ou choix par point)
+**Date :** 2026-10-07 · **Statut :** validée par Loïc le 2026-10-07 (« Suis tes recommandations » : D1 à D9 et lectures du §2)
 **Sources lues :** SECURITY §1, §3, §9 ; DECISIONS (ADR-005, 006, 012, 015, 017, 019) ; ARCHITECTURE §3.4, §5, §7 ; EVENT-PROTOCOL §6 ter ; `server/src/nexus/{actors,app,config,live,logs,demo_agent}.py`, `tasks/api.py`, `events/api.py`, `events/service.py` (`_apply_effects`), `approvals/{api,service}.py`, `web/src/{api,apiBase,live}.ts`, `web/playwright.config.ts`.
 Il n'existe ni `CONTEXT.md` ni `docs/adr/` : les ADR sont dans `DECISIONS.md` (dernier : ADR-019).
 
