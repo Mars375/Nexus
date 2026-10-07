@@ -346,6 +346,7 @@ def test_the_token_is_never_accepted_on_the_command_line_nor_echoed(wire, capsys
     "http://192.168.1.10:8765",
     "http://10.0.0.5",
     "ftp://127.0.0.1",
+    "http://helios.tail1234.ts.net:8765",  # a name: what it resolves to is not checked
 ])
 def test_a_token_is_never_sent_in_clear_to_a_remote_host(wire, monkeypatch, capsys, base):
     monkeypatch.setenv("NEXUS_TOKEN", TOKEN)
@@ -363,7 +364,6 @@ def test_a_token_is_never_sent_in_clear_to_a_remote_host(wire, monkeypatch, caps
     "http://localhost:8765",
     "http://[::1]:8765",
     "http://100.101.102.103:8765",  # Tailscale (WireGuard-encrypted)
-    "http://helios.tail1234.ts.net:8765",
     "https://nexus.example",
 ])
 def test_a_token_goes_over_https_loopback_or_tailscale(wire, monkeypatch, base):

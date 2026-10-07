@@ -82,7 +82,8 @@ _TAILNET = ipaddress.ip_network("100.64.0.0/10")
 
 def safe_for_token(base: str) -> bool:
     """Whether a bearer token may travel to `base`: HTTPS, or HTTP to this machine or a
-    Tailscale peer (WireGuard already encrypts the tailnet). Never in clear elsewhere."""
+    Tailscale peer given by its 100.64.0.0/10 address (WireGuard encrypts the tailnet). A
+    `*.ts.net` name is refused over HTTP: what it resolves to is not checked."""
     try:
         url = urllib.parse.urlsplit(base)
         host = (url.hostname or "").lower()
@@ -92,7 +93,7 @@ def safe_for_token(base: str) -> bool:
         return True
     if url.scheme != "http" or not host:
         return False
-    if host == "localhost" or host.endswith(".ts.net"):
+    if host == "localhost":
         return True
     try:
         address = ipaddress.ip_address(host)
@@ -227,7 +228,7 @@ def main(argv: list[str] | None = None, sleep=time.sleep, monotonic=time.monoton
     if _bearer and not safe_for_token(args.base):
         _bearer = None
         parser.error("--base : le jeton ne part qu'en HTTPS, ou en HTTP vers cette machine "
-                     "(localhost, 127.0.0.0/8, ::1) ou un pair Tailscale (100.64.0.0/10, *.ts.net)")
+                     "(localhost, 127.0.0.0/8, ::1) ou une adresse Tailscale (100.64.0.0/10)")
     if args.ask is not None and not args.ask.strip():
         parser.error("--ask : le sujet ne peut pas être vide")
     if not math.isfinite(args.wait) or args.wait < 0:
