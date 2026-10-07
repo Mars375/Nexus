@@ -24,6 +24,7 @@ from nexus.actors import HUMANS
 from nexus.clock import now
 from nexus.events import rules
 from nexus.events.limits import (
+    ANSWER_ID_PREFIX,
     EVENT_ID_MAX,
     EVIDENCE_REF_MAX,
     RUN_MAX,
@@ -101,7 +102,7 @@ def _check_scalars(envelope: Envelope, actor_event_id: object) -> None:
 
 # The API strips evidence items with Pydantic before measuring them: reuse that exact stripping
 # (it differs from `str.strip()`, which also removes U+001C to U+001F).
-_API_STRIP = TypeAdapter(Annotated[str, StringConstraints(strip_whitespace=True)])
+API_STRIP = TypeAdapter(Annotated[str, StringConstraints(strip_whitespace=True)])
 
 
 def _check_lengths(envelope: Envelope, actor_event_id: str) -> None:
@@ -116,7 +117,7 @@ def _check_lengths(envelope: Envelope, actor_event_id: str) -> None:
         raise RuleViolation("too_long_run", f"run : {RUN_MAX} caractères au plus")
     if len(envelope.subject) > SUBJECT_MAX:
         raise RuleViolation("too_long_subject", f"subject : {SUBJECT_MAX} caractères au plus")
-    if any(len(_API_STRIP.validate_python(item)) > EVIDENCE_REF_MAX for item in envelope.evidence):
+    if any(len(API_STRIP.validate_python(item)) > EVIDENCE_REF_MAX for item in envelope.evidence):
         raise RuleViolation(
             "too_long_evidence", f"evidence : {EVIDENCE_REF_MAX} caractères au plus par élément"
         )
@@ -128,11 +129,14 @@ def publish(
     actor_event_id: str,
     at: datetime,
     origin: str = "api",
+    *,
+    allow_reserved: bool = False,
 ) -> tuple[Event, bool]:
     """Enregistre l'événement ; renvoie (événement, créé). Un renvoi identique est une relecture.
 
     Prend la main sur la transaction : une course se résout par un rollback. L'appelant fournit
     donc une session dédiée, sans écriture en attente, et valide (commit) après l'appel.
+    Un kind réservé à Nexus (`answer`) n'est accepté que de l'appelant interne qui le demande.
     """
     if session.new or session.dirty or session.deleted:
         raise RuntimeError(
@@ -146,6 +150,8 @@ def publish(
         # L'API l'exige (AwareDatetime) ; un adaptateur ferait sinon échouer l'écriture.
         raise RuleViolation("invalid_instant", "at : instant avec fuseau horaire requis")
     _check_scalars(envelope, actor_event_id)
+    if envelope.kind in rules.RESERVED_KINDS and not allow_reserved:
+        raise RuleViolation("reserved_kind", "kind : « answer » est réservé à Nexus")
     if not isinstance(envelope.payload, dict):
         raise RuleViolation("invalid_payload", "payload doit être un objet JSON")
     envelope.needs = _text_list(envelope.needs, "needs")
@@ -153,7 +159,7 @@ def publish(
     _check_lengths(envelope, actor_event_id)
     # Stored stripped, as the API does: measured and stored values are the same, and a resend
     # padded differently is still the same fact.
-    evidence = [_API_STRIP.validate_python(item) for item in envelope.evidence]
+    evidence = [API_STRIP.validate_python(item) for item in envelope.evidence]
     if not all(evidence):
         # The API refuses a blank reference (`Ref` has min_length=1 after stripping).
         raise RuleViolation("invalid_evidence", "evidence : éléments non vides requis")
@@ -188,6 +194,11 @@ def publish(
         # Vide ou déjà « [REDACTED] » : ce serait la même clé d'idempotence pour tout le monde.
         raise RuleViolation("event_id_required", "id : identifiant lisible requis")
     actor_event_id = actor_event_id.strip()
+    if actor_event_id.startswith(ANSWER_ID_PREFIX) and not allow_reserved:
+        # Squatting `answer-nx-appr-<n>` would make that approval undecidable for good.
+        raise RuleViolation(
+            "reserved_id", f"id : le préfixe « {ANSWER_ID_PREFIX} » est réservé à Nexus"
+        )
     if (envelope.run, envelope.payload.get("run_ref")) != raw_run_refs:
         # Même raison que pour l'identifiant : "run token=alpha" et "run token=beta" deviendraient
         # le même run une fois masqués, et les clôtures ne pourraient plus les distinguer.
@@ -281,8 +292,11 @@ def publish(
 
 
 def _opens_approval(event: Event) -> bool:
-    """An ask addressed to at least one human waits for a decision (ADR-019)."""
-    return event.kind in rules.ASK_KINDS and bool(set(event.needs) & HUMANS)
+    """An ask addressed to a human other than its author waits for a decision (ADR-019).
+
+    A human asking only himself would leave a request nobody may decide (self_decision).
+    """
+    return event.kind in rules.ASK_KINDS and bool((set(event.needs) & HUMANS) - {event.actor})
 
 
 def _winner_of_race(

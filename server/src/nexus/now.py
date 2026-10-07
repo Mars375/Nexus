@@ -10,13 +10,14 @@ from datetime import UTC, datetime, timedelta
 from typing import get_args
 
 from fastapi import APIRouter
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from nexus.actors import Agent
+from nexus.approvals.service import consequence_of, effective_status, options_of
 from nexus.clock import now
 from nexus.events.service import RUN_CLOSERS
-from nexus.models import Event, Task, TaskHistory
+from nexus.models import Approval, Event, Task, TaskHistory
 from nexus.tasks.api import SessionDep
 
 router = APIRouter(prefix="/api/now", tags=["maintenant"])
@@ -82,6 +83,50 @@ def _open_runs(session: Session) -> dict[str, Event]:
     return {e.actor: e for e in session.scalars(select(Event).where(Event.id.in_(latest)))}
 
 
+def _asks(session: Session, measured: datetime, cutoff: datetime) -> list[dict]:
+    """Requests addressed to the human, with their approval (ADR-019, D6, D7).
+
+    Listed: the pending ones, whatever their age, and the treated ones of the last 7 days: from
+    their decision, or from their deadline when expired. A request from before migration 0004 has
+    no approval (`approval` is null): it keeps the rule of #6, received within the last 7 days.
+    One query, with the request, its approval and its response event.
+    """
+    response = aliased(Event)
+    rows = session.execute(
+        select(Event, Approval, response)
+        .outerjoin(Approval, Approval.request_event_id == Event.id)
+        .outerjoin(response, response.id == Approval.response_event_id)
+        .where(Event.kind.in_(ASK_KINDS), or_(
+            # Pending of any age; the expired ones (stored pending) only inside the window.
+            and_(Approval.status == "pending",
+                 or_(Approval.expires_at.is_(None), Approval.expires_at >= cutoff)),
+            and_(Approval.id.is_(None), Event.received_at >= cutoff),
+            response.received_at >= cutoff,
+        ))
+        # `received_at` (what Nexus received), not `at` (the declared time).
+        .order_by(Event.received_at.desc(), Event.id.desc())
+    )
+    asks = []
+    for e, approval, answer in rows:
+        if HUMAN not in (e.needs or []):
+            continue
+        status = effective_status(approval, measured) if approval else None
+        if status == "expired" and approval.expires_at.astimezone(UTC) < cutoff:
+            continue  # expired more than 7 days ago
+        asks.append({
+            "event": e.ref, "agent": e.actor, "kind": e.kind, "subject": e.subject,
+            "task": _ref(e.task_id), "at": _iso(e.at), "received_at": _iso(e.received_at),
+            "body": e.body, "options": options_of(e.payload),
+            "consequence": consequence_of(e.payload),
+            "approval": None if approval is None else {
+                "ref": approval.ref, "status": status, "expires_at": _iso(approval.expires_at),
+                "decided_by": answer.actor if answer else None,
+                "decided_at": _iso(answer.received_at) if answer else None,
+            },
+        })
+    return asks
+
+
 def snapshot(session: Session) -> dict:
     # pysqlite n'ouvre aucune transaction avant un SELECT : sans BEGIN explicite, chaque lecture
     # verrait son propre état de la base. Une seule transaction de lecture = un seul instant.
@@ -118,15 +163,7 @@ def snapshot(session: Session) -> dict:
 
     # En UTC : une durée réelle, même autour d'un changement d'heure (checklist §7).
     cutoff = measured.astimezone(UTC) - WINDOW
-    # Fenêtre et tri sur `received_at` (ce que Nexus a reçu), pas sur `at` (l'heure déclarée).
-    asks = [{
-        "event": e.ref, "agent": e.actor, "kind": e.kind, "subject": e.subject,
-        "task": _ref(e.task_id), "at": _iso(e.at),
-        "received_at": _iso(e.received_at),
-    } for e in session.scalars(
-        select(Event).where(Event.kind.in_(ASK_KINDS), Event.received_at >= cutoff)
-        .order_by(Event.received_at.desc(), Event.id.desc())
-    ) if HUMAN in (e.needs or [])]
+    asks = _asks(session, measured, cutoff)
 
     blocked_tasks = [t for t in tasks.values() if t.status == "blocked"]
     entered_blocked = _transitions(session, blocked_tasks, "blocked")

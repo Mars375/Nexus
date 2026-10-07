@@ -2,10 +2,11 @@
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import event
+from sqlalchemy import delete, event, update
 
 from nexus import now as now_module
 from nexus.clock import TZ, now
+from nexus.models import Approval, Event
 
 AT = "2026-09-30T09:00:00+02:00"
 
@@ -31,6 +32,28 @@ def publish(client, kind, actor="helios", **fields):
     res = client.post("/api/events", json=body)
     assert res.status_code == 201, res.text
     return res.json()
+
+
+def forget_approvals(client):
+    """A base from before migration 0004: its asks have no approval (ADR-019, D6)."""
+    with client.app.state.sessionmaker() as session:
+        session.execute(delete(Approval))
+        session.commit()
+
+
+def ask_loic(client, kind="question", actor="mnema", **fields):
+    if kind == "needs_human":
+        fields["payload"] = {"options": ["oui", "non"], "consequence": "Publie"} | (
+            fields.get("payload") or {}
+        )
+    return publish(client, kind, actor=actor, needs=["loic"], **fields)
+
+
+def set_received(client, event_ref, instant):
+    with client.app.state.sessionmaker() as session:
+        session.execute(update(Event).where(Event.id == int(event_ref.removeprefix("nx-evt-")))
+                        .values(received_at=instant))
+        session.commit()
 
 
 def snapshot(client):
@@ -100,9 +123,14 @@ def test_asks_are_questions_and_needs_human_for_loic_within_seven_days(client):
     publish(client, "progress", actor="mnema", task=ref, payload={"percent": 5})
     s = snapshot(client)
     assert [a["event"] for a in s["asks"]] == [q["id"]]
-    assert s["asks"][0] == {"event": q["id"], "agent": "mnema", "kind": "question",
-                            "subject": "Quelle version ?", "task": ref, "at": s["asks"][0]["at"],
-                            "received_at": s["asks"][0]["received_at"]}
+    ask = s["asks"][0]
+    # Backward compatible: every key of #6 is still there, with the same meaning.
+    assert {k: ask[k] for k in ("event", "agent", "kind", "subject", "task", "at", "received_at")
+            } == {"event": q["id"], "agent": "mnema", "kind": "question",
+                  "subject": "Quelle version ?", "task": ref, "at": ask["at"],
+                  "received_at": ask["received_at"]}
+    assert set(ask) == {"event", "agent", "kind", "subject", "task", "at", "received_at", "body",
+                        "options", "consequence", "approval"}
 
 
 def test_the_seven_day_window_is_on_reception_not_on_the_claimed_date(client):
@@ -116,6 +144,7 @@ def test_the_seven_day_window_is_on_reception_not_on_the_claimed_date(client):
 def test_asks_received_more_than_seven_days_ago_are_left_out(client, monkeypatch):
     publish(client, "needs_human", actor="helios", needs=["loic"], subject="Ancienne",
             payload={"options": ["oui", "non"], "consequence": "Publie"})
+    forget_approvals(client)  # before migration 0004 there is no approval: the #6 rule applies
     later = now() + timedelta(days=7, minutes=1)
     monkeypatch.setattr("nexus.now.now", lambda: later)
     assert snapshot(client)["asks"] == []
@@ -129,6 +158,7 @@ def test_the_seven_day_window_is_a_real_duration_across_the_dst_change(client, m
     monkeypatch.setattr("nexus.events.service.now", lambda: received)
     publish(client, "needs_human", actor="helios", needs=["loic"], subject="Avant le changement",
             at=received.isoformat(), payload={"options": ["oui", "non"], "consequence": "Publie"})
+    forget_approvals(client)
     monkeypatch.setattr("nexus.now.now", lambda: measured)
     assert snapshot(client)["asks"] == []
 
@@ -267,3 +297,164 @@ def test_asks_carry_their_reception_instant(client):
     publish(client, "question", actor="mnema", subject="Q", needs=["loic"])
     ask = snapshot(client)["asks"][0]
     assert ask["received_at"]
+
+
+# --- Approvals in the asks (#26, ADR-019 D6, D7) -------------------------------------------------
+
+
+def test_an_ask_carries_what_was_asked_and_its_approval(client):
+    task = create(client)
+    ask_loic(client, "needs_human", actor="helios", subject="Publier ?", body="Version finale",
+             task=task, payload={"options": ["", "oui", 3, " non "],
+                                 "consequence": " Mise en ligne ",
+                                 "expires_at": (now() + timedelta(days=2)).isoformat()})
+
+    [ask] = snapshot(client)["asks"]
+
+    assert ask["body"] == "Version finale"
+    assert ask["options"] == ["", "oui", "", "non"]  # positions kept: choice is an index
+    assert ask["consequence"] == "Mise en ligne"
+    assert ask["approval"] == {
+        "ref": "nx-appr-1", "status": "pending", "decided_by": None, "decided_at": None,
+        "expires_at": ask["approval"]["expires_at"],
+    }
+    assert datetime.fromisoformat(ask["approval"]["expires_at"]).tzinfo is not None
+
+
+def test_a_question_without_options_or_consequence_reads_empty(client):
+    ask_loic(client)
+
+    [ask] = snapshot(client)["asks"]
+
+    assert (ask["body"], ask["options"], ask["consequence"]) == (None, [], None)
+    assert ask["approval"]["expires_at"] is None
+
+
+def test_a_treated_ask_says_who_decided_and_when(client):
+    ask_loic(client)
+    client.post("/api/approvals/nx-appr-1/answer", json={"text": "Version 2"})
+
+    [ask] = snapshot(client)["asks"]
+
+    assert ask["approval"]["status"] == "answered"
+    assert ask["approval"]["decided_by"] == "loic"
+    assert datetime.fromisoformat(ask["approval"]["decided_at"]).tzinfo is not None
+
+
+def test_an_ask_before_migration_0004_has_no_approval(client):
+    ask_loic(client)
+    forget_approvals(client)
+
+    [ask] = snapshot(client)["asks"]
+
+    assert ask["approval"] is None
+    assert set(ask) >= {"body", "options", "consequence", "approval"}
+
+
+def test_a_pending_ask_stays_listed_whatever_its_age(client):
+    old = ask_loic(client, subject="Très ancienne")
+    set_received(client, old["id"], now() - timedelta(days=90))
+
+    assert [a["subject"] for a in snapshot(client)["asks"]] == ["Très ancienne"]
+
+
+def test_a_treated_ask_leaves_the_list_seven_days_after_its_decision(client, monkeypatch):
+    ask_loic(client)
+    client.post("/api/approvals/nx-appr-1/answer", json={"text": "ok"})
+    decided = now()
+
+    monkeypatch.setattr("nexus.now.now", lambda: decided + timedelta(days=7, minutes=-1))
+    assert len(snapshot(client)["asks"]) == 1
+    monkeypatch.setattr("nexus.now.now", lambda: decided + timedelta(days=7, minutes=1))
+    assert snapshot(client)["asks"] == []
+
+
+def test_the_window_of_a_treated_ask_runs_from_its_decision_not_from_its_request(client):
+    old = ask_loic(client)
+    set_received(client, old["id"], now() - timedelta(days=30))
+
+    client.post("/api/approvals/nx-appr-1/answer", json={"text": "tard"})
+
+    assert [a["approval"]["status"] for a in snapshot(client)["asks"]] == ["answered"]
+
+
+def test_an_expired_ask_is_listed_for_seven_days_after_its_deadline(client, monkeypatch):
+    deadline = now() + timedelta(days=1)
+    ask_loic(client, payload={"expires_at": deadline.isoformat()})
+
+    monkeypatch.setattr("nexus.now.now", lambda: deadline + timedelta(days=6))
+    [ask] = snapshot(client)["asks"]
+    assert ask["approval"]["status"] == "expired"
+    assert ask["approval"]["decided_by"] is None
+
+    monkeypatch.setattr("nexus.now.now", lambda: deadline + timedelta(days=7, minutes=1))
+    assert snapshot(client)["asks"] == []
+
+
+def test_an_ask_not_yet_expired_is_pending(client, monkeypatch):
+    deadline = now() + timedelta(days=1)
+    ask_loic(client, payload={"expires_at": deadline.isoformat()})
+
+    monkeypatch.setattr("nexus.now.now", lambda: deadline - timedelta(microseconds=1))
+    assert snapshot(client)["asks"][0]["approval"]["status"] == "pending"
+    monkeypatch.setattr("nexus.now.now", lambda: deadline)
+    assert snapshot(client)["asks"][0]["approval"]["status"] == "expired"
+
+
+def test_asks_are_newest_first_whatever_their_status(client):
+    first = ask_loic(client, subject="Première")
+    ask_loic(client, subject="Deuxième")
+    client.post("/api/approvals/nx-appr-2/answer", json={"text": "ok"})
+    set_received(client, first["id"], now() - timedelta(days=40))
+
+    assert [a["subject"] for a in snapshot(client)["asks"]] == ["Deuxième", "Première"]
+
+
+def test_asks_addressed_to_an_agent_have_no_approval_and_stay_out(client):
+    publish(client, "question", actor="mnema", subject="Pour Helios", needs=["helios"])
+
+    assert snapshot(client)["asks"] == []
+
+
+def test_the_snapshot_cost_does_not_grow_with_the_number_of_asks(client):
+    ask_loic(client, subject="a")
+    base = _statements(client)
+    for n in range(5):
+        ask_loic(client, subject=f"b{n}")
+    client.post("/api/approvals/nx-appr-1/answer", json={"text": "ok"})
+
+    assert _statements(client) == base
+
+
+def set_expiry(client, number, instant):
+    with client.app.state.sessionmaker() as session:
+        session.execute(update(Approval).where(Approval.id == number).values(expires_at=instant))
+        session.commit()
+
+
+def test_the_window_of_an_expired_ask_runs_from_its_deadline_not_from_its_request(client):
+    recent = ask_loic(client, subject="Expirée il y a 5 jours")
+    old = ask_loic(client, subject="Expirée il y a 8 jours")
+    for number, ask, days in ((1, recent, 5), (2, old, 8)):
+        set_received(client, ask["id"], now() - timedelta(days=20))
+        set_expiry(client, number, now() - timedelta(days=days))
+
+    listed = snapshot(client)["asks"]
+
+    assert [(a["subject"], a["approval"]["status"]) for a in listed] == [
+        ("Expirée il y a 5 jours", "expired")
+    ]
+
+
+def test_old_expired_approvals_are_not_even_read(client, monkeypatch):
+    for n in range(4):
+        old = ask_loic(client, subject=f"Ancienne {n}")
+        set_received(client, old["id"], now() - timedelta(days=30))
+        set_expiry(client, n + 1, now() - timedelta(days=20))
+    judged = []
+    real = now_module.effective_status
+    monkeypatch.setattr(now_module, "effective_status",
+                        lambda approval, at: judged.append(approval.id) or real(approval, at))
+
+    assert snapshot(client)["asks"] == []
+    assert judged == []  # the window is applied in SQL: they were never read

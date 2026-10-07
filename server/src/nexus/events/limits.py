@@ -8,6 +8,7 @@ from datetime import timedelta
 
 EVENT_ID_MAX = 128  # actor_event_id column
 RUN_MAX = 128  # run_ref column; also the limit of payload.run_ref (rules.validate)
+ANSWER_ID_PREFIX = "answer-"  # event ids reserved to Nexus: the response event of an approval
 SUBJECT_MAX = 500
 EVIDENCE_REF_MAX = 512  # measured after stripping whitespace, as the API does
 CONSEQUENCE_MAX = 1000  # payload.consequence of a question / needs_human, measured raw (#26)

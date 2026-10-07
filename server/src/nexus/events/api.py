@@ -19,15 +19,17 @@ from nexus.actors import Actor
 from nexus.clock import now
 from nexus.events import service
 from nexus.events.limits import EVENT_ID_MAX, EVIDENCE_REF_MAX, RUN_MAX, SUBJECT_MAX
-from nexus.events.rules import Envelope
+from nexus.events.rules import RESERVED_KINDS, Envelope
 from nexus.models import Event
 from nexus.tasks.api import SessionDep, commit
 from nexus.validation import InputModel
 
-Kind = Literal[
+# What an agent may publish. `answer` is written by Nexus only (ADR-019, D8).
+PublishKind = Literal[
     "claimed", "working", "progress", "question", "blocked", "needs_human", "handoff",
     "review", "done", "failed", "unknown",
 ]
+Kind = Literal[PublishKind, "answer"]  # what the list filter accepts
 Ref = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=EVIDENCE_REF_MAX)
 ]
@@ -47,10 +49,19 @@ class EventIn(InputModel):
     task: str | None = None
     run: str | None = Field(default=None, max_length=RUN_MAX)
     actor: Actor
-    kind: Kind
+    kind: PublishKind
     subject: str = Field(min_length=1, max_length=SUBJECT_MAX)
     body: str | None = None
     payload: dict[str, Any] = {}
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _answer_is_reserved(cls, kind: Any) -> Any:
+        if isinstance(kind, str) and kind in RESERVED_KINDS:
+            raise ValueError(
+                "« answer » est réservé à Nexus : il est écrit par une réponse ou une décision"
+            )
+        return kind
 
     @field_validator("payload")
     @classmethod
