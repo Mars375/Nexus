@@ -64,7 +64,15 @@ export default function App() {
         </main>
       </div>
       <HealthStatus live={live} />
-      <Toaster position="bottom-center" offset={40} theme="dark" richColors closeButton />
+      <Toaster
+        position="bottom-center"
+        offset={40}
+        theme="dark"
+        richColors
+        closeButton
+        // sonner sets its own font stack on the toaster element: override it with the theme font.
+        style={{ fontFamily: 'var(--font-orbital)' }}
+      />
     </div>
   )
 }
