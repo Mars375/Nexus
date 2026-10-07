@@ -92,7 +92,7 @@ Fait structuré publié par un acteur (voir [EVENT-PROTOCOL.md](EVENT-PROTOCOL.m
 | `id`, `at` | |
 | `task`, `run` | refs (ou null pour présence/coordination) |
 | `actor` | qui publie |
-| `kind` | `claimed` `working` `progress` `question` `blocked` `needs_human` `handoff` `review` `done` `failed` `unknown` |
+| `kind` | `claimed` `working` `progress` `question` `blocked` `needs_human` `handoff` `review` `done` `failed` `unknown` ; `answer` (réservé à Nexus, écrit par `POST /api/approvals/…`, EVENT-PROTOCOL §3) |
 | `subject`, `body` | court, puis détail |
 | `payload` | données spécifiques au kind |
 | `evidence` | refs |
