@@ -108,14 +108,14 @@ def test_asks_are_questions_and_needs_human_for_loic_within_seven_days(client):
 def test_the_seven_day_window_is_on_reception_not_on_the_claimed_date(client):
     old = (now() - timedelta(days=8)).isoformat()
     publish(client, "needs_human", actor="helios", at=old, needs=["loic"], subject="Antidaté",
-            payload={"options": ["oui", "non"]})
+            payload={"options": ["oui", "non"], "consequence": "Publie"})
     # un événement antidaté mais reçu aujourd'hui est bien une demande récente
     assert [a["subject"] for a in snapshot(client)["asks"]] == ["Antidaté"]
 
 
 def test_asks_received_more_than_seven_days_ago_are_left_out(client, monkeypatch):
     publish(client, "needs_human", actor="helios", needs=["loic"], subject="Ancienne",
-            payload={"options": ["oui", "non"]})
+            payload={"options": ["oui", "non"], "consequence": "Publie"})
     later = now() + timedelta(days=7, minutes=1)
     monkeypatch.setattr("nexus.now.now", lambda: later)
     assert snapshot(client)["asks"] == []
@@ -128,7 +128,7 @@ def test_the_seven_day_window_is_a_real_duration_across_the_dst_change(client, m
     measured = datetime(2026, 10, 28, 12, tzinfo=TZ)  # comme nexus.clock.now(), fuseau nommé
     monkeypatch.setattr("nexus.events.service.now", lambda: received)
     publish(client, "needs_human", actor="helios", needs=["loic"], subject="Avant le changement",
-            at=received.isoformat(), payload={"options": ["oui", "non"]})
+            at=received.isoformat(), payload={"options": ["oui", "non"], "consequence": "Publie"})
     monkeypatch.setattr("nexus.now.now", lambda: measured)
     assert snapshot(client)["asks"] == []
 

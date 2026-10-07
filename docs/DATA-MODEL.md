@@ -131,15 +131,26 @@ Fait structuré publié par un acteur (voir [EVENT-PROTOCOL.md](EVENT-PROTOCOL.m
 
 ### 2.10 Approval (validation) — native
 
-Toute décision attendue de Loïc (ou d'un gardien) est un objet explicite.
+Toute décision attendue de Loïc (ou d'un gardien) est un objet explicite (ADR-019). Une approbation est l'**état de décision** d'une demande : une `question` ou un `needs_human` dont `needs` contient un humain. Elle naît avec l'événement, dans la même transaction (`POST /api/events` consigne sa référence dans `effects`, EVENT-PROTOCOL §6 bis). Table `approvals`, référence `nx-appr-<n>`.
 
 | Champ | Notes |
 |---|---|
-| `id`, `what` | ce qui est demandé |
-| `requested_by`, `at` | |
-| `status` | `pending`, `approved`, `rejected`, `expired` |
-| `decided_by`, `decided_at` | |
-| `consequence` | ce qui se passera après approbation |
+| `id` | `nx-appr-<n>` |
+| `request_event` | l'événement de demande (`nx-evt-<n>`), unique : une demande, une approbation |
+| `ask_kind` | `question` ou `needs_human`, recopié de l'événement |
+| `status` | stocké : `pending`, `approved`, `rejected`, `answered` ; **`expired` n'est jamais stocké** (voir ci-dessous) |
+| `expires_at` | optionnel : copie typée de `payload.expires_at`, un instant (jamais du texte) |
+| `response_event` | l'événement de réponse (`kind` `answer`, étape suivante), unique, nul tant que personne n'a décidé |
+| `version` | verrou optimiste, comme `Task` : deux décisions simultanées ne gagnent pas toutes les deux |
+
+Ce qui est demandé n'est **pas recopié** : `what` (sujet, détail), `requested_by` (acteur), `at` (date), la tâche, les options et la `consequence` se lisent dans l'événement de demande, immuable (règle 3 du §5). `decided_by` et `decided_at` se lisent de même dans l'événement de réponse. Une seule source de vérité : le contenu de la demande ne peut pas diverger de son approbation.
+
+- **`answered`** : la demande était une `question` et quelqu'un y a répondu en texte. **`approved` / `rejected`** : la décision binaire d'un `needs_human`. Quand il propose au moins 2 options, approuver exige de dire laquelle (`choice`, l'indice de l'option) ; c'est l'étape suivante. Pas de statut « retirée » : une demande dépassée se corrige par un nouvel événement.
+- **`expired` est calculé à la lecture**, avec l'horloge du serveur (`nexus.clock.now()`) : une approbation `pending` dont `expires_at` est atteint (`expires_at <= maintenant`, bornes comprises) est renvoyée `expired`. Rien n'est écrit : pas de tâche de fond, pas d'horloge à synchroniser, et une réponse tardive reste possible tant que le produit le décide. Les instants se comparent en UTC.
+- **`expires_at`** (`payload.expires_at`, ISO-8601 **avec** fuseau, texte) est fixé par l'agent, sans valeur par défaut, au moins 1 minute et au plus 30 jours après la réception. Une demande sans échéance attend sans limite.
+- **`consequence`** (`payload.consequence`, texte de 1 000 caractères au plus) est obligatoire pour tout **nouveau** `needs_human`, facultative pour une `question`. Elle est **annoncée par le demandeur et non vérifiée par Nexus** (ADR-005) : l'interface la présente comme « annoncée par <agent> », jamais comme un fait.
+- **Pas de rétroremplissage** : les demandes publiées avant la migration 0004 n'ont pas d'approbation.
+- Lecture : `GET /api/approvals` (filtres `status`, `task`, `limit` ; `status=expired` filtre sur le statut effectif) et `GET /api/approvals/<nx-appr-n>`. Chaque réponse porte `source` (`nexus.db`) et `measured_at`.
 
 ### 2.11 Decision (décision) — native
 
@@ -184,7 +195,7 @@ Task 1─* Run 1─* Artifact
 Task 1─* Event
 Task *─* Task (depends_on)
 Conversation 1─* Message *─0..1 Task
-Approval *─0..1 Task
+Approval 1─1 Event (demande) ; Approval 0..1─1 Event (réponse) ; Approval *─0..1 Task, via l'événement de demande
 Decision *─* Task
 ```
 

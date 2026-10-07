@@ -69,9 +69,9 @@ Règles générales :
 | `claimed` | « je prends cette tâche » | — | `^ claimed #142 par helios` |
 | `working` | début d'exécution (run) | `payload.run_ref` | `^ working #142, session tmux …` |
 | `progress` | avancement notable | `payload.percent` ou description | `^ 40 % : parse OK` |
-| `question` | question à un acteur | `needs` + question explicite | `^ question → mnema : quel scope ?` |
+| `question` | question à un acteur | `needs` + question explicite ; `payload.consequence` et `payload.expires_at` facultatifs | `^ question → mnema : quel scope ?` |
 | `blocked` | bloqué | cause + `payload.follow_up_at` ou plan | `^ bloqué : SSH artemis timeout` |
-| `needs_human` | décision de Loïc requise | décision attendue + options | `^ validation : publier l'épisode ?` |
+| `needs_human` | décision de Loïc requise | décision attendue + options + `payload.consequence` ; `payload.expires_at` facultatif | `^ validation : publier l'épisode ?` |
 | `handoff` | transfert de responsabilité | receveur + prochaine action | `^ handoff → aether : reste à poser la clé` |
 | `review` | prêt pour revue | quoi vérifier + où | `^ review : PR #12, diff court` |
 | `done` | terminé | `evidence` non vide | `^ done : commit a1b2c3d + tests verts` |
@@ -83,7 +83,9 @@ Règles générales :
 - **claimed** — avant de commencer à travailler ; un claim remplace le précédent (dernier claim gagne, il est daté).
 - **working** — ouvre un run ; un seul run actif par agent et par tâche.
 - **progress** — pas plus d'un par étape significative ; pas de spam.
-- **question / needs_human** — doit nommer le destinataire (`needs`) et être actionnable : pas de « ça avance ? ».
+- **question / needs_human** — doit nommer le destinataire (`needs`) et être actionnable : pas de « ça avance ? ». Adressé à un humain, il ouvre une **approbation** (§6 bis, DATA-MODEL §2.10). Deux champs du `payload` :
+  - `consequence` (texte, 1 000 caractères au plus) : ce qui se passera si Loïc approuve. **Obligatoire pour un nouveau `needs_human`** (refus `consequence_required`), facultative pour une `question`. C'est une déclaration du demandeur que Nexus ne vérifie pas (ADR-005) ; elle passe par le masquage des secrets comme le reste du payload, et un texte réduit à `[REDACTED]` compte comme absent.
+  - `expires_at` (texte ISO-8601 **avec fuseau**) : échéance fixée par l'agent, sans valeur par défaut. Au moins 1 minute et au plus 30 jours après la réception (refus `invalid_expires_at`, `expires_at_too_soon`, `expires_at_too_far`). Passé cet instant, l'approbation est lue `expired` (calcul à la lecture, rien n'est écrit). Ces contrôles de `consequence` et `expires_at` (type, longueur, format, fenêtre) ne jugent que les **nouveaux** événements : un renvoi identique d'un événement déjà reçu reste une relecture, même après l'échéance ou si le payload ne respecte plus les règles actuelles.
 - **blocked** — doit dire : cause, impact, ce qui débloquerait, relance prévue. Sinon c'est `unknown`.
 - **handoff** — doit dire : receveur, état exact, prochaine action, ce qui est déjà fait. Un handoff sans prochaine action est refusé.
 - **review** — doit pointer la preuve à examiner.
@@ -141,13 +143,32 @@ Un effet qui ne change rien est consigné comme **non appliqué**, avec sa raiso
 | `review` | passage en `review`, avec les preuves jointes (Loïc peut ensuite clore sans les redemander) |
 | `done` | passage en `done` avec les preuves (sans preuve : l'événement est stocké en `review`) |
 | `handoff` | le destinataire devient agent principal ; la prochaine action est mise à jour |
-| `progress`, `question`, `needs_human`, `failed`, `unknown` | aucun changement d'état : visibles dans l'historique et les vues |
+| `progress`, `failed`, `unknown` | aucun changement d'état : visibles dans l'historique et les vues |
+| `question`, `needs_human` | aucun changement d'état de la tâche ; adressés à un humain, ils ouvrent une approbation (effet `approval`, ci-dessous) |
+
+L'effet `approval` est consigné **en plus** des effets sur la tâche, et même sans tâche :
+
+```json
+{ "action": "approval", "applied": true, "approval": "nx-appr-3" }
+```
+
+L'approbation est créée dans la même transaction que l'événement ; un `needs` qui répète le même humain n'en ouvre qu'une, un destinataire non humain (`needs: ["mnema"]`) aucune. Un renvoi identique ne crée rien de plus et renvoie la même référence (c'est l'événement relu qui la porte).
 
 Une clôture (`done`, `review`, `blocked`, `handoff`, `failed`) doit nommer son run (`run` ou `payload.run_ref`). Si elle vise un autre run que le run actif de l'agent (ex. `done(r1)` arrivé après `working(r2)`) ou n'en nomme aucun alors qu'un run est actif, elle est enregistrée mais ne modifie pas la tâche et ne ferme pas le run actif. Une référence de run close l'est pour de bon : un `working` tardif ou rejoué de ce run est enregistré sans rouvrir la tâche, et une seconde clôture de ce run (`done(r1)` après `handoff(r1)`) est enregistrée sans effet ; pour reprendre, on ouvre un nouveau run. Un seul run actif par agent et par tâche ; un `handoff` nomme **un seul** destinataire.
 
 Autres garanties : un renvoi du même `id` par le même acteur est une relecture (pas de doublon) ; un même `id` réutilisé pour un autre contenu est refusé ; le même fait republié dans les 10 minutes est refusé comme bruit ; les secrets sont masqués avant écriture ; un identifiant d'événement ou une référence de run qui contient un secret est refusé (masqué, il ne serait plus unique).
 
 Exemple exécutable : `uv run python -m nexus.demo_agent --task nx-task-1 --actor helios --evidence commit:…` (`server/src/nexus/demo_agent.py`).
+
+## 6 ter. Retour vers l'agent
+
+Nexus **ne lance et ne réveille aucun agent** (ADR-012) : valider ou répondre ne déclenche rien chez lui. C'est l'agent qui vient lire.
+
+1. À la publication de sa demande, l'agent garde la référence `nx-appr-<n>` de l'effet `approval` dans la réponse (ou la relit dans l'événement : `GET /api/events/<id>`, champ `effects`).
+2. Il interroge `GET /api/approvals/<nx-appr-n>` à son rythme, jusqu'à ce que `status` ne soit plus `pending`. `expired` veut dire que l'échéance qu'il a fixée est passée sans décision.
+3. Il lit alors la décision (`approved`, `rejected`) ou la réponse (`answered`, avec `response.text`, et `response.choice` pour l'option retenue), puis reprend son travail et publie ses propres événements. `choice` est l'**indice** (à partir de 0) de l'option dans `payload.options` de la demande, qui fait foi ; `options` dans `GET /api/approvals` garde les mêmes positions (un élément non textuel y devient une chaîne vide).
+
+Les réponses et décisions elles-mêmes (l'écriture) arrivent dans l'étape suivante de l'issue #26 : cette étape ne livre que la création et la lecture.
 
 ## 7. Anti-patterns (refusés)
 

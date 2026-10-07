@@ -20,11 +20,17 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 
 from nexus import secrets
+from nexus.actors import HUMANS
 from nexus.clock import now
 from nexus.events import rules
-from nexus.events.limits import EVENT_ID_MAX, EVIDENCE_REF_MAX, RUN_MAX, SUBJECT_MAX
+from nexus.events.limits import (
+    EVENT_ID_MAX,
+    EVIDENCE_REF_MAX,
+    RUN_MAX,
+    SUBJECT_MAX,
+)
 from nexus.events.rules import Envelope
-from nexus.models import Event, Task
+from nexus.models import Approval, Event, Task
 from nexus.tasks import service as tasks
 from nexus.tasks.rules import RuleViolation
 from nexus.validation import has_unencodable
@@ -160,6 +166,7 @@ def publish(
         raise RuleViolation(
             "invalid_value", "valeur non encodable : demi-paire UTF-16, NaN ou Infinity"
         )
+    raw_consequence = envelope.payload.get("consequence")  # measured raw, after the read-back
     redacted: dict[str, list[str]] = {}
     raw_run_refs = (envelope.run, envelope.payload.get("run_ref"))
     # Tout ce qui sera stocké passe par le scanner, identifiants compris (ADR-006).
@@ -204,6 +211,10 @@ def publish(
             f"id : déjà utilisé par {envelope.actor} pour un autre événement ; un événement "
             "ne se réécrit pas, publie une correction",
         )
+    # What only a NEW event must satisfy, judged after the read-back above so that an identical
+    # resend of a known event is replayed (even after its deadline, or from before the rule).
+    received = now()
+    expires_at = rules.check_new_ask(envelope, raw_consequence, received)
     _refuse_noise(session, envelope, task, actor_event_id)
     serialized_from = None  # date de modification avant le verrou, si le verrou a joué
     if kind == "working":
@@ -227,7 +238,6 @@ def publish(
         else:
             raise StaleDataError("ouverture de run : trop d'écritures concurrentes")
 
-    received = now()
     event = Event(
         actor=envelope.actor, actor_event_id=actor_event_id, at=at, received_at=received,
         task_id=task.id if task else None,
@@ -252,11 +262,27 @@ def publish(
     # écritures, un fait identique publié en parallèle sous un autre identifiant est vu ici.
     _refuse_noise(session, envelope, task, actor_event_id, exclude_id=event.id)
     event.effects = _apply_effects(session, event, envelope, task) if task else []
+    if _opens_approval(event):
+        # Same transaction as the event: both exist or neither does. UNIQUE(request_event_id)
+        # and the read-back above make a resend return this reference, never a second row.
+        approval = Approval(
+            request_event_id=event.id, ask_kind=event.kind, expires_at=expires_at,
+            status="pending",
+        )
+        session.add(approval)
+        session.flush()
+        event.effects = [*event.effects,
+                         {"action": "approval", "applied": True, "approval": approval.ref}]
     if serialized_from is not None and not any(e["applied"] for e in event.effects):
         # Le verrou n'a servi qu'à sérialiser : sans changement réel, la tâche ne doit pas
         # paraître récemment modifiée.
         task.updated_at = serialized_from
     return event, True
+
+
+def _opens_approval(event: Event) -> bool:
+    """An ask addressed to at least one human waits for a decision (ADR-019)."""
+    return event.kind in rules.ASK_KINDS and bool(set(event.needs) & HUMANS)
 
 
 def _winner_of_race(

@@ -144,6 +144,23 @@ Toute décision structurante s'ajoute ici.
 - **Conséquences :** tout message vers un tiers humain est gated (SECURITY §4). WhatsApp impose des contraintes à trancher en Phase 3 (INTEGRATIONS §3) : l'API officielle (WhatsApp Business Cloud API) exige un numéro dédié, des modèles de message approuvés pour initier une conversation hors fenêtre de 24 h, et un webhook entrant joignable depuis Internet ; les bibliothèques non officielles utilisent le numéro personnel mais violent les conditions de WhatsApp (risque de bannissement).
 - **Statut :** accepté.
 
+## ADR-019 — Approbations : une table d'état légère, un journal immuable, une échéance calculée
+
+- **Date :** 2026-10-07 (décidé par Loïc, issue #26 « Approbations et réponses depuis Maintenant »)
+- **Contexte :** DATA-MODEL §2.10 prévoyait un objet `Approval`, mais Maintenant (#6) ne montrait que les `question` et `needs_human` reçus, « jamais étiquetés en attente : on ne sait pas encore si elles sont traitées ». Pour répondre et valider depuis Nexus, il faut savoir si une demande est traitée, sans réécrire un événement (immuable, DATA-MODEL §5 règle 3) ni créer une seconde source de vérité du contenu (ADR-012). Nexus ne réveille aucun agent : l'agent doit pouvoir venir lire la décision.
+- **Décision :** une **table d'état légère** `approvals` (`nx-appr-<n>`) à côté du **journal immuable** des événements. L'approbation ne porte que l'état de décision (`status`, `expires_at`, lien vers l'événement de demande et, plus tard, de réponse, `version`) ; le contenu (sujet, détail, demandeur, tâche, options, `consequence`) se lit dans l'événement de demande. La décision est un événement (journal), son effet sur l'état est la table. L'échéance est **calculée à la lecture** avec l'horloge du serveur, jamais écrite. Neuf choix, pris par Loïc sur recommandation de l'architecte :
+  1. **D1** — une seule table pour les questions et les approbations, avec `ask_kind` (`question` ou `needs_human`). Quatre statuts stockés : `pending`, `approved`, `rejected`, `answered` ; `expired` s'y ajoute à la lecture, calculé, jamais stocké (D4).
+  2. **D2** — la décision est binaire (`approved` / `rejected`) ; approuver un `needs_human` qui propose au moins 2 options exige `choice` (l'indice de l'option). Implémenté avec l'écriture des décisions (étape suivante).
+  3. **D3** — `payload.consequence` est **obligatoire** pour tout **nouveau** `needs_human` (409 `consequence_required`), facultative pour une `question`, 1 000 caractères au plus. Un renvoi identique d'un ancien événement reste une relecture. Elle est **annoncée par le demandeur et non vérifiée par Nexus** (ADR-005) : l'interface dit « annoncée par <agent> ».
+  4. **D4** — `payload.expires_at` facultatif, fixé par l'agent, sans valeur par défaut, de 1 minute à 30 jours après la réception ; le statut `expired` est **calculé** (`expires_at <= maintenant`, UTC) et jamais stocké.
+  5. **D5** — seuls les destinataires humains décident ; un autre acteur est refusé en 409, pas 403. Contrôle de cohérence, **pas de la sécurité** : l'acteur n'est que déclaré jusqu'à #16 (SECURITY §3).
+  6. **D6** — pas de rétroremplissage : les demandes antérieures à la migration 0004 n'ont pas d'approbation.
+  7. **D7** — Maintenant liste les demandes en attente de tout âge et les traitées des 7 derniers jours ; la tuile compte les demandes en attente (spec Maintenant, décision 2 révisée).
+  8. **D8** — un nouveau `kind` `answer`, réservé à Nexus, est refusé dans `POST /api/events` : un agent ne peut pas fabriquer une réponse de Loïc.
+  9. **D9** — pas de statut « retirée » : une demande dépassée se corrige par un nouvel événement.
+- **Conséquences :** migration `0004` (table `approvals`, sans rétroremplissage, réversible par `drop_table`) ; l'événement de demande consigne l'effet `approval` avec la référence ; l'agent relit `GET /api/approvals/<ref>` jusqu'à la fin de l'attente, valider ne déclenche rien chez lui (ADR-012, EVENT-PROTOCOL §6 ter) ; la création et la lecture arrivent avant l'écriture des réponses (PR en trois temps : modèle et lecture, réponses et décisions avec `/api/now`, interface). Contrepartie : une demande sans échéance attend sans limite, et une approbation « expirée » peut encore être tranchée si le produit le décide, puisque rien n'est écrit à l'échéance.
+- **Statut :** accepté.
+
 ---
 
 ## Décisions ouvertes

@@ -35,6 +35,7 @@
 
 - **Suppression** : jamais par un agent. Seul Loïc supprime — ou un script explicitement validé par lui.
 - **Exécution** : chaque agent exécute dans son périmètre de nœud et ses permissions locales existantes (inchangées par Nexus).
+- **Qui décide d'une approbation** (#26, ADR-019) : seul un destinataire **humain** de la demande (`needs`) peut y répondre ou la trancher ; à partir de l'étape suivante (réponse et décision, pas encore livrées), un autre acteur sera refusé en **409** (règle de cohérence, pas un 403). **Limite assumée : c'est un contrôle de cohérence, pas de la sécurité.** Tant que l'authentification n'existe pas (#16), l'acteur n'est que **déclaré** (en-tête `X-Nexus-Actor`, `loic` par défaut) : quiconque joint l'API locale peut se déclarer `loic`. Le contrôle évite les erreurs (un agent qui « valide » sa propre demande par accident), il n'arrête pas un acteur malveillant. La `consequence` d'une demande est annoncée par le demandeur et non vérifiée (ADR-005).
 - **« Confier à »** : depuis Nexus, seul Loïc déclenche l'exécution d'une tâche par un agent (ADR-012) ; un agent peut le proposer (`needs_human`), jamais le déclencher lui-même via Nexus.
 
 ## 4. Actions gated (go humain explicite, à chaque fois)
