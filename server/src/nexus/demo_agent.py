@@ -18,6 +18,7 @@ N'utilise que la bibliothèque standard : un agent peut copier ce code tel quel.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import math
 import os
@@ -25,6 +26,7 @@ import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -73,6 +75,27 @@ def load_token(token_file: str | None, environ=os.environ) -> str | None:
     if not _TOKEN_FORMAT.fullmatch(token):
         raise TokenError(f"{source} : le contenu n'est pas un jeton Nexus (nxt_…)")
     return token
+
+
+_TAILNET = ipaddress.ip_network("100.64.0.0/10")
+
+
+def safe_for_token(base: str) -> bool:
+    """Whether a bearer token may travel to `base`: HTTPS, or HTTP to this machine or a
+    Tailscale peer (WireGuard already encrypts the tailnet). Never in clear elsewhere."""
+    url = urllib.parse.urlsplit(base)
+    if url.scheme == "https":
+        return True
+    if url.scheme != "http" or not url.hostname:
+        return False
+    host = url.hostname.lower()
+    if host == "localhost" or host.endswith(".ts.net"):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_loopback or address in _TAILNET
 
 
 def call(base: str, method: str, path: str, body: dict | None = None) -> dict:
@@ -181,6 +204,10 @@ def main(argv: list[str] | None = None, sleep=time.sleep, monotonic=time.monoton
     except TokenError as err:
         _bearer = None
         parser.error(str(err))
+    if _bearer and not safe_for_token(args.base):
+        _bearer = None
+        parser.error("--base : le jeton ne part qu'en HTTPS, ou en HTTP vers cette machine "
+                     "(localhost, 127.0.0.0/8, ::1) ou un pair Tailscale (100.64.0.0/10, *.ts.net)")
     if args.ask is not None and not args.ask.strip():
         parser.error("--ask : le sujet ne peut pas être vide")
     if not math.isfinite(args.wait) or args.wait < 0:

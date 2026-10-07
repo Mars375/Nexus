@@ -339,3 +339,43 @@ def test_the_token_is_never_accepted_on_the_command_line_nor_echoed(wire, capsys
     assert TOKEN not in err and "A" * 20 not in err
     assert "NEXUS_TOKEN" in err and "--token-file" in err
     assert wire == []
+
+
+@pytest.mark.parametrize("base", [
+    "http://nexus.example:8765",
+    "http://192.168.1.10:8765",
+    "http://10.0.0.5",
+    "ftp://127.0.0.1",
+])
+def test_a_token_is_never_sent_in_clear_to_a_remote_host(wire, monkeypatch, capsys, base):
+    monkeypatch.setenv("NEXUS_TOKEN", TOKEN)
+    with pytest.raises(SystemExit) as exc:
+        run("nx-task-1", "--base", base)
+
+    assert exc.value.code == 2
+    assert wire == []  # nothing left the process
+    err = capsys.readouterr().err
+    assert "--base" in err and TOKEN not in err
+
+
+@pytest.mark.parametrize("base", [
+    "http://127.0.0.1:8765",
+    "http://localhost:8765",
+    "http://[::1]:8765",
+    "http://100.101.102.103:8765",  # Tailscale (WireGuard-encrypted)
+    "http://helios.tail1234.ts.net:8765",
+    "https://nexus.example",
+])
+def test_a_token_goes_over_https_loopback_or_tailscale(wire, monkeypatch, base):
+    monkeypatch.setenv("NEXUS_TOKEN", TOKEN)
+    with pytest.raises(SystemExit):
+        run("nx-task-1", "--base", base)
+
+    assert wire and all(r.get_header("Authorization") == f"Bearer {TOKEN}" for r in wire)
+
+
+def test_without_a_token_a_remote_http_base_stays_allowed(wire):
+    with pytest.raises(SystemExit):
+        run("nx-task-1", "--base", "http://nexus.example:8765")
+
+    assert wire
