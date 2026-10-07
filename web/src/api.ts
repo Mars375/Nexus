@@ -1,6 +1,7 @@
 // Toute donnée passe par l'API FastAPI — jamais d'accès direct propre au navigateur (ADR-017).
 
 import { apiUrl } from './apiBase'
+import { clearToken, getToken, markLocked } from './auth'
 
 export type Health = {
   version: string
@@ -126,16 +127,26 @@ export class ApiError extends Error {
 /** Au-delà, une requête sans réponse échoue : jamais de chargement infini (ADR-005). */
 export const REQUEST_TIMEOUT_MS = 10_000
 
+/** Codes of a 401 after which the stored token is useless: Nexus refused it (ADR-020, D8). */
+const TOKEN_REFUSED = ['auth_required', 'invalid_token']
+
+/** The token goes to the Nexus API only, never to another address (ADR-020, D4). */
+const isApiPath = (path: string): boolean => path.startsWith('/api/')
+
 export async function request<T>(
   path: string,
   init?: RequestInit,
   timeoutMs: number = REQUEST_TIMEOUT_MS,
 ): Promise<T> {
   const timeout = AbortSignal.timeout(timeoutMs)
+  const headers = new Headers(init?.headers)
+  if (init?.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+  const sent = isApiPath(path) && !headers.has('Authorization') ? getToken() : null
+  if (sent) headers.set('Authorization', `Bearer ${sent}`)
   const res = await fetch(apiUrl(path), {
     ...init,
     signal: init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout,
-    headers: init?.body ? { 'Content-Type': 'application/json', ...init.headers } : init?.headers,
+    headers,
   })
   if (res.ok) return res.status === 204 ? (undefined as T) : res.json()
   let code = `http_${res.status}`
@@ -153,8 +164,18 @@ export async function request<T>(
   } catch {
     // corps absent ou illisible : on garde le message générique
   }
+  if (res.status === 401 && getToken() === sent) {
+    // The server drives the lock screen. A late answer to an older token is ignored: the token
+    // Loïc just entered must not be forgotten because of it.
+    if (TOKEN_REFUSED.includes(code)) clearToken()
+    markLocked(code)
+  }
   throw new ApiError(res.status, code, message)
 }
+
+/** TanStack's default (3 tries), except after a 401: retrying a refused token only repeats the refusal. */
+export const retryQuery = (failureCount: number, error: unknown): boolean =>
+  !(error instanceof ApiError && error.status === 401) && failureCount < 3
 
 const json = (body: unknown): RequestInit['body'] => JSON.stringify(body)
 

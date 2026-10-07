@@ -1,10 +1,14 @@
 import clsx from 'clsx'
+import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { Toaster } from 'sonner'
+import { clearToken, useAuth } from './auth'
 import { HealthStatus } from './HealthStatus'
+import { LockScreen } from './LockScreen'
 import { useLiveUpdates } from './liveUpdates'
 import { NowView } from './now/NowView'
 import { WorkView } from './tasks/WorkView'
+import { Button } from './ui'
 
 type View = 'maintenant' | 'travail'
 
@@ -25,13 +29,17 @@ function openTaskFromHash(): string | null {
 export default function App() {
   const [view, setView] = useState<View>(currentView)
   const [open, setOpen] = useState<string | null>(openTaskFromHash)
-  const live = useLiveUpdates()
+  const live = useLiveUpdates() // reste actif sous l'écran verrouillé : la connexion continue après le déverrouillage
+  const { locked, hasToken } = useAuth()
+  const client = useQueryClient()
 
   useEffect(() => {
     const onHash = () => { setView(currentView()); setOpen(openTaskFromHash()) }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
+
+  if (locked) return <LockScreen />
 
   return (
     <div className="flex h-full flex-col">
@@ -54,6 +62,15 @@ export default function App() {
               {label}
             </a>
           ))}
+          {hasToken && (
+            <Button
+              variant="ghost"
+              className="mt-auto justify-start px-2.5 text-xs"
+              onClick={() => { clearToken(); void client.invalidateQueries() }}
+            >
+              Oublier le jeton
+            </Button>
+          )}
         </nav>
         <main className="flex min-w-0 flex-1 flex-col">
           {view === 'travail' ? (

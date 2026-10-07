@@ -2,6 +2,10 @@
 
     uv run python -m nexus.demo_agent --task nx-task-1 --actor helios --evidence commit:a1b2c3d
 
+Avec un jeton d'acteur (ADR-020), il l'envoie dans `Authorization: Bearer …`. Le jeton vient de la
+variable `NEXUS_TOKEN` ou d'un fichier (`--token-file <chemin>`, qui l'emporte) : jamais d'un
+argument `--token`, visible dans la liste des processus. Sans jeton, il se comporte comme avant.
+
 Avec `--ask`, il demande plutôt une validation à Loïc et, avec `--wait`, relit
 `GET /api/approvals/<ref>` jusqu'à la décision (EVENT-PROTOCOL §6 ter) :
 
@@ -16,6 +20,8 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
+import re
 import sys
 import time
 import urllib.error
@@ -33,12 +39,48 @@ EXIT_REJECTED = 3  # Loïc refused
 
 MIN_INTERVAL = 0.1  # seconds between two reads of the approval
 
+# `nxt_` + 43 base64url characters (nexus.auth.tokens); spelled out here so the file stays copyable.
+_TOKEN_FORMAT = re.compile(r"nxt_[A-Za-z0-9_-]{43}")
+_TOKEN_FILE_MAX = 4096  # bytes read: a token file is one short line, never a big file
+
+# The bearer token of the current run, set by `main`. Module state keeps `call`'s signature stable.
+_bearer: str | None = None
+
+
+class TokenError(Exception):
+    """The token cannot be used; the message is French and never carries the token or the file."""
+
+
+def load_token(token_file: str | None, environ=os.environ) -> str | None:
+    """The token from `--token-file`, else from `NEXUS_TOKEN`, else None (no authentication)."""
+    if token_file is not None:
+        try:
+            with open(token_file, "rb") as handle:
+                raw = handle.read(_TOKEN_FILE_MAX + 1)
+        except OSError as err:
+            raise TokenError("--token-file : fichier introuvable ou illisible") from err
+        if len(raw) > _TOKEN_FILE_MAX:
+            raise TokenError("--token-file : le contenu n'est pas un jeton Nexus (nxt_…)")
+        try:
+            token = raw.decode("ascii").strip()
+        except UnicodeDecodeError as err:
+            raise TokenError("--token-file : le contenu n'est pas un jeton Nexus (nxt_…)") from err
+        source = "--token-file"
+    else:
+        token, source = environ.get("NEXUS_TOKEN", "").strip(), "NEXUS_TOKEN"
+        if not token:
+            return None
+    if not _TOKEN_FORMAT.fullmatch(token):
+        raise TokenError(f"{source} : le contenu n'est pas un jeton Nexus (nxt_…)")
+    return token
+
 
 def call(base: str, method: str, path: str, body: dict | None = None) -> dict:
     data = json.dumps(body).encode() if body is not None else None
-    request = urllib.request.Request(
-        base + path, data=data, method=method, headers={"Content-Type": "application/json"}
-    )
+    headers = {"Content-Type": "application/json"}
+    if _bearer:
+        headers["Authorization"] = f"Bearer {_bearer}"
+    request = urllib.request.Request(base + path, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=10) as res:
             return json.load(res)
@@ -114,7 +156,8 @@ def report(approval: dict) -> int:
 
 
 def main(argv: list[str] | None = None, sleep=time.sleep, monotonic=time.monotonic) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    # No abbreviations: `--token <secret>` must not pass for `--token-file <path>`.
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0], allow_abbrev=False)
     parser.add_argument("--base", default="http://127.0.0.1:8765")
     parser.add_argument("--task", required=True, help="ex. nx-task-1")
     parser.add_argument("--actor", default="helios")
@@ -126,7 +169,18 @@ def main(argv: list[str] | None = None, sleep=time.sleep, monotonic=time.monoton
     parser.add_argument("--wait", type=float, default=0, metavar="SECONDES",
                         help="relire l'approbation jusqu'à la décision, au plus ce temps")
     parser.add_argument("--interval", type=float, default=2, metavar="SECONDES")
-    args = parser.parse_args(argv)
+    parser.add_argument("--token-file", metavar="CHEMIN",
+                        help="fichier contenant le jeton d'acteur (sinon variable NEXUS_TOKEN)")
+    args, unknown = parser.parse_known_args(argv)
+    if unknown:  # argparse would echo them, and one of them may be a token
+        parser.error("arguments non reconnus (le jeton se passe par NEXUS_TOKEN ou --token-file, "
+                     "jamais en argument)")
+    global _bearer
+    try:
+        _bearer = load_token(args.token_file)
+    except TokenError as err:
+        _bearer = None
+        parser.error(str(err))
     if args.ask is not None and not args.ask.strip():
         parser.error("--ask : le sujet ne peut pas être vide")
     if not math.isfinite(args.wait) or args.wait < 0:

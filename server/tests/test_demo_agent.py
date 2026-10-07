@@ -1,5 +1,7 @@
 """The example agent (EVENT-PROTOCOL §6 bis, §6 ter): it can also ask and wait for the decision."""
 
+import json
+
 import pytest
 
 from nexus import demo_agent
@@ -202,3 +204,138 @@ def test_a_timeout_while_waiting_is_exit_1(http, task, monkeypatch, capsys):
 
     assert run(task, "--ask", "Publier ?", "--wait", "60", sleep=lambda _s: None,
                monotonic=lambda: 0.0) == 1
+
+
+# --- Jeton d'acteur (#16, ADR-020) : NEXUS_TOKEN ou --token-file, jamais --token ---------------
+
+TOKEN = "nxt_" + "A" * 43  # built at runtime: never a literal token in the repository
+
+
+@pytest.fixture
+def wire(monkeypatch):
+    """Capture what the agent really sends: the headers of each request it opens."""
+    import io
+
+    sent = []
+
+    def urlopen(request, timeout=None):
+        sent.append(request)
+        body = {"id": "evt_1", "actor_event_id": "x", "kind": "claimed", "effects": []}
+        return io.BytesIO(json.dumps(body).encode())
+
+    monkeypatch.setattr(demo_agent.urllib.request, "urlopen", urlopen)
+    monkeypatch.delenv("NEXUS_TOKEN", raising=False)
+    return sent
+
+
+def test_without_a_token_no_authorization_header_is_sent(wire):
+    with pytest.raises(SystemExit):  # the stub read-back does not match: only the headers matter
+        run("nx-task-1")
+
+    assert wire and all(r.get_header("Authorization") is None for r in wire)
+
+
+def test_the_token_of_the_environment_is_sent_as_a_bearer(wire, monkeypatch):
+    monkeypatch.setenv("NEXUS_TOKEN", TOKEN)
+    with pytest.raises(SystemExit):
+        run("nx-task-1")
+
+    assert wire and all(r.get_header("Authorization") == f"Bearer {TOKEN}" for r in wire)
+
+
+def test_the_token_file_wins_over_the_environment(wire, monkeypatch, tmp_path):
+    monkeypatch.setenv("NEXUS_TOKEN", "nxt_" + "B" * 43)
+    path = tmp_path / "token"
+    path.write_text(TOKEN + "\r\n")  # editors and `echo` add a line end
+
+    with pytest.raises(SystemExit):
+        run("nx-task-1", "--token-file", str(path))
+
+    assert wire and all(r.get_header("Authorization") == f"Bearer {TOKEN}" for r in wire)
+
+
+def test_a_token_reaches_the_server_and_names_the_actor(http, task, tmp_path, monkeypatch):
+    """End to end: the header the agent builds is the one the server authenticates."""
+    from nexus.auth import tokens
+
+    with http.app.state.sessionmaker() as session:
+        _row, issued = tokens.issue(session, "codex", "demo")
+        session.commit()
+    seen = []
+
+    def call(_base, method, path, body=None):
+        seen.append(demo_agent._bearer)
+        headers = {"Authorization": f"Bearer {demo_agent._bearer}"}
+        res = http.request(method, path, json=body, headers=headers)
+        assert res.status_code < 400, res.text
+        return res.json()
+
+    monkeypatch.setattr(demo_agent, "call", call)
+    path = tmp_path / "token"
+    path.write_text(issued)
+
+    assert run(task, "--actor", "codex", "--token-file", str(path)) == 0
+
+    assert set(seen) == {issued}
+    assert {e["actor"] for e in http.get("/api/events").json()} == {"codex"}
+
+
+@pytest.mark.parametrize("content", [
+    b"", b"\n", b"contenu-confidentiel-xyz", b"nxt_" + b"A" * 42, b"\xff\xfe\x00",
+    b"nxt_" + b"A" * 43 + b"\nautre ligne", b"x" * 100_000,
+])
+def test_a_bad_token_file_is_a_usage_error_that_never_echoes_its_content(
+    wire, tmp_path, capsys, content
+):
+    path = tmp_path / "token"
+    path.write_bytes(content)
+
+    with pytest.raises(SystemExit) as exit_:
+        run("nx-task-1", "--token-file", str(path))
+
+    err = capsys.readouterr().err
+    assert exit_.value.code == 2
+    assert "--token-file" in err and "usage" in err.lower()
+    assert "confidentiel" not in err and "autre ligne" not in err and "A" * 20 not in err
+    assert wire == []  # nothing was sent
+
+
+def test_a_missing_or_unreadable_token_file_is_a_usage_error(wire, tmp_path, capsys):
+    for target in (tmp_path / "absent", tmp_path):  # a missing file, then a directory
+        with pytest.raises(SystemExit) as exit_:
+            run("nx-task-1", "--token-file", str(target))
+        assert exit_.value.code == 2
+    err = capsys.readouterr().err
+    assert "--token-file" in err and "introuvable ou illisible" in err
+    assert wire == []
+
+
+def test_a_malformed_environment_token_is_a_usage_error_without_echo(wire, monkeypatch, capsys):
+    monkeypatch.setenv("NEXUS_TOKEN", "secret-confidentiel-xyz")
+
+    with pytest.raises(SystemExit) as exit_:
+        run("nx-task-1")
+
+    err = capsys.readouterr().err
+    assert exit_.value.code == 2
+    assert "NEXUS_TOKEN" in err and "secret-confidentiel-xyz" not in err
+    assert wire == []
+
+
+def test_an_empty_environment_token_counts_as_absent(wire, monkeypatch):
+    monkeypatch.setenv("NEXUS_TOKEN", "")
+    with pytest.raises(SystemExit):
+        run("nx-task-1")
+    assert wire and all(r.get_header("Authorization") is None for r in wire)
+
+
+@pytest.mark.parametrize("flag", [["--token", TOKEN], [f"--token={TOKEN}"], ["--tok", TOKEN]])
+def test_the_token_is_never_accepted_on_the_command_line_nor_echoed(wire, capsys, flag):
+    with pytest.raises(SystemExit) as exit_:
+        run("nx-task-1", *flag)
+
+    err = capsys.readouterr().err
+    assert exit_.value.code == 2
+    assert TOKEN not in err and "A" * 20 not in err
+    assert "NEXUS_TOKEN" in err and "--token-file" in err
+    assert wire == []
