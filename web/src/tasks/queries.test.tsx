@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { clearToken, markUnlocked } from '@/auth'
+import { clearToken, getAuthState, markUnlocked, setToken } from '@/auth'
 import { useAddComment, useCreateTask, useLink, useMoveTask, useUpdateTask } from './queries'
 
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() } }))
@@ -47,5 +47,23 @@ test('un autre refus garde son toast', async () => {
   const { result } = renderHook(() => useCreateTask(), { wrapper })
   act(() => result.current.mutate(draft))
   await waitFor(() => expect(result.current.isError).toBe(true))
+  expect(toast.error).toHaveBeenCalledWith('refus simulé')
+})
+
+test('un 401 qui ne verrouille pas (jeton changé entre-temps) garde son toast', async () => {
+  const older = 'nxt_' + 'A'.repeat(43)
+  const newer = 'nxt_' + 'B'.repeat(43)
+  setToken(older)
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => {
+      setToken(newer) // another tab saved a new token while the request was in flight
+      return new Response(JSON.stringify({ detail: { code: 'invalid_token', message: 'refus simulé' } }), { status: 401 })
+    }),
+  )
+  const { result } = renderHook(() => useUpdateTask(), { wrapper })
+  act(() => result.current.mutate({ id: 'nx-task-1', changes: { title: 'x' } }))
+  await waitFor(() => expect(result.current.isError).toBe(true))
+  expect(getAuthState().locked).toBe(false)
   expect(toast.error).toHaveBeenCalledWith('refus simulé')
 })

@@ -9,6 +9,7 @@ import {
   type TaskChanges,
   type TaskDraft,
 } from '@/api'
+import { getAuthState } from '@/auth'
 
 export const tasksKey = ['tasks'] as const
 export const taskDetailKey = (id: string, part: 'comments' | 'history') => ['tasks', id, part]
@@ -20,9 +21,12 @@ function explain(error: unknown): string {
   return error instanceof ApiError ? error.message : 'Le serveur Nexus ne répond pas.'
 }
 
-/** A 401 is told by the lock screen, which covers the toasts: no error toast for it. */
+/**
+ * A 401 that locked the app is told by the lock screen, which covers the toasts. A stale 401
+ * (the stored token changed while the request was in flight) does not lock: it keeps its toast.
+ */
 function notifyError(error: unknown) {
-  if (error instanceof ApiError && error.status === 401) return
+  if (error instanceof ApiError && error.status === 401 && getAuthState().locked) return
   toast.error(explain(error))
 }
 
