@@ -56,11 +56,15 @@ def to_out(view: service.ApprovalView) -> ApprovalOut:
 
 
 def _options(payload: dict[str, Any]) -> list[str]:
-    """Option texts only, stripped; anything else the agent put there is left out."""
+    """Option texts at their original positions: `choice` is an index into `payload.options`.
+
+    The list keeps the length and order of the payload; an element that is not text, or blank,
+    becomes an empty string rather than shifting the following indices.
+    """
     options = payload.get("options")
     if not isinstance(options, list):
         return []
-    return [o.strip() for o in options if isinstance(o, str) and o.strip()]
+    return [o.strip() if isinstance(o, str) else "" for o in options]
 
 
 @router.get("")

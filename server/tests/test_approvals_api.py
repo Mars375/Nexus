@@ -45,7 +45,7 @@ def test_detail_returns_the_request_read_from_the_event(client):
     assert body == {
         "id": "nx-appr-1", "event": event["id"], "ask_kind": "needs_human",
         "requested_by": "mnema", "subject": "Publier l'épisode ?", "body": "Version finale",
-        "options": ["oui", "non"], "consequence": "Mise en ligne", "task": task,
+        "options": ["oui", "non", "", ""], "consequence": "Mise en ligne", "task": task,
         "status": "pending", "expires_at": None, "decided_by": None, "decided_at": None,
         "response": None, "source": "nexus.db", "measured_at": body["measured_at"],
     }
@@ -234,3 +234,49 @@ def test_every_list_item_carries_its_provenance(client):
     for item in client.get("/api/approvals").json():
         assert item["source"] == "nexus.db"
         assert datetime.fromisoformat(item["measured_at"]).tzinfo is not None
+
+
+def test_options_keep_their_positions_because_choice_is_an_index(client):
+    ask(client, "e1", "needs_human",
+        payload={"options": ["", "publier", 3, " annuler "], "consequence": "x"})
+
+    options = client.get("/api/approvals/nx-appr-1").json()["options"]
+
+    assert options == ["", "publier", "", "annuler"]
+    assert options[3] == "annuler"
+
+
+def test_a_blank_consequence_is_read_as_null(client):
+    ask(client, "e1", payload={"consequence": "   "})
+
+    assert client.get("/api/approvals/nx-appr-1").json()["consequence"] is None
+
+
+def test_the_pending_limit_truncates_after_the_computed_filter(client):
+    for n in range(3):
+        ask(client, f"e{n}")
+
+    res = client.get("/api/approvals", params={"status": "pending", "limit": 1})
+
+    assert [a["id"] for a in res.json()] == ["nx-appr-3"]
+
+
+def test_the_list_reads_the_events_in_a_constant_number_of_queries(client):
+    from sqlalchemy import event as sa_event
+
+    for n in range(30):
+        ask(client, f"e{n}")
+    statements: list[str] = []
+    engine = client.app.state.engine
+
+    def count(_conn, _cursor, statement, *_args):
+        statements.append(statement)
+
+    sa_event.listen(engine, "before_cursor_execute", count)
+    try:
+        for params in ({}, {"status": "pending"}):
+            statements.clear()
+            assert len(client.get("/api/approvals", params=params).json()) == 30
+            assert len(statements) <= 2, statements
+    finally:
+        sa_event.remove(engine, "before_cursor_execute", count)

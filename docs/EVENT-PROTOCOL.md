@@ -85,7 +85,7 @@ Règles générales :
 - **progress** — pas plus d'un par étape significative ; pas de spam.
 - **question / needs_human** — doit nommer le destinataire (`needs`) et être actionnable : pas de « ça avance ? ». Adressé à un humain, il ouvre une **approbation** (§6 bis, DATA-MODEL §2.10). Deux champs du `payload` :
   - `consequence` (texte, 1 000 caractères au plus) : ce qui se passera si Loïc approuve. **Obligatoire pour un nouveau `needs_human`** (refus `consequence_required`), facultative pour une `question`. C'est une déclaration du demandeur que Nexus ne vérifie pas (ADR-005) ; elle passe par le masquage des secrets comme le reste du payload, et un texte réduit à `[REDACTED]` compte comme absent.
-  - `expires_at` (texte ISO-8601 **avec fuseau**) : échéance fixée par l'agent, sans valeur par défaut. Au moins 1 minute et au plus 30 jours après la réception (refus `invalid_expires_at`, `expires_at_too_soon`, `expires_at_too_far`). Passé cet instant, l'approbation est lue `expired` (calcul à la lecture, rien n'est écrit). Un renvoi identique d'un événement déjà reçu reste une relecture, même après l'échéance : la fenêtre ne juge que les nouveaux événements.
+  - `expires_at` (texte ISO-8601 **avec fuseau**) : échéance fixée par l'agent, sans valeur par défaut. Au moins 1 minute et au plus 30 jours après la réception (refus `invalid_expires_at`, `expires_at_too_soon`, `expires_at_too_far`). Passé cet instant, l'approbation est lue `expired` (calcul à la lecture, rien n'est écrit). Ces contrôles de `consequence` et `expires_at` (type, longueur, format, fenêtre) ne jugent que les **nouveaux** événements : un renvoi identique d'un événement déjà reçu reste une relecture, même après l'échéance ou si le payload ne respecte plus les règles actuelles.
 - **blocked** — doit dire : cause, impact, ce qui débloquerait, relance prévue. Sinon c'est `unknown`.
 - **handoff** — doit dire : receveur, état exact, prochaine action, ce qui est déjà fait. Un handoff sans prochaine action est refusé.
 - **review** — doit pointer la preuve à examiner.
@@ -166,7 +166,7 @@ Nexus **ne lance et ne réveille aucun agent** (ADR-012) : valider ou répondre 
 
 1. À la publication de sa demande, l'agent garde la référence `nx-appr-<n>` de l'effet `approval` dans la réponse (ou la relit dans l'événement : `GET /api/events/<id>`, champ `effects`).
 2. Il interroge `GET /api/approvals/<nx-appr-n>` à son rythme, jusqu'à ce que `status` ne soit plus `pending`. `expired` veut dire que l'échéance qu'il a fixée est passée sans décision.
-3. Il lit alors la décision (`approved`, `rejected`) ou la réponse (`answered`, avec `response.text`, et `response.choice` pour l'option retenue), puis reprend son travail et publie ses propres événements.
+3. Il lit alors la décision (`approved`, `rejected`) ou la réponse (`answered`, avec `response.text`, et `response.choice` pour l'option retenue), puis reprend son travail et publie ses propres événements. `choice` est l'**indice** (à partir de 0) de l'option dans `payload.options` de la demande, qui fait foi ; `options` dans `GET /api/approvals` garde les mêmes positions (un élément non textuel y devient une chaîne vide).
 
 Les réponses et décisions elles-mêmes (l'écriture) arrivent dans l'étape suivante de l'issue #26 : cette étape ne livre que la création et la lecture.
 

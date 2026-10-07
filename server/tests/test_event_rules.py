@@ -144,14 +144,28 @@ def test_require_consequence():
     ("payload", "code"),
     [
         ({"consequence": 3}, "invalid_consequence"),
+        ({"consequence": "x" * 1001}, "too_long_consequence"),
         ({"expires_at": 3}, "invalid_expires_at"),
         ({"expires_at": "2026-10-25T02:15:00"}, "invalid_expires_at"),
         ({"expires_at": "9999-12-31T23:59:59-05:00"}, "invalid_expires_at"),
     ],
 )
-def test_ask_payload_fields_are_checked(kind, payload, code):
-    base = {"options": ["a", "b"]}
-    assert refused(env(kind, needs=["loic"], payload=base | payload)) == code
+def test_new_ask_payload_fields_are_checked(kind, payload, code):
+    from datetime import UTC, datetime
+
+    from nexus.events.rules import check_new_ask
+
+    e = env(kind, needs=["loic"], payload={"options": ["a", "b"], "consequence": "c"} | payload)
+    raw = e.payload.get("consequence")
+    with pytest.raises(RuleViolation) as exc:
+        check_new_ask(e, raw, datetime(2026, 10, 7, tzinfo=UTC))
+    assert exc.value.code == code
+
+
+def test_validate_leaves_the_new_only_payload_checks_to_check_new_ask():
+    # Old asks must stay replayable: validate() runs before the read-back.
+    for payload in ({"consequence": 3}, {"expires_at": "demain"}, {"consequence": "x" * 5000}):
+        assert validate(env("question", needs=["loic"], payload=payload)) == "question"
 
 
 def test_expiry_of_returns_a_utc_instant_or_none():

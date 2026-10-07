@@ -430,3 +430,66 @@ def test_identical_resend_racing_the_first_returns_the_same_approval(client, mon
     assert res.json()["effects"] == [{"action": "approval", "applied": True,
                                       "approval": "nx-appr-1"}]
     assert len(rows(client)) == 1
+
+
+# --- Old events stay replayable (#26 review P2-1) ---------------------------------------------
+
+OLD_PAYLOADS = [
+    ({"expires_at": "demain"}, "invalid_expires_at"),
+    ({"expires_at": 1790000000}, "invalid_expires_at"),
+    ({"expires_at": "2026-10-25T02:15:00"}, "invalid_expires_at"),
+    ({"consequence": {"fr": "x"}}, "invalid_consequence"),
+    ({"consequence": "x" * (CONSEQUENCE_MAX + 1)}, "too_long_consequence"),
+]
+
+
+def store_old_ask(client, payload):
+    """An ask published before the rules existed: written straight into the database."""
+    event_id, _ = direct(client, direct_ask(), "old")
+    with client.app.state.sessionmaker() as session:
+        event = session.scalar(select(Event).where(Event.actor_event_id == "old"))
+        event.payload = payload
+        session.commit()
+    return event_id
+
+
+@pytest.mark.parametrize(("payload", "code"), OLD_PAYLOADS)
+def test_an_old_ask_with_a_payload_the_rules_now_refuse_is_still_a_read_back(
+    client, payload, code
+):
+    event_id = store_old_ask(client, payload)
+
+    http = client.post("/api/events", json={
+        "id": "old", "at": AT, "actor": "helios", "kind": "question",
+        "subject": "Où est la clé ?", "needs": ["loic"], "payload": payload,
+    })
+    assert http.status_code == 200, http.text
+    again = direct(client, direct_ask(payload=payload), "old")
+    assert http.json()["id"] == f"nx-evt-{event_id}"
+    assert again == (event_id, False)
+
+
+@pytest.mark.parametrize(("payload", "code"), OLD_PAYLOADS)
+def test_a_new_ask_with_the_same_payload_is_still_refused(client, payload, code):
+    res = ask(client, "fresh", payload=payload)
+    assert code_of(res) == code
+    with pytest.raises(RuleViolation) as exc:
+        direct(client, direct_ask(payload=payload), "fresh2")
+    assert exc.value.code == code
+
+
+def test_a_consequence_is_measured_raw_not_after_stripping(client):
+    res = ask(client, "e1", payload={"consequence": " " * CONSEQUENCE_MAX + "x"})
+
+    assert code_of(res) == "too_long_consequence"
+
+
+def test_the_one_minute_bound_is_an_instant_across_the_autumn_change(client, monkeypatch):
+    # 02:59:30+02:00, 30 s before the clocks go back: one real minute later is 02:00:30+01:00,
+    # whereas one minute of wall time (03:00:30) is an hour too far.
+    received = datetime(2026, 10, 25, 2, 59, 30, tzinfo=TZ)
+    assert received.utcoffset() == timedelta(hours=2)
+    pinned(monkeypatch, received)
+    low = received.astimezone(UTC) + timedelta(minutes=1)
+
+    assert ask(client, "e1", payload={"expires_at": low.isoformat()}).status_code == 201

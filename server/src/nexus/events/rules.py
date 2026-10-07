@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from nexus.actors import ACTORS, HUMANS
-from nexus.events.limits import EXPIRY_MAX, EXPIRY_MIN, RUN_MAX
+from nexus.events.limits import CONSEQUENCE_MAX, EXPIRY_MAX, EXPIRY_MIN, RUN_MAX
 from nexus.secrets import is_blank, is_blank_reference
 from nexus.tasks.rules import RuleViolation
 
@@ -103,16 +103,40 @@ def check_expiry_window(expires_at: datetime, received_at: datetime) -> None:
 
 
 def require_consequence(e: Envelope) -> None:
-    """A NEW `needs_human` states what happens if Loïc approves (ADR-019, D3).
-
-    Not part of `validate`: an identical resend of an older event is a read-back and must not
-    be refused for a rule that did not exist when it was published.
-    """
+    """A NEW `needs_human` states what happens if Loïc approves (ADR-019, D3). See check_new_ask."""
     if e.kind == "needs_human" and not _text(e.payload.get("consequence")):
         raise RuleViolation(
             "consequence_required",
             "needs_human doit dire ce qui se passera si Loïc approuve (payload.consequence)",
         )
+
+
+def check_new_ask(e: Envelope, raw_consequence: Any, received_at: datetime) -> datetime | None:
+    """What only a NEW ask must satisfy; returns its deadline (UTC) or None.
+
+    Not part of `validate`, which runs before the read-back of an identical resend: an event
+    published before these rules existed (a malformed `expires_at`, a consequence of any type or
+    length, no consequence) must still be replayed, not refused. Direct service calls go through
+    here too, since `publish` runs it for every new event.
+
+    `raw_consequence` is the value as received, measured before masking and stripping, as the
+    HTTP layer would measure it.
+    """
+    if e.kind not in ASK_KINDS:
+        return None
+    if e.payload.get("consequence") is not None and not isinstance(
+        e.payload.get("consequence"), str
+    ):
+        raise RuleViolation("invalid_consequence", "payload.consequence doit être un texte")
+    if isinstance(raw_consequence, str) and len(raw_consequence) > CONSEQUENCE_MAX:
+        raise RuleViolation(
+            "too_long_consequence", f"payload.consequence : {CONSEQUENCE_MAX} caractères au plus"
+        )
+    require_consequence(e)
+    expires_at = expiry_of(e.payload)
+    if expires_at is not None:
+        check_expiry_window(expires_at, received_at)
+    return expires_at
 
 
 def proofs(e: Envelope) -> list[str]:
@@ -152,11 +176,6 @@ def validate(e: Envelope) -> str:
         value = e.payload.get(name)
         if value is not None and not isinstance(value, str):
             raise RuleViolation(f"invalid_{name}", f"payload.{name} doit être un texte")
-    if e.kind in ASK_KINDS:
-        consequence = e.payload.get("consequence")
-        if consequence is not None and not isinstance(consequence, str):
-            raise RuleViolation("invalid_consequence", "payload.consequence doit être un texte")
-        expiry_of(e.payload)
     unknown_needs = sorted(set(e.needs) - ACTORS)
     if unknown_needs:
         raise RuleViolation("unknown_recipient", "needs : destinataire inconnu")

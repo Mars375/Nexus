@@ -24,7 +24,6 @@ from nexus.actors import HUMANS
 from nexus.clock import now
 from nexus.events import rules
 from nexus.events.limits import (
-    CONSEQUENCE_MAX,
     EVENT_ID_MAX,
     EVIDENCE_REF_MAX,
     RUN_MAX,
@@ -121,13 +120,6 @@ def _check_lengths(envelope: Envelope, actor_event_id: str) -> None:
         raise RuleViolation(
             "too_long_evidence", f"evidence : {EVIDENCE_REF_MAX} caractères au plus par élément"
         )
-    consequence = envelope.payload.get("consequence")
-    if (envelope.kind in rules.ASK_KINDS and isinstance(consequence, str)
-            and len(consequence) > CONSEQUENCE_MAX):
-        # The type is checked by `rules.validate`; only a text has a length to measure.
-        raise RuleViolation(
-            "too_long_consequence", f"payload.consequence : {CONSEQUENCE_MAX} caractères au plus"
-        )
 
 
 def publish(
@@ -174,6 +166,7 @@ def publish(
         raise RuleViolation(
             "invalid_value", "valeur non encodable : demi-paire UTF-16, NaN ou Infinity"
         )
+    raw_consequence = envelope.payload.get("consequence")  # measured raw, after the read-back
     redacted: dict[str, list[str]] = {}
     raw_run_refs = (envelope.run, envelope.payload.get("run_ref"))
     # Tout ce qui sera stocké passe par le scanner, identifiants compris (ADR-006).
@@ -221,10 +214,7 @@ def publish(
     # What only a NEW event must satisfy, judged after the read-back above so that an identical
     # resend of a known event is replayed (even after its deadline, or from before the rule).
     received = now()
-    rules.require_consequence(envelope)
-    expires_at = rules.expiry_of(envelope.payload) if kind in rules.ASK_KINDS else None
-    if expires_at is not None:
-        rules.check_expiry_window(expires_at, received)
+    expires_at = rules.check_new_ask(envelope, raw_consequence, received)
     _refuse_noise(session, envelope, task, actor_event_id)
     serialized_from = None  # date de modification avant le verrou, si le verrou a joué
     if kind == "working":

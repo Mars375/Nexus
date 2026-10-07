@@ -46,11 +46,15 @@ def get_approval(session: Session, ref: str) -> ApprovalView:
     if not _REF.fullmatch(ref):  # ASCII digits only, bounded: `²` or 5 000 digits are a 404
         raise ApprovalNotFound("")
     number = int(ref.removeprefix(REF_PREFIX))
-    approval = session.get(Approval, number)
-    if approval is None:
+    row = session.execute(_with_event().where(Approval.id == number)).first()
+    if row is None:
         raise ApprovalNotFound(f"{REF_PREFIX}{number}")
-    measured_at = now()
-    return _view(session, approval, measured_at)
+    return _view(row[0], row[1], now())
+
+
+def _with_event():
+    """Approvals with their request event in ONE query (no per-row lookup)."""
+    return select(Approval, Event).join(Event, Event.id == Approval.request_event_id)
 
 
 def list_approvals(
@@ -62,26 +66,30 @@ def list_approvals(
 ) -> list[ApprovalView]:
     """Newest first. `status` filters on the effective status, `expired` included."""
     measured_at = now()
-    query = select(Approval).order_by(Approval.id.desc())
+    query = _with_event().order_by(Approval.id.desc())
     if task:
-        query = query.join(Event, Event.id == Approval.request_event_id).where(
-            Event.task_id == parse_task_ref(task)
-        )
-    if status in ("approved", "rejected", "answered"):
-        query = query.where(Approval.status == status).limit(limit)
-    elif status in ("pending", "expired"):
-        # Both are stored as `pending`: the split is decided on the instant, in Python.
-        query = query.where(Approval.status == "pending")
+        query = query.where(Event.task_id == parse_task_ref(task))
+    computed = status in ("pending", "expired")
+    if computed:
+        # Both are stored as `pending`: the split is decided on the instant, in Python, so the
+        # limit applies after it. Rows are streamed and reading stops at `limit` matches.
+        query = query.where(Approval.status == "pending").execution_options(yield_per=100)
     else:
+        if status:
+            query = query.where(Approval.status == status)
         query = query.limit(limit)
     views: list[ApprovalView] = []
-    for approval in session.scalars(query):
-        effective = effective_status(approval, measured_at)
-        if status in ("pending", "expired") and effective != status:
-            continue
-        views.append(_view(session, approval, measured_at))
-        if len(views) == limit:
-            break
+    result = session.execute(query)
+    try:
+        for approval, event in result:
+            view = _view(approval, event, measured_at)
+            if computed and view.status != status:
+                continue
+            views.append(view)
+            if len(views) == limit:
+                break
+    finally:
+        result.close()
     return views
 
 
@@ -93,7 +101,5 @@ def effective_status(approval: Approval, at: datetime) -> str:
     return approval.status
 
 
-def _view(session: Session, approval: Approval, measured_at: datetime) -> ApprovalView:
-    event = session.get(Event, approval.request_event_id)
-    assert event is not None  # the foreign key guarantees it
+def _view(approval: Approval, event: Event, measured_at: datetime) -> ApprovalView:
     return ApprovalView(approval, event, effective_status(approval, measured_at), measured_at)

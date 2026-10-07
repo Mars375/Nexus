@@ -195,7 +195,7 @@ Task 1─* Run 1─* Artifact
 Task 1─* Event
 Task *─* Task (depends_on)
 Conversation 1─* Message *─0..1 Task
-Approval *─0..1 Task
+Approval 1─1 Event (demande) ; Approval 0..1─1 Event (réponse) ; Approval *─0..1 Task, via l'événement de demande
 Decision *─* Task
 ```
 
