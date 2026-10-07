@@ -20,11 +20,18 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 
 from nexus import secrets
+from nexus.actors import HUMANS
 from nexus.clock import now
 from nexus.events import rules
-from nexus.events.limits import EVENT_ID_MAX, EVIDENCE_REF_MAX, RUN_MAX, SUBJECT_MAX
+from nexus.events.limits import (
+    CONSEQUENCE_MAX,
+    EVENT_ID_MAX,
+    EVIDENCE_REF_MAX,
+    RUN_MAX,
+    SUBJECT_MAX,
+)
 from nexus.events.rules import Envelope
-from nexus.models import Event, Task
+from nexus.models import Approval, Event, Task
 from nexus.tasks import service as tasks
 from nexus.tasks.rules import RuleViolation
 from nexus.validation import has_unencodable
@@ -113,6 +120,13 @@ def _check_lengths(envelope: Envelope, actor_event_id: str) -> None:
     if any(len(_API_STRIP.validate_python(item)) > EVIDENCE_REF_MAX for item in envelope.evidence):
         raise RuleViolation(
             "too_long_evidence", f"evidence : {EVIDENCE_REF_MAX} caractères au plus par élément"
+        )
+    consequence = envelope.payload.get("consequence")
+    if (envelope.kind in rules.ASK_KINDS and isinstance(consequence, str)
+            and len(consequence) > CONSEQUENCE_MAX):
+        # The type is checked by `rules.validate`; only a text has a length to measure.
+        raise RuleViolation(
+            "too_long_consequence", f"payload.consequence : {CONSEQUENCE_MAX} caractères au plus"
         )
 
 
@@ -204,6 +218,13 @@ def publish(
             f"id : déjà utilisé par {envelope.actor} pour un autre événement ; un événement "
             "ne se réécrit pas, publie une correction",
         )
+    # What only a NEW event must satisfy, judged after the read-back above so that an identical
+    # resend of a known event is replayed (even after its deadline, or from before the rule).
+    received = now()
+    rules.require_consequence(envelope)
+    expires_at = rules.expiry_of(envelope.payload) if kind in rules.ASK_KINDS else None
+    if expires_at is not None:
+        rules.check_expiry_window(expires_at, received)
     _refuse_noise(session, envelope, task, actor_event_id)
     serialized_from = None  # date de modification avant le verrou, si le verrou a joué
     if kind == "working":
@@ -227,7 +248,6 @@ def publish(
         else:
             raise StaleDataError("ouverture de run : trop d'écritures concurrentes")
 
-    received = now()
     event = Event(
         actor=envelope.actor, actor_event_id=actor_event_id, at=at, received_at=received,
         task_id=task.id if task else None,
@@ -252,11 +272,27 @@ def publish(
     # écritures, un fait identique publié en parallèle sous un autre identifiant est vu ici.
     _refuse_noise(session, envelope, task, actor_event_id, exclude_id=event.id)
     event.effects = _apply_effects(session, event, envelope, task) if task else []
+    if _opens_approval(event):
+        # Same transaction as the event: both exist or neither does. UNIQUE(request_event_id)
+        # and the read-back above make a resend return this reference, never a second row.
+        approval = Approval(
+            request_event_id=event.id, ask_kind=event.kind, expires_at=expires_at,
+            status="pending",
+        )
+        session.add(approval)
+        session.flush()
+        event.effects = [*event.effects,
+                         {"action": "approval", "applied": True, "approval": approval.ref}]
     if serialized_from is not None and not any(e["applied"] for e in event.effects):
         # Le verrou n'a servi qu'à sérialiser : sans changement réel, la tâche ne doit pas
         # paraître récemment modifiée.
         task.updated_at = serialized_from
     return event, True
+
+
+def _opens_approval(event: Event) -> bool:
+    """An ask addressed to at least one human waits for a decision (ADR-019)."""
+    return event.kind in rules.ASK_KINDS and bool(set(event.needs) & HUMANS)
 
 
 def _winner_of_race(

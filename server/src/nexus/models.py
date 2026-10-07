@@ -135,3 +135,34 @@ class Event(Base):
     @property
     def ref(self) -> str:
         return f"nx-evt-{self.id}"
+
+
+class Approval(Base):
+    """Decision state of an ask addressed to a human (DATA-MODEL §2.10, ADR-019).
+
+    A light state table: the content (subject, body, requester, task, options, consequence) is
+    never copied, it is read from the immutable request event. `status` stores only
+    pending|approved|rejected|answered; `expired` is computed at read time from `expires_at`.
+    """
+
+    __tablename__ = "approvals"
+    __table_args__ = (
+        UniqueConstraint("request_event_id", name="uq_approvals_request_event_id"),
+        UniqueConstraint("response_event_id", name="uq_approvals_response_event_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    request_event_id: Mapped[int] = mapped_column(ForeignKey("events.id"))
+    ask_kind: Mapped[str] = mapped_column(String(16))  # question | needs_human, from the event
+    # Typed copy of payload.expires_at, an instant: compared as such, never as text.
+    expires_at: Mapped[datetime | None] = mapped_column(AwareDateTime)
+    status: Mapped[str] = mapped_column(String(16), index=True)
+    response_event_id: Mapped[int | None] = mapped_column(ForeignKey("events.id"))
+    # Optimistic lock, as Task: two simultaneous decisions cannot both win.
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __mapper_args__ = {"version_id_col": version}
+
+    @property
+    def ref(self) -> str:
+        return f"nx-appr-{self.id}"

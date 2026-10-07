@@ -67,7 +67,15 @@ def seed(client) -> dict[str, str]:
         f"POST /api/events → {res.status_code} {res.text}"
     )
     event = res.json()["id"]
-    return {"task_ref": task, "event_ref": event}
+    res = client.post("/api/events", json={
+        "id": "evt_contract_ask", "at": AT, "actor": "mnema", "kind": "question",
+        "subject": "Quelle version ?", "needs": ["loic"], "task": task,
+    })
+    assert res.status_code == 201, (
+        f"POST /api/events (question) → {res.status_code} {res.text}"
+    )
+    approval = res.json()["effects"][0]["approval"]
+    return {"task_ref": task, "event_ref": event, "approval_ref": approval}
 
 
 def api_get_routes(app) -> list[str]:
@@ -100,6 +108,7 @@ def test_the_walker_sees_every_router(client):
     assert "/api/tasks" in routes, "routeur tasks oublié"
     assert "/api/tasks/{task_ref}/history" in routes, "routeur tasks.history oublié"
     assert "/api/events/{event_ref}" in routes, "routeur events oublié"
+    assert "/api/approvals/{approval_ref}" in routes, "routeur approvals oublié"
 
 
 def test_the_checker_catches_a_missing_measured_at():

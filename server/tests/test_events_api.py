@@ -294,7 +294,10 @@ def test_coordination_event_without_task(client):
     res = publish(client, "question", "Quel scope pour les mails ?", needs=["loic"])
     assert res.status_code == 201
     assert res.json()["task"] is None
-    assert res.json()["effects"] == []
+    # No task effect, but the ask for a human opens an approval (#26).
+    assert res.json()["effects"] == [
+        {"action": "approval", "applied": True, "approval": "nx-appr-1"}
+    ]
 
 
 def test_actor_header_must_match(client):

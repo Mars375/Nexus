@@ -18,6 +18,8 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from nexus import backup, live, migrate, nodes
 from nexus import now as now_view
+from nexus.approvals import api as approvals_api
+from nexus.approvals.service import ApprovalNotFound
 from nexus.clock import now
 from nexus.config import Settings
 from nexus.db import make_engine
@@ -122,6 +124,7 @@ def create_app(
     app.state.settings = settings
     app.include_router(tasks_api.router)
     app.include_router(events_api.router)
+    app.include_router(approvals_api.router)
     app.include_router(now_view.router)
     app.include_router(live.router)
 
@@ -147,6 +150,7 @@ def create_app(
 
     @app.exception_handler(TaskNotFound)
     @app.exception_handler(EventNotFound)
+    @app.exception_handler(ApprovalNotFound)
     def _not_found(_request: Request, exc: Exception) -> JSONResponse:
         return JSONResponse(
             status_code=404, content={"detail": {"code": "not_found", "message": str(exc)}}

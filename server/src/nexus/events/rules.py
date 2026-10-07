@@ -7,11 +7,11 @@ quelque chose, dit sa cause quand il bloque ou échoue, et prouve ce qu'il décl
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from nexus.actors import ACTORS, HUMANS
-from nexus.events.limits import RUN_MAX
+from nexus.events.limits import EXPIRY_MAX, EXPIRY_MIN, RUN_MAX
 from nexus.secrets import is_blank, is_blank_reference
 from nexus.tasks.rules import RuleViolation
 
@@ -24,6 +24,10 @@ KINDS = (
 TASK_REQUIRED = frozenset(
     {"claimed", "working", "progress", "blocked", "handoff", "review", "done", "failed"}
 )
+
+
+# Asks open an approval when they are addressed to a human (ADR-019).
+ASK_KINDS = ("question", "needs_human")
 
 
 # Champs du payload recopiés dans la tâche (cause, plan de déblocage, prochaine action) :
@@ -57,6 +61,58 @@ def _instant(value: Any, name: str) -> datetime:
     if instant is None or instant.tzinfo is None:
         raise RuleViolation("invalid_instant", f"{name} doit être un instant ISO-8601 avec fuseau")
     return instant
+
+
+def expiry_of(payload: dict[str, Any]) -> datetime | None:
+    """`payload.expires_at` as a UTC instant, or None when absent (never echoes the value).
+
+    A string with a timezone only: a naive date has no instant, a number is not a date. Every
+    comparison is then made between UTC instants (PEP 495 `fold`, microseconds far in the future).
+    """
+    value = payload.get("expires_at")
+    if value is None:
+        return None
+    message = "payload.expires_at doit être un instant ISO-8601 avec fuseau (texte)"
+    if not isinstance(value, str):
+        raise RuleViolation("invalid_expires_at", message)
+    try:
+        instant = datetime.fromisoformat(value)
+        if instant.utcoffset() is None:
+            raise ValueError
+        return instant.astimezone(UTC)
+    except (ValueError, OverflowError):  # OverflowError: year 9999 with a negative offset
+        raise RuleViolation("invalid_expires_at", message) from None
+
+
+def check_expiry_window(expires_at: datetime, received_at: datetime) -> None:
+    """The deadline of a NEW ask: 1 minute to 30 days after its reception, as exact durations.
+
+    Not applied to a resend of a known event: it is a read-back, even after its deadline.
+    """
+    received = received_at.astimezone(UTC)
+    if expires_at < received + EXPIRY_MIN:
+        raise RuleViolation(
+            "expires_at_too_soon",
+            "payload.expires_at doit tomber au moins 1 minute après la réception",
+        )
+    if expires_at > received + EXPIRY_MAX:
+        raise RuleViolation(
+            "expires_at_too_far",
+            "payload.expires_at doit tomber au plus 30 jours après la réception",
+        )
+
+
+def require_consequence(e: Envelope) -> None:
+    """A NEW `needs_human` states what happens if Loïc approves (ADR-019, D3).
+
+    Not part of `validate`: an identical resend of an older event is a read-back and must not
+    be refused for a rule that did not exist when it was published.
+    """
+    if e.kind == "needs_human" and not _text(e.payload.get("consequence")):
+        raise RuleViolation(
+            "consequence_required",
+            "needs_human doit dire ce qui se passera si Loïc approuve (payload.consequence)",
+        )
 
 
 def proofs(e: Envelope) -> list[str]:
@@ -96,6 +152,11 @@ def validate(e: Envelope) -> str:
         value = e.payload.get(name)
         if value is not None and not isinstance(value, str):
             raise RuleViolation(f"invalid_{name}", f"payload.{name} doit être un texte")
+    if e.kind in ASK_KINDS:
+        consequence = e.payload.get("consequence")
+        if consequence is not None and not isinstance(consequence, str):
+            raise RuleViolation("invalid_consequence", "payload.consequence doit être un texte")
+        expiry_of(e.payload)
     unknown_needs = sorted(set(e.needs) - ACTORS)
     if unknown_needs:
         raise RuleViolation("unknown_recipient", "needs : destinataire inconnu")
