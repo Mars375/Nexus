@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest'
 import type { NodeState, NowSnapshot } from '@/api'
-import { RACKS_PER_FLOOR, floorAlert, floorAlertCount, floorAlertSides, nodeFloors, rackDetail, rackLabel, rackTone, seatModels } from './model'
+import { approval } from './fixtures'
+import { RACKS_PER_FLOOR, pendingAsks, floorAlert, floorAlertCount, floorAlertSides, nodeFloors, rackDetail, rackLabel, rackTone, seatModels } from './model'
 
 const base: NowSnapshot = {
   source: 'nexus.db', measured_at: '2026-10-01T10:00:00+02:00', operation: null, auxiliaries: [],
@@ -10,8 +11,8 @@ const base: NowSnapshot = {
     { agent: 'artemis', state: 'idle', task: null, title: null, run: null, since: null },
   ],
   asks: [
-    { event: 'nx-evt-1', agent: 'mnema', kind: 'question', subject: 'Python ?', task: 'nx-task-32', at: '2026-10-01T09:59:00+02:00', received_at: '2026-10-01T09:59:00+02:00' },
-    { event: 'nx-evt-2', agent: 'mnema', kind: 'question', subject: 'Et aussi ?', task: null, at: '2026-10-01T09:59:30+02:00', received_at: '2026-10-01T09:59:30+02:00' },
+    { event: 'nx-evt-1', agent: 'mnema', kind: 'question', subject: 'Python ?', task: 'nx-task-32', at: '2026-10-01T09:59:00+02:00', received_at: '2026-10-01T09:59:00+02:00', body: null, options: [], consequence: null, approval: approval() },
+    { event: 'nx-evt-2', agent: 'mnema', kind: 'question', subject: 'Et aussi ?', task: null, at: '2026-10-01T09:59:30+02:00', received_at: '2026-10-01T09:59:30+02:00', body: null, options: [], consequence: null, approval: approval() },
   ],
   blocks: [{ task: 'nx-task-29', title: 'Sauvegarde', cause: 'hors ligne', since: '2026-09-29T10:00:00+02:00', follow_up_at: null, lead_agent: 'artemis' }],
   done: [],
@@ -94,4 +95,16 @@ test('alerte d\'étage : le nombre de nœuds qui la causent', () => {
   expect(floorAlertCount([nodeOf('a', 'unknown'), nodeOf('b'), nodeOf('c', 'unknown')], fresh)).toBe(2)
   expect(floorAlertCount([nodeOf('a', 'offline'), nodeOf('b', 'online')], () => true)).toBe(2) // stale: amber for every node
   expect(floorAlertCount([nodeOf('a', 'offline-by-design')], fresh)).toBe(0)
+})
+
+test('seules les demandes en attente allument un poste', () => {
+  const treated = approval({ status: 'answered', decided_by: 'loic', decided_at: '2026-10-01T09:59:40+02:00' })
+  const s = { ...base, asks: [
+    { ...base.asks[0], approval: treated },
+    { ...base.asks[1], approval: null },
+    { ...base.asks[0], event: 'nx-evt-3', approval: approval({ status: 'expired' }) },
+  ] }
+  expect(seatModels(s)[1]).toMatchObject({ agent: 'mnema', wait: false, asks: 0 })
+  expect(pendingAsks(s).map((q) => q.event)).toEqual([])
+  expect(pendingAsks(base).map((q) => q.event)).toEqual(['nx-evt-1', 'nx-evt-2'])
 })

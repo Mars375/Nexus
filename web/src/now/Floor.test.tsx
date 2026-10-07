@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { NodeState, NowSnapshot } from '@/api'
 import { Floor, FloorScene } from './Floor'
+import { approval } from './fixtures'
 import { resetFloorRotation } from './useFloorRotation'
 import { resetFloorLevel } from './useFloorLevel'
 import { drawOrder, layoutFloor, toPercent } from './iso'
@@ -19,7 +20,7 @@ const node = (id: string, status: NodeState['status']): NodeState => ({ id, kind
 
 test('chaque poste porte l\'état de son agent', () => {
   const { container } = render(<Floor snapshot={snap({
-    asks: [{ event: 'nx-evt-1', agent: 'mnema', kind: 'question', subject: 'Python ?', task: 'nx-task-32', at: new Date().toISOString(), received_at: new Date().toISOString() }],
+    asks: [{ event: 'nx-evt-1', agent: 'mnema', kind: 'question', subject: 'Python ?', task: 'nx-task-32', at: new Date().toISOString(), received_at: new Date().toISOString(), body: null, options: [], consequence: null, approval: approval() }],
     blocks: [{ task: 'nx-task-29', title: 'Sauvegarde', cause: 'hors ligne', since: null, follow_up_at: null, lead_agent: 'artemis' }],
   })} nodes={[]} />)
   const desk = (a: string) => container.querySelector(`[data-agent="${a}"]`)!
@@ -50,7 +51,7 @@ test('la tâche est dans l\'étiquette à toutes les largeurs : une ligne tronqu
 
 test('ta table dit quand aucune demande n\'est reçue', () => {
   render(<Floor snapshot={snap()} nodes={[]} />)
-  expect(screen.getByText('aucune demande reçue (7 j)')).toBeInTheDocument()
+  expect(screen.getByText('aucune demande en attente')).toBeInTheDocument()
 })
 
 test('les baies suivent les nœuds, jamais vertes sans preuve', () => {
@@ -62,7 +63,7 @@ test('les baies suivent les nœuds, jamais vertes sans preuve', () => {
 
 test('aucun mouvement au premier rendu', () => {
   const { container } = render(<Floor snapshot={snap({
-    asks: [{ event: 'nx-evt-1', agent: 'mnema', kind: 'question', subject: 'Python ?', task: null, at: new Date().toISOString(), received_at: new Date().toISOString() }],
+    asks: [{ event: 'nx-evt-1', agent: 'mnema', kind: 'question', subject: 'Python ?', task: null, at: new Date().toISOString(), received_at: new Date().toISOString(), body: null, options: [], consequence: null, approval: approval() }],
   })} nodes={[]} />)
   expect(container.querySelector('.is-fresh')).toBeNull()
 })
@@ -70,7 +71,7 @@ test('aucun mouvement au premier rendu', () => {
 test('une demande qui arrive déclenche le mouvement de son fil', () => {
   const { container, rerender } = render(<Floor snapshot={snap()} nodes={[]} />)
   rerender(<Floor snapshot={snap({
-    asks: [{ event: 'nx-evt-7', agent: 'mnema', kind: 'question', subject: 'Python ?', task: null, at: new Date().toISOString(), received_at: new Date().toISOString() }],
+    asks: [{ event: 'nx-evt-7', agent: 'mnema', kind: 'question', subject: 'Python ?', task: null, at: new Date().toISOString(), received_at: new Date().toISOString(), body: null, options: [], consequence: null, approval: approval() }],
   })} nodes={[]} />)
   expect(container.querySelector('[data-route="mnema"].is-fresh')).not.toBeNull()
 })
@@ -385,12 +386,12 @@ test('« TA TABLE » et son compteur sont dans un coin HTML fixe, bas-gauche, ho
   const corner = container.querySelector('[data-table-corner]') as HTMLElement
   expect(corner.closest('svg')).toBeNull()
   expect(corner.className).toContain('bottom-0'); expect(corner.className).toContain('left-0')
-  expect(corner.textContent).toContain('TA TABLE'); expect(corner.textContent).toContain('aucune demande reçue (7 j)')
+  expect(corner.textContent).toContain('TA TABLE'); expect(corner.textContent).toContain('aucune demande en attente')
   expect(corner.querySelector('span')!.className).toContain('text-muted')
 })
 
 test('le coin de la table garde l\'ambre et le « +N sur la table » quand il y a des demandes', () => {
-  const ask = (n: number) => ({ event: `nx-evt-${n}`, agent: 'mnema' as const, kind: 'question' as const, subject: 'Q', task: null, at: new Date().toISOString(), received_at: new Date().toISOString() })
+  const ask = (n: number) => ({ event: `nx-evt-${n}`, agent: 'mnema' as const, kind: 'question' as const, subject: 'Q', task: null, at: new Date().toISOString(), received_at: new Date().toISOString(), body: null, options: [], consequence: null, approval: approval() })
   const { container } = render(<Floor snapshot={snap({ asks: [ask(1), ask(2), ask(3), ask(4), ask(5)] })} nodes={[]} />)
   const corner = container.querySelector('[data-table-corner]') as HTMLElement
   expect(corner.querySelector('span')!.className).toContain('text-attention')
@@ -823,4 +824,20 @@ test('étiquette du sélecteur : largeur bornée, deux lignes d\'alerte au plus,
   expect(label.textContent).toBe('Étage 1 / 5 · alerte : étages 2, 3, 4, 5') // the full list, whatever is clipped on screen
   expect(label.getAttribute('title')).toBe('Étage 1 / 5 · alerte : étages 2, 3, 4, 5')
   expect(up()).toHaveAccessibleName('Monter d\'un étage : un nœud hors ligne à l\'étage 2, un nœud hors ligne à l\'étage 3, un nœud hors ligne à l\'étage 4, un nœud hors ligne à l\'étage 5')
+})
+
+test('ta table et les postes ne comptent que les demandes en attente', () => {
+  const treated = approval({ ref: 'nx-appr-2', status: 'approved', decided_by: 'loic', decided_at: new Date().toISOString() })
+  const base = { body: null, options: [], consequence: null, kind: 'question' as const, subject: 'Q', task: null, at: new Date().toISOString(), received_at: new Date().toISOString() }
+  const { container } = render(<Floor snapshot={snap({ asks: [
+    { ...base, event: 'nx-evt-1', agent: 'mnema', approval: approval() },
+    { ...base, event: 'nx-evt-2', agent: 'artemis', approval: treated },
+    { ...base, event: 'nx-evt-3', agent: 'artemis', approval: null },
+  ] })} nodes={[]} />)
+  expect(container.querySelector('[data-ticket="nx-evt-1"]')).not.toBeNull()
+  expect(container.querySelector('[data-ticket="nx-evt-2"]')).toBeNull()
+  expect(container.querySelector('[data-ticket="nx-evt-3"]')).toBeNull()
+  expect(container.querySelector('[data-agent="artemis"]')!.getAttribute('data-wait')).toBe('false')
+  expect(container.querySelector('[data-route="artemis"]')).toBeNull()
+  expect(container.querySelector('[data-table-corner]')!.textContent).toContain('1 demande')
 })

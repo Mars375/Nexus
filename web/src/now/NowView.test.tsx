@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
-import type { NodeState, NowAsk, NowSnapshot } from '@/api'
+import type { NodeState, NowSnapshot } from '@/api'
+import { approval, ask } from './fixtures'
 import { NowView } from './NowView'
 
 const empty: NowSnapshot = {
@@ -11,7 +12,6 @@ const empty: NowSnapshot = {
 }
 
 const node = (id: string, status: NodeState['status'], measuredAt = new Date().toISOString()): NodeState => ({ id, kind: 'homelab', guardian_agent: 'aether', status, last_seen: null, detail: null, source: 'tailscale', measured_at: measuredAt })
-const ask = (over: Partial<NowAsk> = {}): NowAsk => ({ event: 'nx-evt-1', agent: 'mnema', kind: 'question', subject: 'Python ?', task: null, at: new Date().toISOString(), received_at: new Date().toISOString(), ...over })
 
 function serve(now: NowSnapshot | 'fail', nodes: NodeState[] | 'fail' | 'pending' = []) {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
@@ -35,7 +35,7 @@ afterEach(() => vi.unstubAllGlobals())
 test('sans données, chaque section dit ce qu\'elle ne contient pas', async () => {
   serve(empty); show()
   expect(await screen.findByText('Pas d\'opération principale en cours.')).toBeInTheDocument()
-  expect(screen.getByText('Aucune demande reçue ces 7 derniers jours.')).toBeInTheDocument()
+  expect(screen.getByText('Aucune demande en attente ni traitée récemment.')).toBeInTheDocument()
   expect(screen.getByText('Aucun blocage actif.')).toBeInTheDocument()
   expect(screen.getByText('Rien de terminé ces 7 derniers jours.')).toBeInTheDocument()
   expect(screen.getByText('Aucun agent ne travaille en ce moment.')).toBeInTheDocument()
@@ -45,18 +45,19 @@ test('sans données, chaque section dit ce qu\'elle ne contient pas', async () =
 test('les tuiles ne sont que des comptes mesurés', async () => {
   serve({ ...empty,
     agents: [{ agent: 'helios', state: 'run', task: 'nx-task-1', title: 'T', run: 's', since: new Date().toISOString() }],
-    asks: [{ event: 'nx-evt-1', agent: 'mnema', kind: 'question', subject: 'Python ?', task: null, at: new Date().toISOString(), received_at: new Date().toISOString() }],
+    asks: [{ event: 'nx-evt-1', agent: 'mnema', kind: 'question', subject: 'Python ?', task: null, at: new Date().toISOString(), received_at: new Date().toISOString(), body: null, options: [], consequence: null, approval: approval() }],
   }); show()
   expect(await screen.findByRole('group', { name: 'Agents actifs' })).toHaveTextContent('1')
-  expect(screen.getByRole('group', { name: 'Demandes reçues' })).toHaveTextContent('1')
+  expect(screen.getByRole('group', { name: 'Demandes en attente' })).toHaveTextContent('1')
   expect(screen.getByRole('group', { name: 'Blocages' })).toHaveTextContent('0')
 })
 
-test('une demande reçue ne se dit jamais « en attente »', async () => {
-  serve({ ...empty, asks: [{ event: 'nx-evt-1', agent: 'mnema', kind: 'question', subject: 'Python ?', task: 'nx-task-32', at: new Date().toISOString(), received_at: new Date().toISOString() }] }); show()
+test('une demande sans approbation ne se dit jamais « en attente »', async () => {
+  serve({ ...empty, asks: [ask({ task: 'nx-task-32', approval: null })] }); show()
   expect(await screen.findByText('Python ?')).toBeInTheDocument()
-  expect(screen.getByText('Question de Mnema sur nx-task-32.')).toBeInTheDocument()
-  expect(screen.queryByText(/en attente/i)).toBeNull()
+  expect(screen.getByText(/Question de Mnema/)).toBeInTheDocument()
+  expect(screen.getByText('sans suivi d\'approbation (demande antérieure au suivi)')).toBeInTheDocument()
+  expect(document.querySelector('[data-chip="pending"]')).toBeNull()
 })
 
 test('serveur injoignable : on le dit, sans étage vide présenté comme calme', async () => {
@@ -77,15 +78,15 @@ test('sans agent au travail, la phrase n\'est pas réservée aux lecteurs d\'éc
 })
 
 test('une demande reçue liée à une tâche ouvre cette tâche', async () => {
-  serve({ ...empty, asks: [{ event: 'nx-evt-1', agent: 'mnema', kind: 'question', subject: 'Python ?', task: 'nx-task-32', at: new Date().toISOString(), received_at: new Date().toISOString() }] }); show()
-  const link = await screen.findByRole('link', { name: /Python \?/ })
+  serve({ ...empty, asks: [ask({ task: 'nx-task-32' })] }); show()
+  const link = await screen.findByRole('link', { name: 'nx-task-32' })
   expect(link).toHaveAttribute('href', '#/travail/nx-task-32')
 })
 
 test('une demande sans tâche n\'est pas un lien', async () => {
-  serve({ ...empty, asks: [{ event: 'nx-evt-1', agent: 'mnema', kind: 'question', subject: 'Python ?', task: null, at: new Date().toISOString(), received_at: new Date().toISOString() }] }); show()
+  serve({ ...empty, asks: [ask()] }); show()
   await screen.findByText('Python ?')
-  expect(screen.queryByRole('link', { name: /Python \?/ })).toBeNull()
+  expect(screen.queryByRole('link', { name: /nx-task/ })).toBeNull()
 })
 
 test('le lien d\'un agent vers sa tâche laisse le navigateur faire (ctrl-clic, clic molette)', async () => {
@@ -103,7 +104,7 @@ test('au premier chargement, les demandes déjà là ne passent pas pour des arr
 
 test('une demande qui arrive après le chargement est signalée', async () => {
   serve(empty); const client = show()
-  await screen.findByText('Aucune demande reçue ces 7 derniers jours.')
+  await screen.findByText('Aucune demande en attente ni traitée récemment.')
   serve({ ...empty, asks: [ask()] })
   await act(() => client.refetchQueries({ queryKey: ['now'] }))
   await screen.findByText('Python ?')

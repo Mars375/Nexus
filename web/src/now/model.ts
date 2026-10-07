@@ -1,4 +1,4 @@
-import type { AgentId, NodeState, NowSnapshot } from '@/api'
+import type { AgentId, NodeState, NowAsk, NowSnapshot } from '@/api'
 import { age } from '@/format'
 
 /** Les âges affichés sur Maintenant sont à la minute : une horloge à 30 s suffit, sans redessiner l'étage chaque seconde. */
@@ -6,10 +6,19 @@ export const AGE_TICK_MS = 30_000
 
 export type SeatModel = { agent: AgentId; run: boolean; wait: boolean; block: boolean; task: string | null; title: string | null; since: string | null; asks: number }
 
-/** Un poste par agent : run d'après ses événements, demandes reçues, blocage de ses tâches. */
+/**
+ * Only an ask whose approval is `pending` waits for Loïc (ADR-019, D7). One without approval
+ * (before migration 0004) is never said to wait: nobody knows whether it was treated.
+ */
+export const isPending = (q: NowAsk): boolean => q.approval?.status === 'pending'
+
+/** The asks that wait for Loïc, in the order received. */
+export const pendingAsks = (s: NowSnapshot): NowAsk[] => s.asks.filter(isPending)
+
+/** Un poste par agent : run d'après ses événements, demandes en attente, blocage de ses tâches. */
 export function seatModels(s: NowSnapshot): SeatModel[] {
   return s.agents.map((a) => {
-    const asks = s.asks.filter((q) => q.agent === a.agent).length
+    const asks = pendingAsks(s).filter((q) => q.agent === a.agent).length
     return {
       agent: a.agent, run: a.state === 'run', wait: asks > 0,
       block: s.blocks.some((b) => b.lead_agent === a.agent),

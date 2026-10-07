@@ -77,6 +77,20 @@ describe('orbital theme: contrast (WCAG 2.x)', () => {
     for (const text of ['ink', 'muted', 'accent']) expect(ratio(colour(text), card), text).toBeGreaterThanOrEqual(4.5)
   })
 
+  it('text on an ask card (attention-soft over every surface) is at least 4.5:1', () => {
+    for (const surface of surfaces) {
+      const card = colour('attention-soft', colour(surface))
+      for (const text of ['ink', 'muted', 'attention', 'danger']) expect(ratio(colour(text), card), `${text}/${surface}`).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
+  it('text on the peak of the new-ask flash (attention at 16%) is at least 4.5:1', () => {
+    for (const surface of surfaces) {
+      const peak = over([251, 146, 60, 0.16], colour(surface))
+      for (const text of ['ink', 'muted', 'attention', 'danger']) expect(ratio(colour(text), peak), `${text}/${surface}`).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
   it('text on hovered buttons (ink at 10% over the surface) is at least 4.5:1', () => {
     for (const surface of surfaces) {
       const hover = over([...parse(t.ink).slice(0, 3), 0.1] as Rgba, colour(surface))

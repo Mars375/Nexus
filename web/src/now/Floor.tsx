@@ -5,7 +5,7 @@ import { age } from '@/format'
 import { isStale } from '@/freshness'
 import { useNow } from '@/useNow'
 import { DESK, box, drawOrder, layoutFloor, toPercent, type Dir, type Layout } from './iso'
-import { AGE_TICK_MS, displayName, floorAlert, floorAlertCount, floorAlertSides, nodeFloors, rackDetail, rackLabel, rackTone, seatModels, type FloorAlert, type RackView, type SeatModel } from './model'
+import { AGE_TICK_MS, displayName, floorAlert, floorAlertCount, floorAlertSides, nodeFloors, rackDetail, rackLabel, rackTone, pendingAsks, seatModels, type FloorAlert, type RackView, type SeatModel } from './model'
 import { Faces, Rack } from './Rack'
 import { RackLabels, ServerRoom } from './ServerRoom'
 import { useArrivals } from './useArrivals'
@@ -129,21 +129,22 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
   const office = racksOf(floors[0])
   // Floor 1 sets the frame (the room is drawn inside it): it keeps its place while nodes are read.
   const l = layoutFloor(seats.length, nodes === undefined ? 1 : office.length, angle, floorCount)
-  const freshAsks = useArrivals(snapshot.asks.map((q) => q.event))
-  const freshRoutes = new Set(snapshot.asks.filter((q) => freshAsks.has(q.event)).map((q) => q.agent))
+  const waiting = pendingAsks(snapshot)
+  const freshAsks = useArrivals(waiting.map((q) => q.event))
+  const freshRoutes = new Set(waiting.filter((q) => freshAsks.has(q.event)).map((q) => q.agent))
   const p = l.project
   const slab = box(l, 0, 0, -0.35, l.width, l.depth, 0.35)
   let grid = ''
   for (let i = 1; i < l.width; i++) grid += `M${p(i, 0)} L${p(i, l.depth)} `
   for (let j = 1; j < l.depth; j++) grid += `M${p(0, j)} L${p(l.width, j)} `
-  const tickets = snapshot.asks.slice(0, MAX_TICKETS)
-  const extra = snapshot.asks.length - tickets.length
-  const label = (ask: number) => ask === 0 ? 'aucune demande reçue (7 j)' : `${ask} demande${ask > 1 ? 's' : ''}`
+  const tickets = waiting.slice(0, MAX_TICKETS)
+  const extra = waiting.length - tickets.length
+  const label = (ask: number) => ask === 0 ? 'aucune demande en attente' : `${ask} demande${ask > 1 ? 's' : ''}`
   const onRoom = Math.min(floor, floors.length) > 1
   const mounted: FloorLayer[] = layers ?? [{ floor, role: 'current', from: 'above' }]
 
   const dais = (
-    <g key="table" className="dais" data-on={String(snapshot.asks.length > 0)}>
+    <g key="table" className="dais" data-on={String(waiting.length > 0)}>
       <Faces b={box(l, l.table.x, l.table.y, 0, l.table.w, l.table.d, 0.18)} />
       <Faces b={box(l, l.table.x + 0.9, l.table.y + 0.7, 0.18, l.table.w - 1.8, l.table.d - 1.4, 0.5)} topClass="table-top" />
       {tickets.map((q, i) => {
@@ -241,8 +242,8 @@ export function FloorScene({ snapshot, nodes, nodesFailed = false, angle, stage,
       </div>
 
       <div data-table-corner className="pointer-events-none absolute bottom-0 left-0 whitespace-nowrap">
-        <span className={clsx('block font-orbital-display text-[13px] font-semibold tracking-[0.14em]', snapshot.asks.length ? 'text-attention' : 'text-muted')}>TA TABLE</span>
-        <span className="block font-data text-[11px] text-muted">{label(snapshot.asks.length)}{extra > 0 && ` · +${extra} sur la table`}</span>
+        <span className={clsx('block font-orbital-display text-[13px] font-semibold tracking-[0.14em]', waiting.length ? 'text-attention' : 'text-muted')}>TA TABLE</span>
+        <span className="block font-data text-[11px] text-muted">{label(waiting.length)}{extra > 0 && ` · +${extra} sur la table`}</span>
       </div>
 
       {/* On a server floor the legend is read by screen readers only; sighted users get the labels and a one-line summary. */}

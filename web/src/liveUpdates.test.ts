@@ -171,6 +171,11 @@ describe('createLiveBatcher', () => {
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ['tasks', 'nx-task-3'] })
     })
 
+    test('un événement answer (réponse ou décision de Loïc) relit Maintenant', () => {
+      const invalidate = run([{ type: 'event', event: 'nx-evt-12', task: 'nx-task-3', kind: 'answer', cursor: CURSOR }])
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ['now'] })
+    })
+
     test('un événement sans tâche relit seulement les événements et Maintenant', () => {
       const invalidate = run([{ type: 'event', event: 'nx-evt-9', task: null, kind: 'unknown', cursor: CURSOR }])
       expect(invalidate).toHaveBeenCalledTimes(2)

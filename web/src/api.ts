@@ -203,6 +203,18 @@ export type NowAgent = {
   since: string | null
 }
 
+/** `expired` is computed by the server at read time, never stored (ADR-019, D4). */
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'answered' | 'expired'
+
+/** Decision state of an ask. `null` on an ask: published before migration 0004 (D6), or addressed by Loïc to himself (no approval is opened). */
+export type NowApproval = {
+  ref: string
+  status: ApprovalStatus
+  expires_at: string | null
+  decided_by: Actor | null
+  decided_at: string | null
+}
+
 export type NowAsk = {
   event: string
   agent: Actor
@@ -211,6 +223,12 @@ export type NowAsk = {
   task: string | null
   at: string
   received_at: string
+  body: string | null
+  /** Texts at their original positions: a decision's `choice` is an index into this list (blank entries kept). */
+  options: string[]
+  /** Announced by the requester, not verified by Nexus (ADR-005). */
+  consequence: string | null
+  approval: NowApproval | null
 }
 
 export type NowBlock = {
@@ -267,4 +285,19 @@ export const nowApi = {
 
 export const nodesApi = {
   list: (signal?: AbortSignal) => request<NodeState[]>('/api/nodes', { signal }),
+}
+
+export type Decision = {
+  decision: 'approved' | 'rejected'
+  /** 0-based index into the ask's `options`. */
+  choice?: number
+  note?: string
+}
+
+/** What Loïc writes back (EVENT-PROTOCOL §6 ter): the server answers with the approval view. */
+export const approvalsApi = {
+  answer: (ref: string, text: string) =>
+    request<unknown>(`/api/approvals/${ref}/answer`, { method: 'POST', body: json({ text }) }),
+  decide: (ref: string, decision: Decision) =>
+    request<unknown>(`/api/approvals/${ref}/decision`, { method: 'POST', body: json(decision) }),
 }
