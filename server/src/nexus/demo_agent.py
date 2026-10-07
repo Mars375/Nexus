@@ -83,12 +83,15 @@ _TAILNET = ipaddress.ip_network("100.64.0.0/10")
 def safe_for_token(base: str) -> bool:
     """Whether a bearer token may travel to `base`: HTTPS, or HTTP to this machine or a
     Tailscale peer (WireGuard already encrypts the tailnet). Never in clear elsewhere."""
-    url = urllib.parse.urlsplit(base)
+    try:
+        url = urllib.parse.urlsplit(base)
+        host = (url.hostname or "").lower()
+    except ValueError:  # e.g. an unclosed IPv6 bracket
+        return False
     if url.scheme == "https":
         return True
-    if url.scheme != "http" or not url.hostname:
+    if url.scheme != "http" or not host:
         return False
-    host = url.hostname.lower()
     if host == "localhost" or host.endswith(".ts.net"):
         return True
     try:
@@ -98,6 +101,20 @@ def safe_for_token(base: str) -> bool:
     return address.is_loopback or address in _TAILNET
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib copies every header, Authorization included, to any redirect target: follow none."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None  # the 3xx then surfaces as an HTTPError
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def _open(request: urllib.request.Request, timeout: float):
+    return _OPENER.open(request, timeout=timeout)
+
+
 def call(base: str, method: str, path: str, body: dict | None = None) -> dict:
     data = json.dumps(body).encode() if body is not None else None
     headers = {"Content-Type": "application/json"}
@@ -105,9 +122,12 @@ def call(base: str, method: str, path: str, body: dict | None = None) -> dict:
         headers["Authorization"] = f"Bearer {_bearer}"
     request = urllib.request.Request(base + path, data=data, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(request, timeout=10) as res:
+        with _open(request, timeout=10) as res:
             return json.load(res)
     except urllib.error.HTTPError as err:
+        if 300 <= err.code < 400:
+            message = f"refusé ({err.code}) : redirection non suivie, vérifie --base"
+            raise SystemExit(message) from err
         detail = json.load(err).get("detail")
         raise SystemExit(f"refusé ({err.code}) : {detail}") from err
 

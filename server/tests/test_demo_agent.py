@@ -223,7 +223,7 @@ def wire(monkeypatch):
         body = {"id": "evt_1", "actor_event_id": "x", "kind": "claimed", "effects": []}
         return io.BytesIO(json.dumps(body).encode())
 
-    monkeypatch.setattr(demo_agent.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(demo_agent, "_open", urlopen)
     monkeypatch.delenv("NEXUS_TOKEN", raising=False)
     return sent
 
@@ -379,3 +379,58 @@ def test_without_a_token_a_remote_http_base_stays_allowed(wire):
         run("nx-task-1", "--base", "http://nexus.example:8765")
 
     assert wire
+
+
+def test_a_redirect_is_never_followed_so_the_token_never_leaves(monkeypatch, capsys):
+    """urllib would copy Authorization to any redirect target: the agent follows none."""
+    import http.server
+    import threading
+
+    reached = []
+
+    class Elsewhere(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            reached.append(self.headers.get("Authorization"))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        do_POST = do_GET
+
+        def log_message(self, *args):
+            pass
+
+    other = http.server.HTTPServer(("127.0.0.1", 0), Elsewhere)
+
+    class Redirect(Elsewhere):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", f"http://127.0.0.1:{other.server_port}/x")
+            self.end_headers()
+
+        do_POST = do_GET
+
+    first = http.server.HTTPServer(("127.0.0.1", 0), Redirect)
+    for server in (first, other):
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setenv("NEXUS_TOKEN", TOKEN)
+    try:
+        with pytest.raises(SystemExit) as exc:
+            run("nx-task-1", "--base", f"http://127.0.0.1:{first.server_port}")
+    finally:
+        first.shutdown()
+        other.shutdown()
+
+    assert reached == []
+    assert "redirection" in str(exc.value) and TOKEN not in str(exc.value)
+    assert TOKEN not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("base", ["http://[::1", "http://[evil]"])
+def test_an_unparsable_base_with_a_token_is_a_usage_error(wire, monkeypatch, capsys, base):
+    monkeypatch.setenv("NEXUS_TOKEN", TOKEN)
+    with pytest.raises(SystemExit) as exc:
+        run("nx-task-1", "--base", base)
+
+    assert exc.value.code == 2 and wire == []
+    assert TOKEN not in capsys.readouterr().err
