@@ -29,11 +29,11 @@ La page d'accueil. À lire en 5 secondes.
 - Opération principale du moment (une seule) + tâches auxiliaires marquées comme telles ;
 - Agents actifs : qui, sur quoi, depuis quand (runs en cours) ;
 - Blocages actifs : quoi, depuis quand, relance prévue ;
-- Ce qui attend Loïc : validations (`needs_human`), questions, approbations `pending` ;
+- Ce qui attend Loïc : les demandes (`question`, `needs_human`) dont l'approbation est `pending`, de tout âge, et celles traitées ces 7 derniers jours ; la tuile et les balises de l'étage ne comptent que les demandes en attente ;
 - Derniers `done` avec preuve ;
 - Nœuds : Helios / Cortex / Synapse / Artémis (états honnêtes, `offline-by-design` assumé).
 
-**Actions :** ouvrir une tâche, répondre à une question, valider/refuser (conséquence affichée), confier une tâche (Phase 2).
+**Actions :** ouvrir une tâche, répondre à une question (texte libre, options proposées en raccourci), valider ou refuser une demande de validation (conséquence annoncée par l'agent affichée juste au-dessus des boutons, option à choisir quand il y en a au moins deux), confier une tâche (Phase 2). Nexus n'avertit ni ne réveille l'agent : il relit la décision lui-même (EVENT-PROTOCOL §6 ter).
 
 ## 2. Travail — « Où en est tout le travail ? »
 

@@ -19,6 +19,18 @@ export function age(iso: string, now: number): string {
   return `il y a ${Math.round(hours / 24)} j`
 }
 
+/** « dans 3 h » : durée jusqu'à un instant à venir ; « maintenant » dès qu'il est atteint ou passé. */
+export function until(iso: string, now: number): string {
+  const seconds = Math.round((Date.parse(iso) - now) / 1000)
+  if (seconds <= 0) return 'maintenant'
+  if (seconds < 60) return 'dans moins d\'une minute'
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `dans ${minutes} min`
+  const hours = Math.round(minutes / 60)
+  if (hours < 48) return `dans ${hours} h`
+  return `dans ${Math.round(hours / 24)} j`
+}
+
 export function isOverdue(iso: string | null, now: number): boolean {
   return iso !== null && new Date(iso).getTime() < now
 }

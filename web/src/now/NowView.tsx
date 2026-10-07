@@ -6,7 +6,9 @@ import { Provenance } from '@/Provenance'
 import { useNow } from '@/useNow'
 import { AgentList } from './AgentList'
 import { Floor } from './Floor'
-import { AGE_TICK_MS, displayName } from './model'
+import { AskCard } from './AskCard'
+import { useAskDrafts } from './askDrafts'
+import { AGE_TICK_MS, displayName, pendingAsks } from './model'
 import { useArrivals } from './useArrivals'
 import { useNodes, useNowSnapshot } from './queries'
 
@@ -33,6 +35,7 @@ export function NowView() {
   const nodes = useNodes()
   const s = snap.data
   const freshAsks = useArrivals(s ? s.asks.map((q) => q.event) : null)
+  const drafts = useAskDrafts()
 
   if (!s) {
     return (
@@ -41,6 +44,7 @@ export function NowView() {
       </div>
     )
   }
+  const waiting = pendingAsks(s).length
   const active = s.agents.filter((a) => a.state === 'run').length
   const nodesStale = nodes.isError || (nodes.data?.some((n) => isStale(n.measured_at, 'nodes', now)) ?? false)
   const online = nodes.data?.filter((n) => n.status === 'online').length
@@ -84,20 +88,15 @@ export function NowView() {
         <Heading>Système</Heading>
         <div className="grid grid-cols-2 gap-2">
           <Tile label="Agents actifs" value={active} tone={active > 0 ? 'text-run' : undefined} />
-          <Tile label="Demandes reçues" value={s.asks.length} tone={s.asks.length ? 'text-attention' : undefined} />
+          <Tile label="Demandes reçues" value={waiting} tone={waiting ? 'text-attention' : undefined} />
           <Tile label="Blocages" value={s.blocks.length} tone={s.blocks.length ? 'text-danger' : undefined} />
           <Tile label="Nœuds en ligne" value={nodesTile} />
         </div>
         <section>
           <Heading tone="attention">Demandes reçues</Heading>
-          {s.asks.length === 0 ? <p className="text-muted">Aucune demande reçue ces 7 derniers jours.</p> : s.asks.map((q) => (
-            <div key={q.event} className={clsx('mb-1.5 border-l-2 border-attention px-3 py-2', freshAsks.has(q.event) ? 'now-fresh' : 'bg-[rgba(251,146,60,.05)]')}>
-              <div className="flex justify-between gap-3">
-                {q.task ? <a href={`#/travail/${q.task}`} className="no-underline"><strong className="font-semibold">{q.subject}</strong></a> : <strong className="font-semibold">{q.subject}</strong>}
-                <span className="font-data text-[11px] text-muted">{age(q.received_at, now)}</span>
-              </div>
-              <div className="text-xs text-muted">{q.kind === 'question' ? 'Question' : 'Demande de validation'} de {displayName(q.agent)} {q.task ? `sur ${q.task}` : 'sur aucune tâche'}.</div>
-            </div>
+          {s.asks.length === 0 ? <p className="text-muted">Aucune demande en attente ni traitée récemment.</p> : s.asks.map((q) => (
+            <AskCard key={q.event} ask={q} now={now} fresh={freshAsks.has(q.event)}
+              draft={q.approval ? drafts.drafts[q.approval.ref] : undefined} onDraft={drafts.patch} onSent={drafts.clear} />
           ))}
         </section>
         <section className="border-t border-line pt-3.5">
