@@ -22,6 +22,8 @@ _FULL: list[tuple[str, re.Pattern[str]]] = [
     ("slack_token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}")),
     ("google_api_key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
     # Nexus actor token (ADR-020): `nxt_` + 43 base64url characters; a longer run is redacted whole.
+    # Deliberately unanchored (no `\b`): ADR-006 prefers over-redaction, so a token glued to
+    # other text is still masked.
     ("actor_token", re.compile(r"nxt_[A-Za-z0-9_-]{43,}")),
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")),
     ("bearer_token", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{20,}")),

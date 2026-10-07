@@ -1,7 +1,7 @@
-"""`nexus-token` : émission, liste et révocation des jetons d'acteur (ADR-020, D3).
+"""`nexus-token`: issue, list and revoke actor tokens (ADR-020, D3).
 
-Le jeton n'est affiché qu'une fois, sur la sortie standard et rien d'autre ; les consignes vont
-sur la sortie d'erreur. La CLI ne migre jamais la base : elle exige que Nexus l'ait fait.
+The token is printed once, on standard output and nothing else; guidance goes to standard
+error. The CLI never migrates the database: it requires that Nexus already did.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import sys
 from collections.abc import Sequence
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
 from nexus import migrate
@@ -23,6 +24,17 @@ from nexus.db import make_engine
 from nexus.models import ActorToken
 
 _REF = re.compile(r"nx-tok-([0-9]{1,12})")
+# Seconds sqlite waits on a lock held by the running server (module level so tests can shorten it).
+BUSY_TIMEOUT = 15.0
+
+
+class _Parser(argparse.ArgumentParser):
+    """Usage errors print a fixed French message: argparse would echo the offending value."""
+
+    def error(self, message: str):
+        self.print_usage(sys.stderr)
+        print("Erreur : arguments invalides.", file=sys.stderr)
+        raise SystemExit(2)
 
 
 def _error(message: str) -> int:
@@ -31,6 +43,8 @@ def _error(message: str) -> int:
 
 
 def _issue(factory, args: argparse.Namespace) -> int:
+    if args.actor not in ACTORS:
+        return _error("acteur inconnu")
     with factory() as session:
         try:
             row, token = tokens.issue(session, args.actor, args.label)
@@ -70,7 +84,7 @@ def _revoke(factory, args: argparse.Namespace) -> int:
         return _error("référence invalide (attendu : nx-tok-<n>)")
     token_id = int(match.group(1))
     with factory() as session:
-        # Un seul UPDATE conditionnel : deux révocations simultanées n'en font qu'une.
+        # A single conditional UPDATE: two simultaneous revocations make only one.
         changed = session.execute(
             update(ActorToken)
             .where(ActorToken.id == token_id, ActorToken.revoked_at.is_(None))
@@ -88,12 +102,10 @@ def _revoke(factory, args: argparse.Namespace) -> int:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="nexus-token", description="Jetons d'acteur de Nexus (ADR-020)."
-    )
+    parser = _Parser(prog="nexus-token", description="Jetons d'acteur de Nexus (ADR-020).")
     sub = parser.add_subparsers(dest="command", required=True)
     issue = sub.add_parser("issue", help="émet un jeton (affiché une seule fois)")
-    issue.add_argument("actor", choices=sorted(ACTORS))
+    issue.add_argument("actor", help="acteur : " + ", ".join(sorted(ACTORS)))
     issue.add_argument("--label", required=True, help="à quoi sert ce jeton (64 caractères max)")
     sub.add_parser("list", help="liste les jetons (jamais leur valeur)")
     revoke = sub.add_parser("revoke", help="révoque un jeton")
@@ -104,17 +116,20 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     settings = Settings.from_env()
-    # Ne crée ni ne migre jamais la base (sqlite créerait un fichier vide à la connexion).
+    # Never creates nor migrates the database (sqlite would create an empty file on connect).
     if not settings.db_path.is_file() or migrate.pending(settings.db_url):
         return _error(
             "la base de Nexus n'est pas à jour : démarre Nexus une fois "
             "(elle se migre au démarrage), puis relance cette commande."
         )
-    engine = make_engine(settings.db_url)
+    engine = make_engine(settings.db_url, timeout=BUSY_TIMEOUT)
     try:
         factory = sessionmaker(engine, expire_on_commit=False)
         handler = {"issue": _issue, "list": _list, "revoke": _revoke}[args.command]
         return handler(factory, args)
+    except OperationalError:
+        # The exception text carries the SQL and its parameters: print none of it.
+        return _error("la base est occupée, réessaie dans un instant")
     finally:
         engine.dispose()
 

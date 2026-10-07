@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import re
 import secrets
+import unicodedata
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -60,13 +61,15 @@ def clean_label(label: str) -> str:
     """Stripped, 1 to 64 printable characters, no secret. Never echoes the value."""
     if not isinstance(label, str):
         raise ValueError("le label doit être un texte")
-    label = label.strip()
+    # Space separators (category Zs: no-break space, narrow no-break space...) become a plain
+    # space; control and format characters stay refused below.
+    label = "".join(" " if unicodedata.category(c) == "Zs" else c for c in label).strip()
     if not label:
         raise ValueError("le label ne peut pas être vide")
     if len(label) > LABEL_MAX:
         raise ValueError(f"le label fait au plus {LABEL_MAX} caractères")
     if not label.isprintable():
-        raise ValueError("le label ne peut pas contenir de caractère de contrôle")
+        raise ValueError("le label ne peut contenir que des caractères imprimables")
     if redaction.redact(label)[0] != label:
         raise ValueError("le label ne peut pas contenir de secret")
     return label

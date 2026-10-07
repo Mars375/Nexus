@@ -46,10 +46,12 @@ def token_actor(
         return None
     token = bearer_token(authorization)
     if token is None:
-        raise _unauthorized("auth_required", "authentification requise : jeton porteur attendu")
+        raise _unauthorized(
+            "auth_required", "en-tête Authorization : jeton porteur attendu (Bearer nxt_…)"
+        )
     actor = tokens.lookup(session, token)
     if actor is None:
-        raise _unauthorized("invalid_token", "jeton invalide ou révoqué")
+        raise _unauthorized("invalid_token", "en-tête Authorization : jeton invalide ou révoqué")
     if x_nexus_actor is not None and x_nexus_actor != actor:
         raise HTTPException(status.HTTP_403_FORBIDDEN, {
             "code": "actor_mismatch",
@@ -66,7 +68,7 @@ def authenticated_actor(
         return from_token
     actor = x_nexus_actor or DEFAULT_ACTOR
     if actor not in ACTORS:
-        # La valeur reçue n'est jamais renvoyée : l'en-tête pourrait contenir un secret.
+        # The received value is never sent back: the header could hold a secret.
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, "acteur inconnu dans l'en-tête X-Nexus-Actor"
         )

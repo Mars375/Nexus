@@ -87,10 +87,8 @@ def test_revoke_unknown_or_malformed_ref_is_an_error_that_does_not_echo(env, cap
 
 
 def test_issue_refuses_unknown_actor_and_bad_label(env, capsys):
-    with pytest.raises(SystemExit) as exc:
-        cli.main(["issue", "mallory", "--label", "x"])
-    assert exc.value.code == 2
-    capsys.readouterr()
+    code, out, err = run(capsys, "issue", "mallory", "--label", "x")
+    assert code == 1 and out == "" and "acteur inconnu" in err and "mallory" not in err
     code, out, err = run(capsys, "issue", "loic", "--label", "   ")
     assert code == 1 and out == "" and err.strip()
     code, out, err = run(capsys, "issue", "loic", "--label", "ghp_" + "A" * 36)
@@ -118,3 +116,31 @@ def test_refuses_when_there_is_no_database_and_creates_none(settings, monkeypatc
     code, out, err = run(capsys, "list")
     assert code == 1 and out == "" and "démarr" in err
     assert not settings.db_path.exists()
+
+
+def test_an_invalid_actor_or_usage_error_never_echoes_the_value(env, capsys):
+    fake = "ghp_" + "A" * 36
+    code, out, err = run(capsys, "issue", fake, "--label", "x")
+    assert code == 1 and out == "" and fake not in err and "acteur inconnu" in err
+    bad_usages = (
+        ["bogus-" + fake], ["issue", "loic", "--label", "x", fake], ["issue", "--" + fake]
+    )
+    for argv in bad_usages:
+        with pytest.raises(SystemExit) as exc:
+            cli.main(argv)
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert fake not in err and "Erreur" in err
+
+
+def test_a_busy_database_is_a_french_error_without_traceback(env, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "BUSY_TIMEOUT", 0.1)
+    blocker = sqlite3.connect(env.db_path, isolation_level=None)
+    blocker.execute("BEGIN IMMEDIATE")
+    try:
+        code, out, err = run(capsys, "issue", "loic", "--label", "x")
+    finally:
+        blocker.close()
+    assert code == 1 and out == ""
+    assert "la base est occupée, réessaie dans un instant" in err
+    assert "Traceback" not in err and "INSERT" not in err

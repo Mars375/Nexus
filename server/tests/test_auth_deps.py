@@ -98,7 +98,7 @@ def test_malformed_authorization_is_401_auth_required_and_never_echoed(client, v
     assert res.json()["detail"]["code"] == "auth_required"
     assert res.headers["www-authenticate"] == "Bearer"
     fragment = value.removeprefix("Bearer ").strip()
-    if len(fragment) > 3:
+    if len(fragment) > 3 and fragment != "Bearer":  # the scheme word is in the fixed message
         assert fragment not in res.text
 
 

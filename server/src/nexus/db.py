@@ -34,8 +34,10 @@ class AwareDateTime(TypeDecorator):
         return datetime.fromisoformat(value).astimezone(TZ)
 
 
-def make_engine(url: str) -> Engine:
-    engine = create_engine(url)
+def make_engine(url: str, *, timeout: float | None = None) -> Engine:
+    """`timeout`: seconds sqlite waits on a locked database (the driver default when None)."""
+    connect_args = {} if timeout is None else {"timeout": timeout}
+    engine = create_engine(url, connect_args=connect_args)
 
     @event.listens_for(engine, "connect")
     def _sqlite_pragmas(dbapi_connection, _record) -> None:

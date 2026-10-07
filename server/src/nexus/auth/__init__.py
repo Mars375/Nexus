@@ -1,1 +1,1 @@
-"""Authentification des acteurs par jeton porteur (ADR-020)."""
+"""Actor authentication with bearer tokens (ADR-020)."""

@@ -115,3 +115,14 @@ def test_the_database_refuses_an_unknown_actor_or_empty_label(session):
         with pytest.raises(IntegrityError):
             session.flush()
         session.rollback()
+
+
+@pytest.mark.parametrize("space", ["\u00a0", "\u202f"])
+def test_label_accepts_unicode_space_separators_as_plain_spaces(session, space):
+    row, _ = tokens.issue(session, "loic", f"poste{space}:{space}Loïc")
+    assert row.label == "poste : Loïc"
+
+
+def test_label_refuses_format_characters_with_a_clear_message(session):
+    with pytest.raises(ValueError, match="caractères imprimables"):
+        tokens.issue(session, "loic", "a\u200bb")
