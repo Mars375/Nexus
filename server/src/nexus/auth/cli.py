@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import sqlite3
 import sys
 from collections.abc import Sequence
 
@@ -127,9 +128,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         factory = sessionmaker(engine, expire_on_commit=False)
         handler = {"issue": _issue, "list": _list, "revoke": _revoke}[args.command]
         return handler(factory, args)
-    except OperationalError:
+    except OperationalError as exc:
         # The exception text carries the SQL and its parameters: print none of it.
-        return _error("la base est occupée, réessaie dans un instant")
+        code = getattr(exc.orig, "sqlite_errorcode", None)
+        if code in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+            return _error("la base est occupée, réessaie dans un instant")
+        name = getattr(exc.orig, "sqlite_errorname", None) or "erreur SQLite"
+        return _error(f"la base est inaccessible ({name})")
     finally:
         engine.dispose()
 

@@ -227,7 +227,7 @@ Decision *─* Task
 
 | Donnée | Propriétaire | Nexus |
 |---|---|---|
-| Tâches, événements, runs, approbations, décisions | **Nexus** (`nexus.db`) | propriétaire |
+| Tâches, événements, runs, approbations, décisions, empreintes des jetons d'acteur | **Nexus** (`nexus.db`) | propriétaire |
 | Conversations nées dans Nexus | **Nexus** | propriétaire |
 | Travail confié à Hermes / Claude / Codex / Orca | l'exécutant | suit via `Run.external_ref` |
 | Chats Telegram, sessions Hermes/Claude/Codex | leur système | lit, indexe ; envoie via adaptateur (gated) |

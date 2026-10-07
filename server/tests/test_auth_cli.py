@@ -144,3 +144,14 @@ def test_a_busy_database_is_a_french_error_without_traceback(env, monkeypatch, c
     assert code == 1 and out == ""
     assert "la base est occupée, réessaie dans un instant" in err
     assert "Traceback" not in err and "INSERT" not in err
+
+
+def test_a_read_only_database_is_not_reported_as_busy(env, monkeypatch, capsys):
+    real_make_engine = cli.make_engine
+    read_only = f"sqlite:///file:{env.db_path}?mode=ro&uri=true"
+    monkeypatch.setattr(cli, "make_engine", lambda url, **kw: real_make_engine(read_only, **kw))
+    code, out, err = run(capsys, "issue", "loic", "--label", "x")
+    assert code == 1 and out == ""
+    assert "occupée" not in err
+    assert "la base est inaccessible (SQLITE_READONLY)" in err
+    assert "Traceback" not in err and "INSERT" not in err
