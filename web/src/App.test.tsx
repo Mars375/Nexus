@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App'
+import type { Task } from '@/api'
 import { clearToken, getToken, markUnlocked, setToken } from './auth'
 
 afterEach(() => {
@@ -111,4 +112,59 @@ test('« Oublier le jeton » efface le jeton depuis l\'application', async () =>
   expect(getToken()).toBeNull()
   expect(screen.queryByRole('button', { name: 'Oublier le jeton' })).toBeNull()
   expect(screen.getByRole('navigation', { name: 'Vues' })).toBeInTheDocument()
+})
+
+test('un 401 pendant une modification garde l’application montée : le brouillon survit au déverrouillage', async () => {
+  const task: Task = {
+    id: 'nx-task-1', title: 'Pont lecture', objective: 'Lire les runs', status: 'todo', human_owner: 'loic',
+    lead_agent: null, collaborators: [], next_action: 'relever les tables', due_at: null, follow_up_at: null,
+    block_cause: null, block_plan: null, drop_reason: null, expected_evidence: null, evidence: [],
+    priority: 'normal', operation_role: null, origin: null, context: [], depends_on: [], created_by: 'loic',
+    created_at: '2026-09-28T10:00:00+02:00', updated_at: '2026-09-28T10:00:00+02:00',
+    source: 'nexus.db', measured_at: '2026-09-28T10:00:00+02:00',
+  }
+  vi.stubGlobal('matchMedia', (query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }))
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === '/api/health') return jsonResponse(200, HEALTH)
+    if (init?.method === 'PATCH') return jsonResponse(401, { detail: { code: 'invalid_token', message: 'refus' } })
+    if (url === '/api/tasks') return jsonResponse(200, [task])
+    return jsonResponse(200, [])
+  }))
+  setToken(TOKEN)
+  window.location.hash = '#/travail/nx-task-1'
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><App /></QueryClientProvider>)
+
+  const title = await screen.findByLabelText('Titre')
+  fireEvent.change(title, { target: { value: 'Pont lecture — brouillon' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Enregistrer' }))
+
+  const lock = await screen.findByRole('heading', { name: 'Nexus verrouillé' })
+  expect(lock).toBeInTheDocument()
+  const nav = screen.getByRole('navigation', { name: 'Vues', hidden: true })
+  const app = nav.closest('[inert]')
+  expect(app).not.toBeNull()
+  expect(app).toHaveAttribute('aria-hidden', 'true')
+  expect(screen.queryByRole('navigation', { name: 'Vues' })).toBeNull() // hidden from the accessibility tree
+  await waitFor(() => expect(screen.getByLabelText('Jeton d’accès')).toHaveFocus())
+
+  fireEvent.change(screen.getByLabelText('Jeton d’accès'), { target: { value: TOKEN } })
+  fireEvent.click(screen.getByRole('button', { name: 'Déverrouiller' }))
+
+  expect(screen.queryByRole('heading', { name: 'Nexus verrouillé' })).toBeNull()
+  expect(document.querySelector('[inert]')).toBeNull()
+  expect(screen.getByLabelText('Titre')).toHaveValue('Pont lecture — brouillon')
+})
+
+test('un jeton stocké par un autre onglet déverrouille et fait relire les données', async () => {
+  stubGuardedApi()
+  renderGuarded()
+  expect(await screen.findByRole('heading', { name: 'Nexus verrouillé' })).toBeInTheDocument()
+
+  act(() => {
+    window.localStorage.setItem('nexus.token', TOKEN)
+    window.dispatchEvent(new StorageEvent('storage', { key: 'nexus.token', newValue: TOKEN }))
+  })
+
+  expect(await screen.findByRole('heading', { name: 'Travail' })).toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: 'Nexus verrouillé' })).toBeNull()
 })

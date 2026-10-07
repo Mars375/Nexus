@@ -7,6 +7,7 @@ import {
   isTokenFormat,
   markLocked,
   markUnlocked,
+  onUnlockedElsewhere,
   setToken,
   subscribe,
 } from './auth'
@@ -112,4 +113,43 @@ test("le jeton n'est jamais journalisé", () => {
   markLocked('invalid_token')
   clearToken()
   for (const spy of spies) expect(spy).not.toHaveBeenCalled()
+})
+
+function storageEvent(newValue: string | null) {
+  window.dispatchEvent(new StorageEvent('storage', { key: TOKEN_KEY, newValue }))
+}
+
+test('un jeton bien formé arrivé d’un autre onglet déverrouille cet onglet et prévient les vues', () => {
+  const unlocked = vi.fn()
+  const off = onUnlockedElsewhere(unlocked)
+  markLocked('invalid_token')
+
+  storageEvent(TOKEN)
+
+  expect(getAuthState().locked).toBe(false)
+  expect(unlocked).toHaveBeenCalledTimes(1)
+  off()
+})
+
+test('d’un autre onglet, une valeur mal formée ou un oubli ne déverrouille pas', () => {
+  const unlocked = vi.fn()
+  const off = onUnlockedElsewhere(unlocked)
+  markLocked('auth_required')
+
+  storageEvent('pas-un-jeton')
+  storageEvent(null)
+
+  expect(getAuthState().locked).toBe(true)
+  expect(unlocked).not.toHaveBeenCalled()
+  off()
+})
+
+test('un jeton venu d’un autre onglet ne prévient personne quand cet onglet n’est pas verrouillé', () => {
+  const unlocked = vi.fn()
+  const off = onUnlockedElsewhere(unlocked)
+
+  storageEvent(TOKEN)
+
+  expect(unlocked).not.toHaveBeenCalled()
+  off()
 })

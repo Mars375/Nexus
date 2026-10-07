@@ -1,7 +1,7 @@
 // Constantes partagées par playwright.config.ts, le setup global et les specs.
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 
 export const API_PORT = '8799'
 export const WEB_PORT = 5199
@@ -15,8 +15,15 @@ export const TOKEN_KEY = 'nexus.token'
  * retrouvent au lieu d'en créer une autre.
  */
 export function dataDirPath(): string {
-  process.env.NEXUS_E2E_DATA_DIR ??= mkdtempSync(join(tmpdir(), 'nexus-e2e-'))
-  return process.env.NEXUS_E2E_DATA_DIR
+  // An inherited value is trusted only if it is one of our throwaway directories: directly under
+  // the OS temp dir, named `nexus-e2e-*`. Anything else (a real data dir) is replaced.
+  const inherited = process.env.NEXUS_E2E_DATA_DIR
+  const ours =
+    inherited !== undefined &&
+    resolve(dirname(resolve(inherited))) === resolve(tmpdir()) &&
+    basename(resolve(inherited)).startsWith('nexus-e2e-')
+  if (!ours) process.env.NEXUS_E2E_DATA_DIR = mkdtempSync(join(tmpdir(), 'nexus-e2e-'))
+  return process.env.NEXUS_E2E_DATA_DIR as string
 }
 
 export const storageStatePath = (): string => join(dataDirPath(), 'storage-state.json')

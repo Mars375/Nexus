@@ -93,10 +93,24 @@ export function subscribe(listener: () => void): () => void {
   }
 }
 
-// Another tab stored or forgot the token: follow it.
+const unlockedElsewhere = new Set<() => void>()
+
+/** Calls `listener` when another tab stored a token while this tab was locked; returns the unsubscribe function. */
+export function onUnlockedElsewhere(listener: () => void): () => void {
+  unlockedElsewhere.add(listener)
+  return () => {
+    unlockedElsewhere.delete(listener)
+  }
+}
+
+// Another tab stored or forgot the token: follow it. A well-formed token arriving while locked unlocks this tab too.
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', (event) => {
-    if (event.key === null || event.key === TOKEN_KEY) refresh()
+    if (event.key !== null && event.key !== TOKEN_KEY) return
+    const unlock = state.locked && isTokenFormat(event.newValue)
+    if (unlock) markUnlocked()
+    else refresh()
+    if (unlock) for (const listener of [...unlockedElsewhere]) listener()
   })
 }
 

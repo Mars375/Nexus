@@ -11,18 +11,18 @@ function reasonText(reason: string | null): string | null {
     case null:
       return null
     case 'auth_required':
-      return 'Nexus demande un jeton pour répondre.'
+      return 'Nexus exige un jeton d’accès pour répondre.'
     case 'invalid_token':
       return 'Nexus a refusé le jeton enregistré (inconnu ou révoqué). Il a été oublié : saisis-en un nouveau.'
     default:
-      return 'Nexus a refusé l’accès (401).'
+      return 'L’accès a été refusé (401).'
   }
 }
 
 function validate(value: string): string | null {
   if (value === '') return `${FIELD} : le champ est obligatoire.`
   if (!isTokenFormat(value)) {
-    return `${FIELD} : format invalide. Un jeton commence par « nxt_ » suivi de 43 caractères (lettres, chiffres, « - » ou « _ »).`
+    return `${FIELD} : format invalide. Un jeton commence par nxt_, suivi de 43 lettres, chiffres, tirets (-) ou tirets bas (_).`
   }
   return null
 }
@@ -58,23 +58,26 @@ export function LockScreen() {
 
   const why = reasonText(lockReason)
   return (
-    <main className="orbital grid h-full place-items-center overflow-auto bg-paper p-4 font-orbital text-ink">
+    <main
+      className="orbital fixed inset-0 z-[1000] grid place-items-center overflow-auto bg-paper p-4 font-orbital text-ink"
+    >
       <form
         onSubmit={submit}
         noValidate
         aria-labelledby="lock-title"
-        className="grid w-[min(26rem,100%)] gap-4 rounded-sm border border-line-strong bg-surface p-6"
+        className="grid w-[min(26rem,100%)] grid-cols-[minmax(0,1fr)] gap-4 rounded-sm border border-line-strong bg-surface p-4 sm:p-6"
       >
         <h1 id="lock-title" className="m-0 font-orbital-display text-2xl font-semibold uppercase tracking-[0.12em]">
           Nexus verrouillé
         </h1>
         {why && <p role="status" className="m-0 text-sm text-attention">{why}</p>}
         <p className="m-0 text-sm text-muted">
-          Pour obtenir un jeton d’accès sur ce poste, lance{' '}
-          <code className="font-data text-xs text-ink">nexus-token issue loic --label navigateur</code>{' '}
+          Pour obtenir un jeton d’accès sur ce poste, lance
+          <code className="my-1 block overflow-x-auto whitespace-nowrap rounded-sm bg-sunken px-2 py-1.5 font-data text-[11px] text-ink sm:text-xs">nexus-token issue loic --label navigateur</code>
           puis colle ici le jeton affiché. Il reste dans ce navigateur et n’est jamais réaffiché.
         </p>
         <Field label={FIELD}>
+          {/* type=password keeps the token masked on screen; autocomplete=off because it is not a login (there is no username), so browsers should not offer to save it. Some password managers prompt anyway: accepted. */}
           <input
             ref={inputRef}
             type="password"

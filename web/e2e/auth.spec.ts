@@ -76,7 +76,9 @@ test.describe('sans jeton stocké', () => {
     const seen = await requireToken(page)
     await page.goto('/#/travail')
     await expect(lockTitle(page)).toBeVisible()
-    const before = seen.length
+    // The app stays mounted under the lock screen and may keep polling (without a token): only a request carrying one would be a leak.
+    const sentWithToken = () => seen.filter((auth) => auth !== undefined).length
+    const before = sentWithToken()
 
     await tokenField(page).fill('trop-court-CONFIDENTIEL')
     await page.keyboard.press('Enter')
@@ -86,7 +88,7 @@ test.describe('sans jeton stocké', () => {
     await expect(alert).not.toContainText('CONFIDENTIEL')
     await expect(tokenField(page)).toHaveAttribute('aria-invalid', 'true')
     expect(await stored(page)).toBeNull()
-    expect(seen.length).toBe(before) // nothing was sent to the API
+    expect(sentWithToken()).toBe(before) // the typed value was never sent to the API
   })
 
   test('le vrai jeton déverrouille : les données se relisent avec Authorization et le temps réel est là', async ({ page }) => {
@@ -142,4 +144,39 @@ test('« Oublier le jeton » efface le jeton stocké', async ({ page }) => {
 
   await expect(forget).toHaveCount(0)
   expect(await stored(page)).toBeNull()
+})
+
+test('un 401 pendant une modification verrouille sans perdre le brouillon, et le déverrouillage le rend', async ({ page }) => {
+  await page.goto('/#/travail')
+  const title = 'Brouillon sous verrou'
+  await page.getByRole('button', { name: 'Nouvelle tâche' }).first().click()
+  const dialog = page.getByRole('dialog', { name: 'Nouvelle tâche' })
+  await dialog.getByLabel('Titre').fill(title)
+  await dialog.getByLabel('Objectif').fill('Vérifier que le verrou garde le brouillon')
+  await dialog.getByRole('button', { name: 'Créer la tâche' }).click()
+  await expect(dialog).toBeHidden()
+
+  await page.getByRole('button', { name: new RegExp(`^${title} —`) }).click()
+  const pane = page.getByRole('complementary', { name: new RegExp(`Détail de ${title}`) })
+  await pane.getByLabel('Titre').fill(`${title} (modifié)`)
+
+  await page.route(
+    (url) => url.pathname.startsWith('/api/tasks/'),
+    (route) => (route.request().method() === 'PATCH' ? refuse(route, 'invalid_token') : route.fallback()),
+  )
+  await pane.getByRole('button', { name: 'Enregistrer' }).click()
+
+  await expect(lockTitle(page)).toBeVisible()
+  await expect(tokenField(page)).toBeFocused()
+  // The app is still there, under the lock screen, but inert and hidden from assistive technology.
+  await expect(page.locator('[inert][aria-hidden="true"]')).toHaveCount(1)
+  await expect(page.getByRole('navigation', { name: 'Vues' })).toHaveCount(0)
+
+  await page.unroute((url) => url.pathname.startsWith('/api/tasks/'))
+  await tokenField(page).fill(TOKEN)
+  await page.getByRole('button', { name: 'Déverrouiller' }).click()
+
+  await expect(lockTitle(page)).toHaveCount(0)
+  await expect(page.locator('[inert]')).toHaveCount(0)
+  await expect(pane.getByLabel('Titre')).toHaveValue(`${title} (modifié)`)
 })

@@ -35,12 +35,13 @@ test('la consigne montre la commande qui émet un jeton', () => {
   renderLock()
   expect(screen.getByText('nexus-token issue loic --label navigateur')).toBeInTheDocument()
   expect(screen.getByText('nexus-token issue loic --label navigateur').tagName).toBe('CODE')
+  expect(screen.getByText('nexus-token issue loic --label navigateur')).toHaveClass('whitespace-nowrap')
 })
 
 test.each([
-  ['auth_required', /demande un jeton/],
+  ['auth_required', /exige un jeton d’accès/],
   ['invalid_token', /refusé le jeton/],
-  ['http_401', /refusé l’accès/],
+  ['http_401', /L’accès a été refusé \(401\)/],
 ])('le motif %s est expliqué', (reason, text) => {
   markLocked(reason)
   renderLock()
@@ -57,7 +58,9 @@ test('un champ vide ou mal formé affiche une erreur qui nomme le champ sans rec
   fireEvent.change(input(), { target: { value: secret } })
   fireEvent.click(screen.getByRole('button', { name: 'Déverrouiller' }))
   const alert = screen.getByRole('alert')
-  expect(alert).toHaveTextContent('Jeton d’accès : format invalide')
+  expect(alert).toHaveTextContent(
+    'Jeton d’accès : format invalide. Un jeton commence par nxt_, suivi de 43 lettres, chiffres, tirets (-) ou tirets bas (_).',
+  )
   expect(alert.textContent).not.toContain('SECRET')
   expect(input()).toHaveAttribute('aria-invalid', 'true')
   expect(input()).toHaveAccessibleDescription(/format invalide/)
