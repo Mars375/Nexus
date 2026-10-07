@@ -80,7 +80,14 @@ describe('orbital theme: contrast (WCAG 2.x)', () => {
   it('text on an ask card (attention-soft over every surface) is at least 4.5:1', () => {
     for (const surface of surfaces) {
       const card = colour('attention-soft', colour(surface))
-      for (const text of ['ink', 'muted', 'attention']) expect(ratio(colour(text), card), `${text}/${surface}`).toBeGreaterThanOrEqual(4.5)
+      for (const text of ['ink', 'muted', 'attention', 'danger']) expect(ratio(colour(text), card), `${text}/${surface}`).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
+  it('text on the peak of the new-ask flash (attention at 16%) is at least 4.5:1', () => {
+    for (const surface of surfaces) {
+      const peak = over([251, 146, 60, 0.16], colour(surface))
+      for (const text of ['ink', 'muted', 'attention', 'danger']) expect(ratio(colour(text), peak), `${text}/${surface}`).toBeGreaterThanOrEqual(4.5)
     }
   })
 

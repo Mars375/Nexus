@@ -25,8 +25,8 @@ export default defineConfig({
     { name: 'work', testMatch: /work.spec.ts/ },
     { name: 'now', testMatch: /now.spec.ts/, dependencies: ['work'] },
     // approvals.spec crée ses propres demandes (sujets uniques) : il ne dépend d'aucune donnée des autres.
-    { name: 'approvals', testMatch: /approvals.spec.ts/, dependencies: ['now'] },
-    { name: 'visuals', testMatch: /visuals.spec.ts/, dependencies: ['approvals'] },
+    { name: 'approvals', testMatch: /approvals.spec.ts/, dependencies: ['work'] },
+    { name: 'visuals', testMatch: /visuals.spec.ts/, dependencies: ['now'] },
   ],
   webServer: [
     {

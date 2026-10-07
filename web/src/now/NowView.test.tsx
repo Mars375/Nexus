@@ -48,7 +48,7 @@ test('les tuiles ne sont que des comptes mesurés', async () => {
     asks: [{ event: 'nx-evt-1', agent: 'mnema', kind: 'question', subject: 'Python ?', task: null, at: new Date().toISOString(), received_at: new Date().toISOString(), body: null, options: [], consequence: null, approval: approval() }],
   }); show()
   expect(await screen.findByRole('group', { name: 'Agents actifs' })).toHaveTextContent('1')
-  expect(screen.getByRole('group', { name: 'Demandes reçues' })).toHaveTextContent('1')
+  expect(screen.getByRole('group', { name: 'Demandes en attente' })).toHaveTextContent('1')
   expect(screen.getByRole('group', { name: 'Blocages' })).toHaveTextContent('0')
 })
 
@@ -56,7 +56,7 @@ test('une demande sans approbation ne se dit jamais « en attente »', async () 
   serve({ ...empty, asks: [ask({ task: 'nx-task-32', approval: null })] }); show()
   expect(await screen.findByText('Python ?')).toBeInTheDocument()
   expect(screen.getByText(/Question de Mnema/)).toBeInTheDocument()
-  expect(screen.getByText('suivi indisponible (demande antérieure)')).toBeInTheDocument()
+  expect(screen.getByText('sans suivi d\'approbation (demande antérieure au suivi)')).toBeInTheDocument()
   expect(document.querySelector('[data-chip="pending"]')).toBeNull()
 })
 

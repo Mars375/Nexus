@@ -17,13 +17,13 @@ const needsHuman = (over: Partial<NowAsk> = {}): NowAsk => ask({
 })
 
 type Post = { url: string; body: Record<string, unknown> }
-type Server = { now: NowSnapshot; posts: Post[]; nowReads: number; reply: (post: Post) => Response | Promise<Response> }
+type Server = { now: NowSnapshot; posts: Post[]; nowReads: number; failNow: boolean; reply: (post: Post) => Response | Promise<Response> }
 
 const ok = () => Response.json({ ok: true })
 const refusal = (code: string, message: string, status = 409) => Response.json({ detail: { code, message } }, { status })
 
 function serve(asks: NowAsk[]): Server {
-  const srv: Server = { now: { ...empty, asks }, posts: [], nowReads: 0, reply: ok }
+  const srv: Server = { now: { ...empty, asks }, posts: [], nowReads: 0, failNow: false, reply: ok }
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     if (url === '/api/nodes') return Response.json([])
     if (init?.method === 'POST') {
@@ -32,6 +32,7 @@ function serve(asks: NowAsk[]): Server {
       return srv.reply(post)
     }
     srv.nowReads += 1
+    if (srv.failNow) return new Response('', { status: 500 })
     return Response.json(srv.now)
   }))
   return srv
@@ -56,12 +57,22 @@ afterEach(() => vi.unstubAllGlobals())
 
 // --- state chips -------------------------------------------------------------------------------
 
-test('une demande sans approbation est « suivi indisponible » et jamais « en attente »', async () => {
+test('une demande sans approbation d\'avant le suivi ne se dit jamais « en attente » ni « à toi-même »', async () => {
   serve([ask({ approval: null })]); show()
   await screen.findByText('Python ?')
-  expect(screen.getByText('suivi indisponible (demande antérieure)')).toBeInTheDocument()
-  expect(within(panel()).queryByText(/en attente/i)).toBeNull()
+  expect(screen.getByText('sans suivi d\'approbation (demande antérieure au suivi)')).toBeInTheDocument()
+  expect(within(panel()).queryByText(/en attente/i, { selector: '[data-chip]' })).toBeNull()
+  expect(within(panel()).queryByText(/toi-même/)).toBeNull()
   expect(document.querySelector('[data-chip="pending"]')).toBeNull()
+})
+
+test('une demande que Loïc s\'adresse à lui seul n\'est pas dite « antérieure »', async () => {
+  serve([ask({ agent: 'loic', approval: null })]); show()
+  await screen.findByText('Python ?')
+  expect(screen.getByText('demande que tu t\'adresses à toi-même : rien à décider ici')).toBeInTheDocument()
+  expect(within(panel()).queryByText(/antérieure/)).toBeNull()
+  expect(document.querySelector('[data-chip="pending"]')).toBeNull()
+  expect(screen.queryByRole('textbox')).toBeNull()
 })
 
 test('« en attente » seulement pour une approbation pending, gris pour les demandes traitées', async () => {
@@ -296,12 +307,91 @@ test('expirée entre-temps : bandeau, brouillon visible, envoi bloqué', async (
   expect(screen.getByRole('button', { name: 'Refuser' })).toBeDisabled()
 })
 
-test('une demande expirée n\'a aucun bouton actif', async () => {
-  serve([ask({ options: ['3.12'], approval: approval({ status: 'expired', expires_at: new Date(Date.now() - 1000).toISOString() }) })]); show()
+test('une demande expirée sans brouillon dit son échéance, sans formulaire', async () => {
+  const expires = new Date(Date.now() - 3_600_000).toISOString()
+  serve([ask({ options: ['3.12'], approval: approval({ status: 'expired', expires_at: expires }) })]); show()
   await open()
-  expect(screen.getByRole('button', { name: 'Répondre' })).toBeDisabled()
-  expect(screen.getByRole('button', { name: '3.12' })).toBeDisabled()
-  expect(screen.getByRole('textbox', { name: 'Ta réponse' })).toBeDisabled()
+  expect(screen.getByText((t) => t.startsWith(`Expirée le ${formatDateTime(expires)}`))).toBeInTheDocument()
+  expect(screen.queryByRole('textbox')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Répondre' })).toBeNull()
+  expect(screen.queryByRole('button', { name: '3.12' })).toBeNull()
+})
+
+test('l\'échéance n\'est jamais annoncée pour une demande traitée', async () => {
+  serve([ask({ approval: approval({ status: 'answered', expires_at: hoursFromNow(3), decided_by: 'loic', decided_at: new Date().toISOString() }) })]); show()
+  await screen.findByText('Python ?')
+  expect(screen.queryByText(/expire/)).toBeNull()
+})
+
+test('le brouillon d\'une demande traitée ailleurs est copiable, en lecture seule, et s\'efface', async () => {
+  const srv = serve([ask()]); const client = show()
+  await open()
+  fireEvent.change(screen.getByRole('textbox', { name: 'Ta réponse' }), { target: { value: 'Ma réponse' } })
+  srv.now = { ...srv.now, asks: [ask({ approval: approval({ status: 'answered', decided_by: 'loic', decided_at: new Date().toISOString() }) })] }
+  await refetch(client)
+  const box = await screen.findByRole('textbox', { name: 'Ta réponse' })
+  expect(box).toHaveAttribute('readonly')
+  expect(box).not.toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Effacer le brouillon' }))
+  expect(screen.queryByRole('textbox')).toBeNull()
+  expect(screen.queryByText(/entre-temps/)).toBeNull()
+})
+
+test('un envoi sans réponse du serveur relit Maintenant et n\'affirme pas que rien n\'est parti', async () => {
+  const srv = serve([ask()]); show()
+  await open()
+  fireEvent.change(screen.getByRole('textbox', { name: 'Ta réponse' }), { target: { value: 'Ma réponse' } })
+  const reads = srv.nowReads
+  srv.reply = () => {
+    // the server committed, the answer was lost on the way
+    srv.now = { ...srv.now, asks: [ask({ approval: approval({ status: 'answered', decided_by: 'loic', decided_at: new Date().toISOString() }) })] }
+    throw new TypeError('Failed to fetch')
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'Répondre' }))
+  expect(await screen.findByText(/Traitée entre-temps par Loïc : l'envoi n'a pas eu de réponse, vérifie que c'est bien ta réponse/)).toBeInTheDocument()
+  expect(srv.nowReads).toBeGreaterThan(reads)
+  expect(screen.queryByText(/n'a pas été envoyée/)).toBeNull()
+})
+
+test('tout refus du serveur relit Maintenant, même un conflit de version', async () => {
+  const srv = serve([ask()]); show()
+  await open()
+  fireEvent.change(screen.getByRole('textbox', { name: 'Ta réponse' }), { target: { value: 'Ma réponse' } })
+  srv.reply = () => refusal('approval_concurrent_update', 'la demande change sans cesse : relis et réessaie')
+  const reads = srv.nowReads
+  fireEvent.click(screen.getByRole('button', { name: 'Répondre' }))
+  await screen.findByRole('alert')
+  await waitFor(() => expect(srv.nowReads).toBeGreaterThan(reads))
+})
+
+test('« Réponse envoyée. » reste affiché après un succès, même si la relecture échoue', async () => {
+  const srv = serve([ask()]); show()
+  await open()
+  fireEvent.change(screen.getByRole('textbox', { name: 'Ta réponse' }), { target: { value: 'Ma réponse' } })
+  srv.reply = () => { srv.failNow = true; return ok() }
+  fireEvent.click(screen.getByRole('button', { name: 'Répondre' }))
+  expect(await screen.findByText('Réponse envoyée.')).toBeInTheDocument()
+  expect(screen.queryByRole('textbox')).toBeNull()
+})
+
+test('le focus va à l\'alerte après une erreur et au message d\'état après un succès', async () => {
+  const srv = serve([ask(), needsHuman({ options: [] })]); show()
+  await open('Python ?'); await open('Publier la v2 ?')
+  fireEvent.change(screen.getByRole('textbox', { name: 'Ta réponse' }), { target: { value: 'abc' } })
+  srv.reply = () => refusal('answer_required', 'text : la réponse est vide')
+  fireEvent.click(screen.getByRole('button', { name: 'Répondre' }))
+  const alert = await screen.findByRole('alert')
+  await waitFor(() => expect(alert).toHaveFocus())
+  srv.reply = ok
+  fireEvent.click(screen.getByRole('button', { name: 'Répondre' }))
+  const done = await screen.findByText('Réponse envoyée.')
+  await waitFor(() => expect(done).toHaveFocus())
+})
+
+test('une région live est toujours montée dans la carte, même repliée', async () => {
+  serve([ask()]); show()
+  await screen.findByText('Python ?')
+  expect(document.querySelector('article[data-ask] [aria-live="polite"]')).not.toBeNull()
 })
 
 test('409 déjà traitée : la demande est relue et le bandeau apparaît, la saisie reste', async () => {
@@ -335,12 +425,12 @@ test('la tuile ne compte que les demandes en attente', async () => {
     ask({ event: 'nx-evt-3', approval: null }),
     ask({ event: 'nx-evt-4', approval: approval({ ref: 'nx-appr-4', status: 'expired' }) }),
   ]); show()
-  expect(await screen.findByRole('group', { name: 'Demandes reçues' })).toHaveTextContent('1')
+  expect(await screen.findByRole('group', { name: 'Demandes en attente' })).toHaveTextContent('1')
 })
 
 test('sans demande en attente la tuile dit 0 et n\'est pas orange', async () => {
   serve([ask({ approval: null })]); show()
-  const tile = await screen.findByRole('group', { name: 'Demandes reçues' })
+  const tile = await screen.findByRole('group', { name: 'Demandes en attente' })
   expect(tile).toHaveTextContent('0')
   expect(tile.innerHTML).not.toContain('text-attention')
 })

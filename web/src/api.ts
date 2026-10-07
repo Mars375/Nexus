@@ -206,7 +206,7 @@ export type NowAgent = {
 /** `expired` is computed by the server at read time, never stored (ADR-019, D4). */
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'answered' | 'expired'
 
-/** Decision state of an ask; `null` on an ask is a request from before migration 0004 (D6). */
+/** Decision state of an ask. `null` on an ask: published before migration 0004 (D6), or addressed by Loïc to himself (no approval is opened). */
 export type NowApproval = {
   ref: string
   status: ApprovalStatus

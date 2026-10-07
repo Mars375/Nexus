@@ -7,12 +7,12 @@ type Published = { event: string; approval: string; subject: string }
 
 /** An agent publishes a request for Loïc through the API (the actor header must match the body). */
 async function publish(
-  request: APIRequestContext, actor: string, kind: 'question' | 'needs_human', slug: string, payload: Record<string, unknown>,
+  request: APIRequestContext, actor: string, kind: 'question' | 'needs_human', slug: string, payload: Record<string, unknown>, text?: string,
 ): Promise<Published> {
   const subject = `${slug} ${RUN}`
   const res = await request.post(`${API}/api/events`, {
     headers: { 'X-Nexus-Actor': actor },
-    data: { id: `evt_appr_${slug}_${RUN}`.replace(/\W/g, '_'), at: new Date().toISOString(), actor, kind, subject, needs: ['loic'], payload },
+    data: { id: `evt_appr_${slug}_${RUN}`.replace(/\W/g, '_'), at: new Date().toISOString(), actor, kind, subject, needs: ['loic'], payload, ...(text && { body: text }) },
   })
   expect(res.ok(), await res.text()).toBeTruthy()
   const body = await res.json()
@@ -127,27 +127,59 @@ test('une demande traitée ailleurs pendant la saisie : bandeau, saisie gardée'
 })
 
 test('un agent publie une autre demande sous les yeux de Loïc : la saisie en cours reste', async ({ page, request }) => {
-  test.setTimeout(60_000)
   const first = await publish(request, 'mnema', 'question', 'saisie-en-cours', {})
   const c = await openCard(page, first)
   await c.getByRole('textbox', { name: 'Ta réponse' }).fill('Je suis en train d\'écrire')
+  const reread = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/now' && r.ok())
   const second = await publish(request, 'helios', 'question', 'nouvelle-demande', {})
-  await expect(card(page, second)).toBeVisible({ timeout: 2_000 }) // arrives by the live channel
+  await reread // the live channel makes the page read Maintenant again
+  await expect(card(page, second)).toBeVisible()
   await expect(c.getByRole('textbox', { name: 'Ta réponse' })).toHaveValue('Je suis en train d\'écrire')
-  // and again after the periodic read
-  await page.waitForTimeout(10_500)
-  await expect(c.getByRole('textbox', { name: 'Ta réponse' })).toHaveValue('Je suis en train d\'écrire')
+  await expect(c.getByText('Traitée entre-temps')).toHaveCount(0)
 })
 
-test('une demande expirée ne peut plus être traitée', async ({ page, request }) => {
-  test.setTimeout(120_000)
-  const soon = new Date(Date.now() + 61_000).toISOString() // the server refuses less than a minute
-  const ask = await publish(request, 'helios', 'needs_human', 'expire-vite', { ...validation, expires_at: soon })
+test('une demande qui expire pendant la saisie : bandeau, brouillon gardé, envoi bloqué', async ({ page, request }) => {
+  // The server refuses a deadline under one minute: the clock is not waited for, the read is rewritten.
+  const ask = await publish(request, 'helios', 'needs_human', 'expire-vite', { ...validation, expires_at: new Date(Date.now() + 65_000).toISOString() })
   const c = await openCard(page, ask)
   await expect(c.getByText(/^expire dans/)).toBeVisible()
   await c.getByRole('radio', { name: 'Avec la vidéo' }).check()
-  await expect(c.getByText('expirée', { exact: true })).toBeVisible({ timeout: 80_000 })
+  await page.route('**/api/now', async (route) => {
+    const res = await route.fetch()
+    const body = await res.json()
+    for (const a of body.asks) {
+      if (a.event === ask.event) a.approval = { ...a.approval, status: 'expired', expires_at: new Date(Date.now() - 60_000).toISOString() }
+    }
+    await route.fulfill({ response: res, json: body })
+  })
+  await publish(request, 'mnema', 'question', 'declencheur-relecture', {}) // live message: Maintenant is read again
   await expect(c.getByText('Expirée entre-temps : ta décision n\'a pas été envoyée')).toBeVisible()
+  await expect(c.getByRole('radio', { name: 'Avec la vidéo' })).toBeChecked()
   await expect(c.getByRole('button', { name: 'Valider', exact: true })).toBeDisabled()
-  expect((await read(request, ask.approval)).status).toBe('expired')
+  await expect(c.getByRole('button', { name: 'Refuser', exact: true })).toBeDisabled()
+  expect((await read(request, ask.approval)).status).toBe('pending') // only the page's read was rewritten
+})
+
+test('un texte d\'agent sans coupure ne fait déborder ni la carte ni le panneau', async ({ page, request }) => {
+  const url = 'https://exemple.test/' + 'a'.repeat(99) // 120 characters, no space
+  const body = 'b'.repeat(300)
+  const long = await publish(request, 'helios', 'needs_human', 'texte-long', { consequence: 'c'.repeat(200), options: [url, 'Court'] }, body)
+  const question = await publish(request, 'mnema', 'question', 'texte-long-question', { options: [url] }, body)
+  for (const width of [1440, 1100, 760]) {
+    await page.setViewportSize({ width, height: 1200 })
+    for (const ask of [long, question]) {
+      await page.goto('about:blank') // a fresh page: the card starts folded
+      const c = await openCard(page, ask)
+      await expect(c.getByRole('textbox').first()).toBeVisible()
+      const m = await page.evaluate((id) => {
+        const el = document.querySelector(`[data-ask="${id}"]`)!
+        const aside = el.closest('aside')!
+        const root = document.scrollingElement!
+        return { card: [el.scrollWidth, el.clientWidth], aside: [aside.scrollWidth, aside.clientWidth], page: [root.scrollWidth, root.clientWidth] }
+      }, ask.event)
+      expect(m.card[0], `carte à ${width} px`).toBeLessThanOrEqual(m.card[1])
+      expect(m.aside[0], `panneau à ${width} px`).toBeLessThanOrEqual(m.aside[1])
+      expect(m.page[0], `page à ${width} px`).toBeLessThanOrEqual(m.page[1])
+    }
+  }
 })

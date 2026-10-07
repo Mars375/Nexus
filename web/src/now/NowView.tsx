@@ -88,7 +88,7 @@ export function NowView() {
         <Heading>Système</Heading>
         <div className="grid grid-cols-2 gap-2">
           <Tile label="Agents actifs" value={active} tone={active > 0 ? 'text-run' : undefined} />
-          <Tile label="Demandes reçues" value={waiting} tone={waiting ? 'text-attention' : undefined} />
+          <Tile label="Demandes en attente" value={waiting} tone={waiting ? 'text-attention' : undefined} />
           <Tile label="Blocages" value={s.blocks.length} tone={s.blocks.length ? 'text-danger' : undefined} />
           <Tile label="Nœuds en ligne" value={nodesTile} />
         </div>
