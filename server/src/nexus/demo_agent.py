@@ -112,7 +112,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 def _open(request: urllib.request.Request, timeout: float):
     # An `http_proxy` would carry the request, token included, in clear: plain HTTP goes
     # direct. HTTPS may still use `https_proxy`, whose CONNECT tunnel stays encrypted.
-    proxies = {k: v for k, v in urllib.request.getproxies().items() if k != "http"}
+    proxies = {k: v for k, v in urllib.request.getproxies().items() if k.lower() != "http"}
     opener = urllib.request.build_opener(_NoRedirect, urllib.request.ProxyHandler(proxies))
     return opener.open(request, timeout=timeout)
 

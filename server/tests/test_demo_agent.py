@@ -436,9 +436,14 @@ def test_an_unparsable_base_with_a_token_is_a_usage_error(wire, monkeypatch, cap
     assert TOKEN not in capsys.readouterr().err
 
 
-def test_an_http_proxy_never_sees_the_token(monkeypatch):
-    """`http_proxy` would carry the request, token included, in clear: plain HTTP goes direct."""
+def test_an_http_proxy_never_sees_the_token():
+    """`http_proxy` would carry the request, token included, in clear: plain HTTP goes direct.
+
+    Run in a subprocess so the proxy variables exist before `nexus.demo_agent` is imported."""
     import http.server
+    import os
+    import subprocess
+    import sys
     import threading
 
     proxied, direct = [], []
@@ -460,15 +465,20 @@ def test_an_http_proxy_never_sees_the_token(monkeypatch):
     nexus = http.server.HTTPServer(("127.0.0.1", 0), recorder(direct))
     for server in (proxy, nexus):
         threading.Thread(target=server.serve_forever, daemon=True).start()
-    monkeypatch.setenv("http_proxy", f"http://127.0.0.1:{proxy.server_port}")
-    monkeypatch.setenv("no_proxy", "")
-    monkeypatch.setenv("NEXUS_TOKEN", TOKEN)
+    env = {k: v for k, v in os.environ.items() if "proxy" not in k.lower()}
+    env |= {"http_proxy": f"http://127.0.0.1:{proxy.server_port}", "no_proxy": "",
+            "NEXUS_TOKEN": TOKEN}
     try:
-        with pytest.raises(SystemExit):
-            run("nx-task-1", "--base", f"http://127.0.0.1:{nexus.server_port}")
+        done = subprocess.run(
+            [sys.executable, "-m", "nexus.demo_agent", "--task", "nx-task-1",
+             "--base", f"http://127.0.0.1:{nexus.server_port}"],
+            env=env, capture_output=True, text=True, timeout=30,
+        )
     finally:
         proxy.shutdown()
         nexus.shutdown()
 
+    assert done.returncode != 0  # the stub answers 500
     assert proxied == []
     assert direct == [f"Bearer {TOKEN}"]
+    assert TOKEN not in done.stdout + done.stderr
