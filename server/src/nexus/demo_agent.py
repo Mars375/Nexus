@@ -109,11 +109,12 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None  # the 3xx then surfaces as an HTTPError
 
 
-_OPENER = urllib.request.build_opener(_NoRedirect)
-
-
 def _open(request: urllib.request.Request, timeout: float):
-    return _OPENER.open(request, timeout=timeout)
+    # An `http_proxy` would carry the request, token included, in clear: plain HTTP goes
+    # direct. HTTPS may still use `https_proxy`, whose CONNECT tunnel stays encrypted.
+    proxies = {k: v for k, v in urllib.request.getproxies().items() if k != "http"}
+    opener = urllib.request.build_opener(_NoRedirect, urllib.request.ProxyHandler(proxies))
+    return opener.open(request, timeout=timeout)
 
 
 def call(base: str, method: str, path: str, body: dict | None = None) -> dict:

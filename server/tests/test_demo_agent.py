@@ -434,3 +434,41 @@ def test_an_unparsable_base_with_a_token_is_a_usage_error(wire, monkeypatch, cap
 
     assert exc.value.code == 2 and wire == []
     assert TOKEN not in capsys.readouterr().err
+
+
+def test_an_http_proxy_never_sees_the_token(monkeypatch):
+    """`http_proxy` would carry the request, token included, in clear: plain HTTP goes direct."""
+    import http.server
+    import threading
+
+    proxied, direct = [], []
+
+    def recorder(seen):
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                seen.append(self.headers.get("Authorization"))
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(b'{"detail": "stop"}')
+
+            def log_message(self, *args):
+                pass
+
+        return Handler
+
+    proxy = http.server.HTTPServer(("127.0.0.1", 0), recorder(proxied))
+    nexus = http.server.HTTPServer(("127.0.0.1", 0), recorder(direct))
+    for server in (proxy, nexus):
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setenv("http_proxy", f"http://127.0.0.1:{proxy.server_port}")
+    monkeypatch.setenv("no_proxy", "")
+    monkeypatch.setenv("NEXUS_TOKEN", TOKEN)
+    try:
+        with pytest.raises(SystemExit):
+            run("nx-task-1", "--base", f"http://127.0.0.1:{nexus.server_port}")
+    finally:
+        proxy.shutdown()
+        nexus.shutdown()
+
+    assert proxied == []
+    assert direct == [f"Bearer {TOKEN}"]
