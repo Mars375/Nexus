@@ -26,6 +26,12 @@ def task(client):
     return client.post("/api/tasks", json={"title": "Pont", "objective": "Lire"}).json()["id"]
 
 
+@pytest.fixture(autouse=True)
+def _no_developer_token(monkeypatch):
+    """The developer's own NEXUS_TOKEN must not leak into the agent under test."""
+    monkeypatch.delenv("NEXUS_TOKEN", raising=False)
+
+
 def run(*argv, **kwargs):
     return demo_agent.main(["--task", *argv], **kwargs)
 
