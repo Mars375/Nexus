@@ -4,9 +4,20 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import (
+    JSON,
+    CheckConstraint,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
+from nexus.actors import ACTORS
 from nexus.db import AwareDateTime, Base
 
 
@@ -166,3 +177,30 @@ class Approval(Base):
     @property
     def ref(self) -> str:
         return f"nx-appr-{self.id}"
+
+
+class ActorToken(Base):
+    """Bearer token of an actor (ADR-020). Only the SHA-256 digest is stored, never the token:
+    the digest cannot authenticate and does not reveal the token (SECURITY §1)."""
+
+    __tablename__ = "actor_tokens"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_actor_tokens_token_hash"),
+        CheckConstraint(
+            "actor IN (" + ", ".join(f"'{a}'" for a in sorted(ACTORS)) + ")",
+            name="ck_actor_tokens_actor",
+        ),
+        CheckConstraint("length(label) BETWEEN 1 AND 64", name="ck_actor_tokens_label"),
+        CheckConstraint("length(token_hash) = 64", name="ck_actor_tokens_token_hash"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    actor: Mapped[str] = mapped_column(String(32))
+    label: Mapped[str] = mapped_column(String(64))
+    token_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(AwareDateTime)
+    revoked_at: Mapped[datetime | None] = mapped_column(AwareDateTime)
+
+    @property
+    def ref(self) -> str:
+        return f"nx-tok-{self.id}"

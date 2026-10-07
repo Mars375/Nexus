@@ -4,3 +4,11 @@
 
 [extend]
 useDefault = true
+
+# Jeton d'acteur Nexus (ADR-020) : `nxt_` suivi de 43 caractères base64url. Les tests le
+# construisent à l'exécution ("nxt_" + "A" * 43), comme les autres faux secrets.
+[[rules]]
+id = "nexus-actor-token"
+description = "Jeton porteur d'acteur Nexus"
+regex = '''nxt_[A-Za-z0-9_-]{43}'''
+keywords = ["nxt_"]

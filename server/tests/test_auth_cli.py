@@ -1,0 +1,120 @@
+"""CLI nexus-token (#16, ADR-020)."""
+
+import re
+import sqlite3
+
+import pytest
+from alembic import command
+
+from nexus import migrate
+from nexus.auth import cli, tokens
+
+TOKEN_RE = re.compile(r"nxt_[A-Za-z0-9_-]{43}")
+
+
+@pytest.fixture
+def env(settings, monkeypatch):
+    monkeypatch.setenv("NEXUS_DATA_DIR", str(settings.data_dir))
+    settings.data_dir.mkdir(parents=True)
+    migrate.upgrade(settings.db_url)
+    return settings
+
+
+def run(capsys, *argv):
+    code = cli.main(list(argv))
+    out = capsys.readouterr()
+    return code, out.out, out.err
+
+
+def test_issue_prints_only_the_token_on_stdout(env, capsys):
+    code, out, err = run(capsys, "issue", "helios", "--label", "poste de Loïc")
+    assert code == 0
+    assert TOKEN_RE.fullmatch(out.strip())
+    assert out.count("\n") == 1
+    assert "nx-tok-1" in err and "helios" in err
+    assert out.strip() not in err  # guidance never repeats the token
+
+
+def test_the_issued_token_is_valid_and_only_its_digest_is_stored(env, capsys):
+    _, out, _ = run(capsys, "issue", "codex", "--label", "cli")
+    token = out.strip()
+    conn = sqlite3.connect(env.db_path)
+    rows = conn.execute("SELECT actor, label, token_hash FROM actor_tokens").fetchall()
+    conn.close()
+    assert rows == [("codex", "cli", tokens.digest(token))]
+    raw = env.db_path.read_bytes()
+    assert token.encode() not in raw
+
+
+def test_list_shows_refs_but_never_token_or_hash(env, capsys):
+    _, t1, _ = run(capsys, "issue", "loic", "--label", "navigateur")
+    _, t2, _ = run(capsys, "issue", "claude", "--label", "session")
+    run(capsys, "revoke", "nx-tok-2")
+    code, out, err = run(capsys, "list")
+    assert code == 0
+    assert "nx-tok-1" in out and "nx-tok-2" in out
+    assert "loic" in out and "navigateur" in out and "claude" in out
+    for token in (t1.strip(), t2.strip()):
+        digest = tokens.digest(token)
+        for secret in (token, token[:8], token[4:12], digest, digest[:8]):
+            assert secret not in out and secret not in err
+    revoked_line = next(line for line in out.splitlines() if "nx-tok-2" in line)
+    active_line = next(line for line in out.splitlines() if "nx-tok-1" in line)
+    assert "révoqué" not in active_line
+    assert re.search(r"\d{4}-\d{2}-\d{2}", revoked_line.split("session")[1].split("  ", 1)[-1])
+
+
+def test_list_when_empty(env, capsys):
+    code, out, _ = run(capsys, "list")
+    assert code == 0 and "aucun" in out.lower()
+
+
+def test_revoke_then_again_is_idempotent(env, capsys):
+    run(capsys, "issue", "loic", "--label", "x")
+    code, _, err = run(capsys, "revoke", "nx-tok-1")
+    assert code == 0 and "révoqué" in err.lower() + _
+    code, out, err = run(capsys, "revoke", "nx-tok-1")
+    assert code == 0
+    assert "déjà" in (out + err)
+
+
+def test_revoke_unknown_or_malformed_ref_is_an_error_that_does_not_echo(env, capsys):
+    for ref in ("nx-tok-99", "3", "ghp_" + "A" * 36, "nx-tok-" + "9" * 5000):
+        code, out, err = run(capsys, "revoke", ref)
+        assert code == 1
+        assert ref not in out + err
+        assert err.strip()
+
+
+def test_issue_refuses_unknown_actor_and_bad_label(env, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["issue", "mallory", "--label", "x"])
+    assert exc.value.code == 2
+    capsys.readouterr()
+    code, out, err = run(capsys, "issue", "loic", "--label", "   ")
+    assert code == 1 and out == "" and err.strip()
+    code, out, err = run(capsys, "issue", "loic", "--label", "ghp_" + "A" * 36)
+    assert code == 1 and out == "" and "ghp_" not in err
+
+
+def test_refuses_a_database_not_at_head_and_does_not_migrate(settings, monkeypatch, capsys):
+    monkeypatch.setenv("NEXUS_DATA_DIR", str(settings.data_dir))
+    settings.data_dir.mkdir(parents=True)
+    command.upgrade(migrate.alembic_config(settings.db_url), "0004")
+    for argv in (["list"], ["issue", "loic", "--label", "x"], ["revoke", "nx-tok-1"]):
+        code, out, err = run(capsys, *argv)
+        assert code == 1 and out == ""
+        assert "Nexus" in err and "démarr" in err
+    conn = sqlite3.connect(settings.db_path)
+    assert conn.execute("SELECT version_num FROM alembic_version").fetchone() == ("0004",)
+    assert "actor_tokens" not in {
+        r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    conn.close()
+
+
+def test_refuses_when_there_is_no_database_and_creates_none(settings, monkeypatch, capsys):
+    monkeypatch.setenv("NEXUS_DATA_DIR", str(settings.data_dir))
+    code, out, err = run(capsys, "list")
+    assert code == 1 and out == "" and "démarr" in err
+    assert not settings.db_path.exists()

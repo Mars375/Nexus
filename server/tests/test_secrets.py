@@ -237,3 +237,12 @@ def test_tuples_are_scanned_like_lists():
     cleaned, found = redact_value({"metadata": ("token=hunter2", "ok")})
     assert "hunter2" not in str(cleaned)
     assert found == ["credential"]
+
+
+def test_actor_token_is_redacted_whatever_its_surroundings():
+    token = "nxt_" + "A" * 43  # construit à l'exécution
+    for text in (f"voici {token} ok", f"x={token}", f"({token})", token + "B" * 5, f"a_{token}"):
+        cleaned, found = redact(text)
+        assert "nxt_" not in cleaned, text
+        assert "actor_token" in found or "credential" in found
+    assert redact("nxt_court")[0] == "nxt_court"
