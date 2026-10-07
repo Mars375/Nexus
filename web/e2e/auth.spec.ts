@@ -89,6 +89,7 @@ test.describe('sans jeton stocké', () => {
     await expect(tokenField(page)).toHaveAttribute('aria-invalid', 'true')
     expect(await stored(page)).toBeNull()
     expect(sentWithToken()).toBe(before) // the typed value was never sent to the API
+    expect(seen.some((auth) => auth?.includes('trop-court-CONFIDENTIEL'))).toBe(false)
   })
 
   test('le vrai jeton déverrouille : les données se relisent avec Authorization et le temps réel est là', async ({ page }) => {
@@ -179,4 +180,35 @@ test('un 401 pendant une modification verrouille sans perdre le brouillon, et le
   await expect(lockTitle(page)).toHaveCount(0)
   await expect(page.locator('[inert]')).toHaveCount(0)
   await expect(pane.getByLabel('Titre')).toHaveValue(`${title} (modifié)`)
+})
+
+test('un 401 pendant « Nouvelle tâche » ferme la modale : le jeton se saisit à la souris, le brouillon revient', async ({ page }) => {
+  await page.goto('/#/travail')
+  await page.getByRole('button', { name: 'Nouvelle tâche' }).first().click()
+  const dialog = page.getByRole('dialog', { name: 'Nouvelle tâche' })
+  await dialog.getByLabel('Titre').fill('Brouillon modale')
+  await dialog.getByLabel('Objectif').fill('Garder le brouillon sous le verrou')
+
+  await page.route(
+    (url) => url.pathname === '/api/tasks',
+    (route) => (route.request().method() === 'POST' ? refuse(route, 'invalid_token') : route.fallback()),
+  )
+  await dialog.getByRole('button', { name: 'Créer la tâche' }).click()
+
+  await expect(lockTitle(page)).toBeVisible()
+  await expect(dialog).toHaveCount(0)
+  await tokenField(page).click() // a real mouse click: the page must not be under pointer-events: none
+  await page.keyboard.type('texte-tape')
+  await expect(tokenField(page)).toHaveValue('texte-tape')
+
+  await page.unroute((url) => url.pathname === '/api/tasks')
+  await tokenField(page).fill(TOKEN)
+  await page.getByRole('button', { name: 'Déverrouiller' }).click()
+  await expect(lockTitle(page)).toHaveCount(0)
+
+  // The dialog's open state is kept by the view: it comes back by itself, draft included.
+  const reopened = page.getByRole('dialog', { name: 'Nouvelle tâche' })
+  await expect(reopened).toBeVisible()
+  await expect(reopened.getByLabel('Titre')).toHaveValue('Brouillon modale')
+  await expect(reopened.getByLabel('Objectif')).toHaveValue('Garder le brouillon sous le verrou')
 })

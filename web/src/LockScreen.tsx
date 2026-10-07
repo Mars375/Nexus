@@ -77,7 +77,7 @@ export function LockScreen() {
           puis colle ici le jeton affiché. Il reste dans ce navigateur et n’est jamais réaffiché.
         </p>
         <Field label={FIELD}>
-          {/* type=password keeps the token masked on screen; autocomplete=off because it is not a login (there is no username), so browsers should not offer to save it. Some password managers prompt anyway: accepted. */}
+          {/* type=password keeps the token masked on screen; autocomplete=off because it is not a login (there is no username). Browsers may still offer to save it (Chromium ignores autocomplete=off on password fields): accepted. */}
           <input
             ref={inputRef}
             type="password"

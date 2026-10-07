@@ -77,8 +77,20 @@ function refresh() {
 
 export const getAuthState = (): AuthState => state
 
+let focusBeforeLock: Element | null = null
+
+/** Locks the app. Already locked: the first reason stays (a later `auth_required` must not hide `invalid_token`). */
 export function markLocked(reason: string): void {
+  if (state.locked) return
+  focusBeforeLock = typeof document === 'undefined' ? null : document.activeElement
   update({ locked: true, lockReason: reason, hasToken: getToken() !== null })
+}
+
+/** The element focused when the app locked, once; the caller restores it after the unlock has rendered. */
+export function takeFocusToRestore(): Element | null {
+  const element = focusBeforeLock
+  focusBeforeLock = null
+  return element
 }
 
 export function markUnlocked(): void {

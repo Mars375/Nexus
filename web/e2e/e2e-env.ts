@@ -1,5 +1,5 @@
 // Constantes partagées par playwright.config.ts, le setup global et les specs.
-import { mkdtempSync } from 'node:fs'
+import { lstatSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 
@@ -8,6 +8,16 @@ export const WEB_PORT = 5199
 export const WEB_ORIGIN = `http://localhost:${WEB_PORT}`
 /** Même clé que `TOKEN_KEY` de src/auth.ts (e2e/auth.spec.ts échoue si elles divergent). */
 export const TOKEN_KEY = 'nexus.token'
+
+/** A symlink named like ours could still point at a real data dir: refused. */
+function isRealDirectory(path: string): boolean {
+  try {
+    const stat = lstatSync(path)
+    return stat.isDirectory() && !stat.isSymbolicLink()
+  } catch {
+    return false
+  }
+}
 
 /**
  * Base jetable : les tests de bout en bout ne touchent jamais la vraie nexus.db. Le processus
@@ -21,7 +31,8 @@ export function dataDirPath(): string {
   const ours =
     inherited !== undefined &&
     resolve(dirname(resolve(inherited))) === resolve(tmpdir()) &&
-    basename(resolve(inherited)).startsWith('nexus-e2e-')
+    basename(resolve(inherited)).startsWith('nexus-e2e-') &&
+    isRealDirectory(resolve(inherited))
   if (!ours) process.env.NEXUS_E2E_DATA_DIR = mkdtempSync(join(tmpdir(), 'nexus-e2e-'))
   return process.env.NEXUS_E2E_DATA_DIR as string
 }

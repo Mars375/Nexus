@@ -10,6 +10,7 @@ import {
   onUnlockedElsewhere,
   setToken,
   subscribe,
+  takeFocusToRestore,
 } from './auth'
 
 const TOKEN = 'nxt_' + 'A'.repeat(43)
@@ -152,4 +153,27 @@ test('un jeton venu d’un autre onglet ne prévient personne quand cet onglet n
 
   expect(unlocked).not.toHaveBeenCalled()
   off()
+})
+
+test('déjà verrouillé, le premier motif reste et personne n’est prévenu de nouveau', () => {
+  markLocked('invalid_token')
+  const listener = vi.fn()
+  const off = subscribe(listener)
+  markLocked('auth_required')
+  expect(getAuthState().lockReason).toBe('invalid_token')
+  expect(listener).not.toHaveBeenCalled()
+  off()
+})
+
+test('le focus d’avant le verrouillage est rendu une fois, au déverrouillage', () => {
+  const button = document.createElement('button')
+  document.body.append(button)
+  button.focus()
+  markLocked('invalid_token')
+  markLocked('auth_required') // ne doit pas écraser l'élément mémorisé
+  document.body.focus()
+  markUnlocked()
+  expect(takeFocusToRestore()).toBe(button)
+  expect(takeFocusToRestore()).toBeNull()
+  button.remove()
 })

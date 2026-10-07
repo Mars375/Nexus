@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App'
 import type { Task } from '@/api'
-import { clearToken, getToken, markUnlocked, setToken } from './auth'
+import { clearToken, getToken, markLocked, markUnlocked, setToken } from './auth'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -167,4 +167,19 @@ test('un jeton stocké par un autre onglet déverrouille et fait relire les donn
 
   expect(await screen.findByRole('heading', { name: 'Travail' })).toBeInTheDocument()
   expect(screen.queryByRole('heading', { name: 'Nexus verrouillé' })).toBeNull()
+})
+
+test('après le déverrouillage, le focus revient où il était avant le verrouillage', async () => {
+  stubGuardedApi()
+  setToken(TOKEN)
+  renderGuarded()
+  await screen.findByRole('heading', { name: 'Travail' })
+  const link = screen.getByRole('link', { name: 'Travail' })
+  link.focus()
+
+  act(() => markLocked('invalid_token'))
+  expect(await screen.findByLabelText('Jeton d’accès')).toHaveFocus()
+  act(() => markUnlocked())
+
+  await waitFor(() => expect(link).toHaveFocus())
 })

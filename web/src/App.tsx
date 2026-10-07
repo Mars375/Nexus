@@ -1,8 +1,8 @@
 import clsx from 'clsx'
 import { useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Toaster } from 'sonner'
-import { clearToken, onUnlockedElsewhere, useAuth } from './auth'
+import { clearToken, onUnlockedElsewhere, takeFocusToRestore, useAuth } from './auth'
 import { HealthStatus } from './HealthStatus'
 import { LockScreen } from './LockScreen'
 import { useLiveUpdates } from './liveUpdates'
@@ -32,6 +32,21 @@ export default function App() {
   const live = useLiveUpdates() // reste actif sous l'écran verrouillé : la connexion continue après le déverrouillage
   const { locked, hasToken } = useAuth()
   const client = useQueryClient()
+  const mainRef = useRef<HTMLElement>(null)
+  const wasLocked = useRef(false)
+
+  // After an unlock has rendered (the app is no longer inert), focus goes back where it was, else to the main area.
+  useEffect(() => {
+    if (locked) {
+      wasLocked.current = true
+      return
+    }
+    if (!wasLocked.current) return
+    wasLocked.current = false
+    const before = takeFocusToRestore()
+    if (before instanceof HTMLElement && before.isConnected && before !== document.body) before.focus()
+    else mainRef.current?.focus()
+  }, [locked])
 
   useEffect(() => {
     const onHash = () => { setView(currentView()); setOpen(openTaskFromHash()) }
@@ -75,7 +90,7 @@ export default function App() {
               </Button>
             )}
           </nav>
-          <main className="flex min-w-0 flex-1 flex-col">
+          <main ref={mainRef} tabIndex={-1} className="flex min-w-0 flex-1 flex-col outline-none">
             {view === 'travail' ? (
               <WorkView openTask={open} />
             ) : (
