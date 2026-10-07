@@ -17,8 +17,12 @@ from nexus.tasks.rules import RuleViolation
 
 KINDS = (
     "claimed", "working", "progress", "question", "blocked", "needs_human", "handoff",
-    "review", "done", "failed", "unknown",
+    "review", "done", "failed", "unknown", "answer",
 )
+
+# Written by Nexus itself when a human answers or decides (ADR-019, D8): never published by an
+# agent, which could otherwise forge a reply from Loïc.
+RESERVED_KINDS = frozenset({"answer"})
 
 # Ces événements parlent d'une tâche précise.
 TASK_REQUIRED = frozenset(

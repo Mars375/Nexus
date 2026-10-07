@@ -75,6 +75,11 @@ def seed(client) -> dict[str, str]:
         f"POST /api/events (question) → {res.status_code} {res.text}"
     )
     approval = res.json()["effects"][0]["approval"]
+    # An answered approval carries its response: its entities must keep their provenance too.
+    res = client.post(f"/api/approvals/{approval}/answer", json={"text": "Version 2"})
+    assert res.status_code == 200, (
+        f"POST /api/approvals/{{approval}}/answer → {res.status_code} {res.text}"
+    )
     return {"task_ref": task, "event_ref": event, "approval_ref": approval}
 
 
