@@ -122,3 +122,83 @@ def test_without_ask_the_agent_plays_the_usual_story(http, task, capsys):
     assert [e["kind"] for e in http.get("/api/events").json()][::-1] == [
         "claimed", "working", "progress", "done"
     ]
+
+
+# --- Exit codes and arguments (0 approved/answered, 3 rejected, 1 timeout/expired/network, 2 usage)
+
+
+def decide_in_sleep(http, **body):
+    def sleep(_seconds):
+        http.post("/api/approvals/nx-appr-1/decision", json=body)
+
+    return sleep
+
+
+def test_a_rejection_is_not_a_green_light(http, task, capsys):
+    code = run(task, "--ask", "Publier ?", "--wait", "60",
+               sleep=decide_in_sleep(http, decision="rejected", note="non"),
+               monotonic=lambda: 0.0)
+
+    assert code == 3
+    assert "refusée par loic" in capsys.readouterr().out
+
+
+def test_an_approval_is_exit_0(http, task):
+    code = run(task, "--ask", "Publier ?", "--wait", "60",
+               sleep=decide_in_sleep(http, decision="approved", choice=0), monotonic=lambda: 0.0)
+
+    assert code == 0
+
+
+@pytest.mark.parametrize("argv", [
+    ["--ask", "Q", "--wait", "nan"], ["--ask", "Q", "--wait", "inf"],
+    ["--ask", "Q", "--wait", "-1"], ["--ask", "Q", "--wait", "5", "--interval", "0"],
+    ["--ask", "Q", "--wait", "5", "--interval", "0.05"],
+    ["--ask", "Q", "--wait", "5", "--interval", "nan"],
+    ["--ask", "Q", "--wait", "5", "--interval", "inf"],
+    ["--ask", "Q", "--wait", "5", "--interval", "-2"],
+    ["--ask", ""], ["--ask", "   "],
+])
+def test_invalid_arguments_are_a_usage_error_without_traceback(http, task, capsys, argv):
+    with pytest.raises(SystemExit) as exit_:
+        run(task, *argv)
+
+    assert exit_.value.code == 2
+    assert "usage" in capsys.readouterr().err.lower()
+    assert http.get("/api/events").json() == []  # nothing was published
+
+
+def test_a_network_error_while_waiting_is_a_short_message_and_exit_1(http, task, monkeypatch,
+                                                                    capsys):
+    import urllib.error
+
+    real = demo_agent.call
+
+    def flaky(base, method, path, body=None):
+        if method == "GET" and path.startswith("/api/approvals/"):
+            raise urllib.error.URLError("connection refused")
+        return real(base, method, path, body)
+
+    monkeypatch.setattr(demo_agent, "call", flaky)
+
+    code = run(task, "--ask", "Publier ?", "--wait", "60", sleep=lambda _s: None,
+               monotonic=lambda: 0.0)
+
+    assert code == 1
+    out = capsys.readouterr()
+    assert "injoignable" in out.out + out.err
+    assert "Traceback" not in out.out + out.err
+
+
+def test_a_timeout_while_waiting_is_exit_1(http, task, monkeypatch, capsys):
+    real = demo_agent.call
+
+    def slow(base, method, path, body=None):
+        if method == "GET" and path.startswith("/api/approvals/"):
+            raise TimeoutError("timed out")
+        return real(base, method, path, body)
+
+    monkeypatch.setattr(demo_agent, "call", slow)
+
+    assert run(task, "--ask", "Publier ?", "--wait", "60", sleep=lambda _s: None,
+               monotonic=lambda: 0.0) == 1

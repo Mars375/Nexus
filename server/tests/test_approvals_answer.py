@@ -343,13 +343,24 @@ def test_only_the_human_addressee_decides(client):
     untouched(client)
 
 
-def test_the_requester_never_decides_its_own_request(client):
-    ask(client, actor="loic")
+def test_a_human_asking_only_himself_opens_no_approval(client):
+    res = ask(client, actor="loic")  # needs: [loic]
 
-    res = answer(client, actor="loic")
+    assert res["effects"] == []
+    assert client.get("/api/approvals").json() == []
 
-    assert code_of(res) == "self_decision"
-    untouched(client)
+
+def test_a_human_asking_an_agent_and_himself_opens_no_approval(client):
+    res = ask(client, actor="loic", needs=["loic", "helios"])  # helios is not a human
+
+    assert res["effects"] == []
+    assert client.get("/api/approvals").json() == []
+
+
+def test_an_agent_asking_a_human_opens_one(client):
+    res = ask(client, actor="mnema", needs=["loic"])
+
+    assert res["effects"] == [{"action": "approval", "applied": True, "approval": REF}]
 
 
 def test_an_agent_requester_deciding_its_own_request_is_a_self_decision(client):
@@ -439,8 +450,10 @@ def test_a_decision_on_an_expired_needs_human_is_refused_and_nothing_is_written(
     untouched(client)
 
 
-def test_the_deadline_is_judged_on_a_fresh_read_inside_the_transaction(client, monkeypatch):
-    # The approval was loaded as pending, then the clock passes the deadline before the write.
+def test_the_deadline_is_judged_at_the_write_not_when_the_view_was_read(client, monkeypatch):
+    # A view read as pending, then the clock passes the deadline: the answer is judged on the
+    # clock at the write. (The row itself is re-read after every rollback; this does not test
+    # `session.refresh`, which no behaviour distinguishes.)
     expires = in_a_day()
     ask(client, payload={"expires_at": expires.isoformat()})
     clock = iter([expires - timedelta(seconds=1), expires + timedelta(seconds=1)])
@@ -507,7 +520,7 @@ def test_a_different_answer_is_refused_with_who_and_when(client):
 
 @pytest.mark.parametrize("second, verb", [
     ({"decision": "rejected"}, "validée"),  # first was approved
-    ({"decision": "approved", "choice": 0}, "validée"),  # other option
+    ({"decision": "approved", "choice": 0, "note": "go"}, "validée"),  # only the choice differs
     ({"decision": "approved", "choice": 1, "note": "autre"}, "validée"),  # other note
 ])
 def test_a_different_decision_is_refused(client, second, verb):
@@ -864,3 +877,114 @@ def test_every_stored_answer_event_points_back_to_its_approval(client):
         ("nx-appr-1", "nx-appr-1", "answer-nx-appr-1"),
         ("nx-appr-2", "nx-appr-2", "answer-nx-appr-2"),
     ]
+
+
+# --- Review fixes (reviewer on 7cee449) -------------------------------------------------------
+
+
+def test_a_non_human_in_needs_is_not_an_addressee(client):
+    ask(client, needs=["loic", "helios"])
+
+    res = answer(client, actor="helios")
+
+    assert code_of(res) == "not_addressee"
+    untouched(client)
+
+
+def squat(id="answer-nx-appr-1", **fields):
+    return {"id": id, "at": AT, "actor": "loic", "kind": "question", "subject": "squat",
+            "needs": ["helios"]} | fields
+
+
+@pytest.mark.parametrize("id", ["answer-nx-appr-1", "answer-", "answer-whatever",
+                                "  answer-nx-appr-1"])
+def test_an_event_cannot_take_an_id_reserved_to_answers(client, id):
+    # Before the approval exists, then after: the id is never squatted.
+    before = client.post("/api/events", json=squat(id))
+    ask(client)
+    after = client.post("/api/events", json=squat(id, subject="squat 2"))
+
+    for res in (before, after):
+        assert res.status_code == 409, res.text
+        assert res.json()["detail"]["code"] == "reserved_id"
+        assert "answer-" in res.json()["detail"]["message"]
+    assert answer(client).status_code == 200  # the approval can still be decided
+
+
+def test_a_direct_service_call_cannot_take_a_reserved_id(client):
+    from nexus.events.rules import Envelope
+
+    with client.app.state.sessionmaker() as session, pytest.raises(RuleViolation) as refused:
+        events.publish(session, Envelope(actor="loic", kind="progress", subject="x"),
+                       "answer-nx-appr-9", now())
+
+    assert refused.value.code == "reserved_id"
+    assert "nx-appr-9" not in str(refused.value)
+
+
+def test_a_squatted_id_in_the_database_gives_a_dedicated_refusal(client):
+    ask(client)
+    with client.app.state.sessionmaker() as session:  # an old squat, inserted directly
+        session.add(Event(actor="loic", actor_event_id="answer-nx-appr-1", at=now(),
+                          received_at=now(), kind="question", subject="squat", origin="api"))
+        session.commit()
+
+    res = answer(client)
+
+    assert code_of(res) == "approval_id_taken"
+    assert "réessaie" not in res.json()["detail"]["message"]
+    assert approval_row(client) == ("pending", None, 1)
+
+
+def test_a_real_race_still_says_to_retry(client, monkeypatch):
+    ask(client)
+    real = events.publish
+
+    def always_bump(*args, **kwargs):
+        from sqlalchemy import update
+
+        with client.app.state.sessionmaker() as other:
+            other.execute(update(Approval).values(version=Approval.version + 1))
+            other.commit()
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(events, "publish", always_bump)
+
+    res = answer(client)
+
+    assert code_of(res) == "approval_concurrent_update"
+    assert "réessaie" in res.json()["detail"]["message"]
+
+
+def test_a_rejection_validates_a_given_choice(client):
+    ask(client, kind="needs_human")
+
+    refused = decide(client, decision="rejected", choice=99)
+
+    assert code_of(refused) == "choice_unknown"
+    untouched(client)
+    kept = decide(client, decision="rejected", choice=1)
+    assert kept.status_code == 200 and kept.json()["response"]["choice"] == 1
+
+
+def test_a_blank_note_is_stored_as_no_note(client):
+    ask(client, kind="needs_human")
+
+    res = decide(client, decision="rejected", note="   ")
+
+    assert res.status_code == 200 and res.json()["response"]["text"] is None
+    event = client.get(f"/api/events/{res.json()['response']['event']}").json()
+    assert event["body"] is None
+
+
+def test_two_notes_that_differ_only_by_a_masked_secret_are_the_same_decision(client):
+    # The comparison is made on what is stored: after masking. Documented, not an accident.
+    other = "gh" + "p" + "_" + "B" * 36
+    ask(client, kind="needs_human")
+    first = decide(client, decision="rejected", note=f"clé {TOKEN}")
+
+    again = decide(client, decision="rejected", note=f"clé {other}")
+
+    assert (first.status_code, again.status_code) == (200, 200)
+    assert again.json()["response"] == first.json()["response"]
+    assert len(answer_events(client)) == 1

@@ -97,7 +97,9 @@ def _asks(session: Session, measured: datetime, cutoff: datetime) -> list[dict]:
         .outerjoin(Approval, Approval.request_event_id == Event.id)
         .outerjoin(response, response.id == Approval.response_event_id)
         .where(Event.kind.in_(ASK_KINDS), or_(
-            Approval.status == "pending",  # includes the expired, narrowed below
+            # Pending of any age; the expired ones (stored pending) only inside the window.
+            and_(Approval.status == "pending",
+                 or_(Approval.expires_at.is_(None), Approval.expires_at >= cutoff)),
             and_(Approval.id.is_(None), Event.received_at >= cutoff),
             response.received_at >= cutoff,
         ))

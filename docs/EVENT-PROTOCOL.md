@@ -79,7 +79,7 @@ Règles générales :
 | `unknown` | état non vérifiable | dernière vérification | `^ unknown : run non confirmé depuis 2 h` |
 | `answer` | **réservé à Nexus** : la réponse ou la décision de Loïc à une demande | — (écrit par `POST /api/approvals/…`) | `^ validé : nx-appr-3` |
 
-`answer` n'est **jamais publié par un agent** : `POST /api/events` le refuse (422), comme tout appel direct au service qui ne vient pas de Nexus. Sinon un agent pourrait fabriquer une réponse de Loïc (ADR-019, D8). Il se lit et se filtre comme les autres (`GET /api/events?kind=answer`).
+Les identifiants `answer-…` sont réservés de la même façon (refus `reserved_id`, 409) : un événement qui prendrait `answer-nx-appr-<n>` rendrait cette approbation impossible à traiter. `answer` n'est **jamais publié par un agent** : `POST /api/events` le refuse (422), comme tout appel direct au service qui ne vient pas de Nexus. Sinon un agent pourrait fabriquer une réponse de Loïc (ADR-019, D8). Il se lit et se filtre comme les autres (`GET /api/events?kind=answer`).
 
 ## 4. Règles par kind
 
@@ -156,7 +156,7 @@ L'effet `approval` est consigné **en plus** des effets sur la tâche, et même 
 { "action": "approval", "applied": true, "approval": "nx-appr-3" }
 ```
 
-L'approbation est créée dans la même transaction que l'événement ; un `needs` qui répète le même humain n'en ouvre qu'une, un destinataire non humain (`needs: ["mnema"]`) aucune. Un renvoi identique ne crée rien de plus et renvoie la même référence (c'est l'événement relu qui la porte).
+L'approbation est créée dans la même transaction que l'événement ; un `needs` qui répète le même humain n'en ouvre qu'une, un destinataire non humain (`needs: ["mnema"]`) aucune. Il faut au moins un destinataire humain **autre que l'auteur** : `loic` qui demande à `loic` (ou à `loic` et `helios`) n'ouvre rien, car personne ne pourrait la traiter (le demandeur ne tranche pas sa propre demande). Un renvoi identique ne crée rien de plus et renvoie la même référence (c'est l'événement relu qui la porte).
 
 Une clôture (`done`, `review`, `blocked`, `handoff`, `failed`) doit nommer son run (`run` ou `payload.run_ref`). Si elle vise un autre run que le run actif de l'agent (ex. `done(r1)` arrivé après `working(r2)`) ou n'en nomme aucun alors qu'un run est actif, elle est enregistrée mais ne modifie pas la tâche et ne ferme pas le run actif. Une référence de run close l'est pour de bon : un `working` tardif ou rejoué de ce run est enregistré sans rouvrir la tâche, et une seconde clôture de ce run (`done(r1)` après `handoff(r1)`) est enregistrée sans effet ; pour reprendre, on ouvre un nouveau run. Un seul run actif par agent et par tâche ; un `handoff` nomme **un seul** destinataire.
 
@@ -164,7 +164,7 @@ Autres garanties : un renvoi du même `id` par le même acteur est une relecture
 
 L'événement `answer` écrit par Nexus pour une réponse ou une décision a pour `actor` celui qui décide (`loic`), `origin` `api`, la tâche de la demande, `needs` = [le demandeur], et pour `id` `answer-nx-appr-<n>` : un seul événement possible par approbation (un second contenu est refusé par la contrainte d'unicité). Son `subject` ne porte que des références (`réponse : nx-appr-3`, `validé : nx-appr-3`, `refusé : nx-appr-3`), jamais un texte reçu ; son `body` est la réponse ou la note (secrets masqués) ; son `payload` est `{approval, in_reply_to, decision, choice}` (`decision` : `answered`, `approved` ou `rejected` ; `choice` : l'indice de l'option, sinon `null`). L'événement et la mise à jour de l'approbation sont écrits dans **une seule transaction** : les deux existent ou aucun.
 
-Exemples exécutables (`server/src/nexus/demo_agent.py`) : `uv run python -m nexus.demo_agent --task nx-task-1 --actor helios --evidence commit:…` joue claimed → working → progress → done ; `uv run python -m nexus.demo_agent --task nx-task-1 --ask "Publier ?" --wait 120` demande une validation à Loïc et relit l'approbation jusqu'à sa décision (§6 ter).
+Exemples exécutables (`server/src/nexus/demo_agent.py`) : `uv run python -m nexus.demo_agent --task nx-task-1 --actor helios --evidence commit:…` joue claimed → working → progress → done ; `uv run python -m nexus.demo_agent --task nx-task-1 --ask "Publier ?" --wait 120` demande une validation à Loïc et relit l'approbation jusqu'à sa décision (§6 ter). Codes de sortie de `--ask --wait` : 0 validée ou répondue, 3 refusée, 1 échéance passée, délai écoulé ou Nexus injoignable, 2 arguments invalides. Un agent qui lit 0 comme « feu vert » ne publie donc jamais après un refus (sans `--wait`, 0 veut seulement dire « demande envoyée »).
 
 ## 6 ter. Retour vers l'agent
 
@@ -190,7 +190,7 @@ Nexus **ne lance et ne réveille aucun agent** (ADR-012) : valider ou répondre 
 | `POST /api/approvals/<ref>/answer` | `{"text": "…"}` (texte requis, 2 000 caractères au plus) | une `question` passe de `pending` à `answered` |
 | `POST /api/approvals/<ref>/decision` | `{"decision": "approved" \| "rejected", "choice": 1, "note": "…"}` (`choice` et `note` facultatifs, `note` 2 000 caractères au plus) | un `needs_human` passe de `pending` à `approved` ou `rejected` |
 
-Les corps refusent tout champ inconnu (422) ; `choice` est un entier (un booléen est refusé en 422). Approuver une demande qui propose **au moins 2 options** exige `choice` ; refuser ne l'exige pas. Réponse : **200** avec la même vue que `GET /api/approvals/<ref>`. Refus (409, `detail.code`), sans jamais recopier une valeur reçue :
+Les corps refusent tout champ inconnu (422) ; `choice` est un entier (un booléen est refusé en 422). Sur un refus, `choice` est facultatif, mais **validé s'il est fourni** (409 `choice_unknown`) et conservé. Une note faite d'espaces équivaut à pas de note (`response.text` nul). Approuver une demande qui propose **au moins 2 options** exige `choice` ; refuser ne l'exige pas. Réponse : **200** avec la même vue que `GET /api/approvals/<ref>`. Refus (409, `detail.code`), sans jamais recopier une valeur reçue :
 
 | Code | Cas |
 |---|---|
@@ -201,9 +201,10 @@ Les corps refusent tout champ inconnu (422) ; `choice` est un entier (un boolée
 | `approval_already_decided` | déjà traitée, avec un autre contenu : « déjà validée par loic le 07/10/2026 à 14:05 » |
 | `answer_required` | texte vide, ou réduit à des secrets masqués (`[REDACTED]`) |
 | `choice_required`, `choice_unknown` | `choice` manquant (2 options ou plus, pour approuver) ou qui ne désigne aucune option |
-| `approval_concurrent_update` | la demande change sans cesse en parallèle : relire et réessayer |
+| `approval_concurrent_update` | la demande change sans cesse en parallèle (vraie course, trois relectures épuisées) : relire et réessayer |
+| `approval_id_taken` | un événement étranger occupe déjà l'identifiant `answer-nx-appr-<n>` : réessayer ne sert à rien, il faut le signaler |
 
-**Renvoi et concurrence.** Le même décideur qui renvoie le même contenu (décision, `choice`, texte ou note **après masquage**) sur une approbation déjà traitée reçoit **200** avec l'état existant, sans nouvel événement ; un autre contenu est un 409 `approval_already_decided`. Deux décisions simultanées : une seule l'emporte, l'autre est relue puis comparée (identique : 200, différente : 409) ; un seul événement `answer` existe. Une demande déjà traitée ne devient jamais `expired`.
+**Renvoi et concurrence.** Le même décideur qui renvoie le même contenu (décision, `choice`, texte ou note **après masquage**) sur une approbation déjà traitée reçoit **200** avec l'état existant, sans nouvel événement ; un autre contenu est un 409 `approval_already_decided`. Deux décisions simultanées : une seule l'emporte, l'autre est relue puis comparée (identique : 200, différente : 409) ; un seul événement `answer` existe. Une demande déjà traitée ne devient jamais `expired`. La comparaison se fait sur ce qui est **stocké**, après masquage : deux textes ou notes qui ne diffèrent que par un secret masqué sont le même contenu (200). L'échéance est jugée à la réception de la décision par le serveur ; `decided_at` est l'instant d'enregistrement et peut la dépasser de quelques secondes (attente du verrou SQLite).
 
 ## 7. Anti-patterns (refusés)
 

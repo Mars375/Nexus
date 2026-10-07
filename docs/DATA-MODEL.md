@@ -131,7 +131,7 @@ Fait structuré publié par un acteur (voir [EVENT-PROTOCOL.md](EVENT-PROTOCOL.m
 
 ### 2.10 Approval (validation) — native
 
-Toute décision attendue de Loïc (ou d'un gardien) est un objet explicite (ADR-019). Une approbation est l'**état de décision** d'une demande : une `question` ou un `needs_human` dont `needs` contient un humain. Elle naît avec l'événement, dans la même transaction (`POST /api/events` consigne sa référence dans `effects`, EVENT-PROTOCOL §6 bis). Table `approvals`, référence `nx-appr-<n>`.
+Toute décision attendue de Loïc (ou d'un gardien) est un objet explicite (ADR-019). Une approbation est l'**état de décision** d'une demande : une `question` ou un `needs_human` dont `needs` contient un humain. Elle naît avec l'événement (adressé à au moins un humain **autre que son auteur**), dans la même transaction (`POST /api/events` consigne sa référence dans `effects`, EVENT-PROTOCOL §6 bis). Table `approvals`, référence `nx-appr-<n>`.
 
 | Champ | Notes |
 |---|---|

@@ -24,7 +24,6 @@ from sqlalchemy.orm.exc import StaleDataError
 from nexus import secrets
 from nexus.actors import ACTORS, HUMANS
 from nexus.approvals.limits import (
-    ANSWER_ID_PREFIX,
     ANSWER_TEXT_MAX,
     LIST_LIMIT_DEFAULT,
     NOTE_MAX,
@@ -33,6 +32,7 @@ from nexus.approvals.limits import (
 )
 from nexus.clock import TZ, now
 from nexus.events import service as events
+from nexus.events.limits import ANSWER_ID_PREFIX
 from nexus.events.rules import Envelope
 from nexus.events.service import parse_task_ref
 from nexus.models import Approval, Event
@@ -290,14 +290,27 @@ def _attempt(
                  "choice": choice},
         needs=[request.actor],
     )
+    event_id = f"{ANSWER_ID_PREFIX}{approval.ref}"
     try:
         event, created = events.publish(
-            session, envelope, f"{ANSWER_ID_PREFIX}{approval.ref}", now(), allow_reserved=True
+            session, envelope, event_id, now(), allow_reserved=True
         )
     except RuleViolation as exc:
-        if exc.code == "event_id_reused":  # another decision took the event id first
-            raise _Conflict from exc
-        raise
+        if exc.code != "event_id_reused":
+            raise
+        taken = session.scalar(select(Event).where(
+            Event.actor == actor, Event.actor_event_id == event_id
+        ))
+        if taken is not None and not (
+            taken.kind == "answer" and taken.payload.get("approval") == approval.ref
+        ):
+            # Not a race: an unrelated event owns the id. Retrying would never help.
+            raise RuleViolation(
+                "approval_id_taken",
+                "l'identifiant de réponse de cette demande est déjà pris par un autre "
+                "événement : elle ne peut pas être traitée, signale-le",
+            ) from exc
+        raise _Conflict from exc  # another decision took the event id first
     if not created:  # an identical event is already stored: somebody decided first
         raise _Conflict
     _close(session, approval, event, "answered" if ask_kind == "question" else decision)

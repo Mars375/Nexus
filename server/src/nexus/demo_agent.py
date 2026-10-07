@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 import time
 import urllib.error
@@ -22,6 +23,15 @@ import urllib.request
 import uuid
 
 from nexus.clock import now
+
+# Exit codes of `--ask --wait`: an agent that reads 0 as « go » must not go after a refusal.
+EXIT_NO_ANSWER = 1  # timeout, expired request, or Nexus unreachable
+EXIT_USAGE = 2  # invalid arguments: argparse exits with it
+EXIT_REJECTED = 3  # Loïc refused
+# 0: approved or answered (or, without --wait, asked and not waiting)
+
+
+MIN_INTERVAL = 0.1  # seconds between two reads of the approval
 
 
 def call(base: str, method: str, path: str, body: dict | None = None) -> dict:
@@ -83,14 +93,18 @@ def wait_for_decision(base: str, ref: str, timeout: float, interval: float,
 
 
 def report(approval: dict) -> int:
-    """Say what happened to the request; 0 when somebody decided, 1 otherwise."""
+    """Say what happened to the request and return the exit code (see EXIT_*)."""
     ref, status, response = approval["id"], approval["status"], approval["response"] or {}
     if status == "pending":
         print(f"{ref}  aucune décision pour l'instant")
-        return 1
+        return EXIT_NO_ANSWER
     if status == "expired":
         print(f"{ref}  expirée : l'échéance est passée sans décision")
-        return 1
+        return EXIT_NO_ANSWER
+    if status == "rejected":
+        detail = f" ({response['text']})" if response.get("text") else ""
+        print(f"{ref}  refusée par {approval['decided_by']}{detail}")
+        return EXIT_REJECTED
     verb = {"approved": "validée", "rejected": "refusée", "answered": "répondue"}[status]
     detail = [f"choix {response['choice']}"] if response.get("choice") is not None else []
     detail += [response["text"]] if response.get("text") else []
@@ -113,14 +127,25 @@ def main(argv: list[str] | None = None, sleep=time.sleep, monotonic=time.monoton
                         help="relire l'approbation jusqu'à la décision, au plus ce temps")
     parser.add_argument("--interval", type=float, default=2, metavar="SECONDES")
     args = parser.parse_args(argv)
+    if args.ask is not None and not args.ask.strip():
+        parser.error("--ask : le sujet ne peut pas être vide")
+    if not math.isfinite(args.wait) or args.wait < 0:
+        parser.error("--wait : un nombre de secondes fini, 0 ou plus")
+    if not math.isfinite(args.interval) or args.interval < MIN_INTERVAL:
+        parser.error(f"--interval : un nombre de secondes fini, au moins {MIN_INTERVAL}")
 
-    if args.ask:
+    if args.ask is not None:
         ref = ask(args.base, args.actor, args.task, args.ask_kind, args.ask,
                   args.options or ["oui", "non"], args.consequence)
         print(f"{ref}  en attente de Loïc")
         if not args.wait:
             return 0
-        return report(wait_for_decision(args.base, ref, args.wait, args.interval, sleep, monotonic))
+        try:
+            approval = wait_for_decision(args.base, ref, args.wait, args.interval, sleep, monotonic)
+        except OSError as err:  # URLError and timeouts: Nexus is unreachable, say it briefly
+            print(f"{ref}  Nexus injoignable pendant l'attente ({type(err).__name__})")
+            return EXIT_NO_ANSWER
+        return report(approval)
 
     publish(args.base, args.actor, args.task, "claimed", "Je prends la tâche")
     # working ouvre le run : c'est lui qui fait passer la tâche en cours (EVENT-PROTOCOL §3).

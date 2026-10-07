@@ -24,6 +24,7 @@ from nexus.actors import HUMANS
 from nexus.clock import now
 from nexus.events import rules
 from nexus.events.limits import (
+    ANSWER_ID_PREFIX,
     EVENT_ID_MAX,
     EVIDENCE_REF_MAX,
     RUN_MAX,
@@ -193,6 +194,11 @@ def publish(
         # Vide ou déjà « [REDACTED] » : ce serait la même clé d'idempotence pour tout le monde.
         raise RuleViolation("event_id_required", "id : identifiant lisible requis")
     actor_event_id = actor_event_id.strip()
+    if actor_event_id.startswith(ANSWER_ID_PREFIX) and not allow_reserved:
+        # Squatting `answer-nx-appr-<n>` would make that approval undecidable for good.
+        raise RuleViolation(
+            "reserved_id", f"id : le préfixe « {ANSWER_ID_PREFIX} » est réservé à Nexus"
+        )
     if (envelope.run, envelope.payload.get("run_ref")) != raw_run_refs:
         # Même raison que pour l'identifiant : "run token=alpha" et "run token=beta" deviendraient
         # le même run une fois masqués, et les clôtures ne pourraient plus les distinguer.
@@ -286,8 +292,11 @@ def publish(
 
 
 def _opens_approval(event: Event) -> bool:
-    """An ask addressed to at least one human waits for a decision (ADR-019)."""
-    return event.kind in rules.ASK_KINDS and bool(set(event.needs) & HUMANS)
+    """An ask addressed to a human other than its author waits for a decision (ADR-019).
+
+    A human asking only himself would leave a request nobody may decide (self_decision).
+    """
+    return event.kind in rules.ASK_KINDS and bool((set(event.needs) & HUMANS) - {event.actor})
 
 
 def _winner_of_race(

@@ -424,3 +424,37 @@ def test_the_snapshot_cost_does_not_grow_with_the_number_of_asks(client):
     client.post("/api/approvals/nx-appr-1/answer", json={"text": "ok"})
 
     assert _statements(client) == base
+
+
+def set_expiry(client, number, instant):
+    with client.app.state.sessionmaker() as session:
+        session.execute(update(Approval).where(Approval.id == number).values(expires_at=instant))
+        session.commit()
+
+
+def test_the_window_of_an_expired_ask_runs_from_its_deadline_not_from_its_request(client):
+    recent = ask_loic(client, subject="Expirée il y a 5 jours")
+    old = ask_loic(client, subject="Expirée il y a 8 jours")
+    for number, ask, days in ((1, recent, 5), (2, old, 8)):
+        set_received(client, ask["id"], now() - timedelta(days=20))
+        set_expiry(client, number, now() - timedelta(days=days))
+
+    listed = snapshot(client)["asks"]
+
+    assert [(a["subject"], a["approval"]["status"]) for a in listed] == [
+        ("Expirée il y a 5 jours", "expired")
+    ]
+
+
+def test_old_expired_approvals_are_not_even_read(client, monkeypatch):
+    for n in range(4):
+        old = ask_loic(client, subject=f"Ancienne {n}")
+        set_received(client, old["id"], now() - timedelta(days=30))
+        set_expiry(client, n + 1, now() - timedelta(days=20))
+    judged = []
+    real = now_module.effective_status
+    monkeypatch.setattr(now_module, "effective_status",
+                        lambda approval, at: judged.append(approval.id) or real(approval, at))
+
+    assert snapshot(client)["asks"] == []
+    assert judged == []  # the window is applied in SQL: they were never read
