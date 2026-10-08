@@ -47,7 +47,7 @@ class Settings:
                 "NEXUS_HOST doit être une adresse de la boucle locale (127.0.0.1, localhost "
                 "ou l'adresse IPv6 de bouclage) : le WebSocket n'a pas encore de ticket "
                 "(ADR-020, D5), donc Nexus ne peut pas écouter sur le réseau tant que ce "
-                "ticket WebSocket n'existe pas"
+                "ticket WebSocket (#57) n'existe pas"
             )
         for name in self.allowed_hosts:
             if normalize_host(name) is None:

@@ -114,3 +114,14 @@ def test_only_humans_drop_a_task(actor):
         permissions.check_status(actor, "dropped")
     assert refused.value.code == "human_only"
     assert "needs_human" in refused.value.message
+
+
+@pytest.mark.parametrize("bad", [None, 3, "helios"])
+def test_a_non_list_collaborators_after_is_a_rule_violation_not_a_type_error(bad):
+    from nexus.tasks.rules import RuleViolation
+
+    with pytest.raises(RuleViolation):
+        permissions.check_update(
+            "codex", lead_before=None, lead_after=None,
+            collaborators_before=[], collaborators_after=bad,
+        )

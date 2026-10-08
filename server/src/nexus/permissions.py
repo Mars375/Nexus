@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from nexus.actors import EXECUTORS, HUMANS
+from nexus.tasks.rules import RuleViolation
 
 
 class Forbidden(Exception):
@@ -52,6 +53,10 @@ def check_update(
     """
     if actor not in EXECUTORS:
         return
+    if not isinstance(collaborators_after, (list, tuple, set, frozenset)):
+        raise RuleViolation(
+            "invalid_collaborators", "collaborators : une liste de noms est attendue"
+        )
     if lead_after != lead_before and lead_after not in (None, actor) and lead_after not in HUMANS:
         raise _assign_forbidden("lead_agent", "lui-même, un humain ou personne")
     added = set(collaborators_after) - set(collaborators_before)

@@ -89,3 +89,53 @@ def test_configured_host_is_admitted_end_to_end(tmp_path):
         ok = c.get("/api/health", headers={"Host": "helios.tailnet.ts.net:8765"})
         assert ok.status_code == 200
         assert c.get("/api/health", headers={"Host": EVIL}).status_code == 400
+
+
+def test_a_configured_ipv6_host_is_matched_in_its_compressed_form(tmp_path):
+    settings = Settings(data_dir=tmp_path / "d", allowed_hosts=frozenset({"fd7a:0:0::1"}))
+    with ActorClient(create_app(settings, nodes_runner=tailscale_json)) as c:
+        ok = c.get("/api/health", headers={"Host": "[fd7a::1]:8765"})
+        assert ok.status_code == 200
+
+
+async def _drive(scope_type, headers):
+    """Drives HostCheckMiddleware directly: the test client cannot send two Host headers."""
+    from nexus.hosts import HostCheckMiddleware
+
+    reached, sent = [], []
+
+    async def app(scope, receive, send):
+        reached.append(True)
+
+    async def receive():
+        return {"type": f"{scope_type}.connect" if scope_type == "websocket"
+                else "http.request", "body": b""}
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {"type": scope_type, "headers": headers, "path": "/api/health"}
+    await HostCheckMiddleware(app)(scope, receive, send)
+    return reached, sent
+
+
+def _asgi(scope_type, headers):
+    import asyncio
+
+    return asyncio.run(_drive(scope_type, headers))
+
+
+def test_two_host_headers_are_refused_over_http():
+    reached, sent = _asgi("http", [(b"host", b"localhost"), (b"host", b"localhost")])
+    assert not reached and sent[0]["status"] == 400
+    assert b"invalid_host" in sent[1]["body"]
+
+
+def test_two_host_headers_are_refused_over_websocket():
+    reached, sent = _asgi("websocket", [(b"host", b"localhost"), (b"host", b"evil.example")])
+    assert not reached and sent == [{"type": "websocket.close", "code": 1008}]
+
+
+def test_a_single_host_header_still_passes():
+    reached, _ = _asgi("http", [(b"host", b"localhost:5173")])
+    assert reached

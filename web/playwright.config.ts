@@ -8,7 +8,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   reporter: 'list',
-  // Après le démarrage du serveur : émet le jeton `loic` de la base jetable (e2e/global-setup.ts).
+  // Après le démarrage du serveur : émet un jeton par acteur dans la base jetable ; celui de `loic` va dans le storageState (e2e/global-setup.ts).
   globalSetup: './e2e/global-setup.ts',
   use: {
     baseURL: `http://localhost:${WEB_PORT}`,
@@ -26,7 +26,7 @@ export default defineConfig({
     // approvals.spec crée ses propres demandes (sujets uniques) : il ne dépend d'aucune donnée des autres.
     { name: 'approvals', testMatch: /approvals.spec.ts/, dependencies: ['work'] },
     { name: 'visuals', testMatch: /visuals.spec.ts/, dependencies: ['now'] },
-    // auth.spec simule les 401 côté navigateur et ne crée aucune donnée.
+    // auth.spec joue les 401 du vrai serveur (deux tests seulement les simulent) ; il n'écrit que dans actor_tokens (un jeton émis puis révoqué), aucune tâche.
     { name: 'auth', testMatch: /auth.spec.ts/, dependencies: ['work'] },
   ],
   webServer: [

@@ -504,3 +504,25 @@ def test_a_401_without_a_token_says_where_to_put_it(monkeypatch):
     monkeypatch.setattr(demo_agent, "_open", refuse)
     with pytest.raises(SystemExit, match=r"refusé \(401\).*NEXUS_TOKEN ou --token-file"):
         run("nx-task-1")
+
+
+def test_a_403_actor_mismatch_says_which_actor_to_pass_without_echoing_the_token(
+    monkeypatch, tmp_path
+):
+    import io
+    import urllib.error
+
+    def refuse(request, timeout=None):
+        body = {"detail": {"code": "actor_mismatch", "message": "acteur différent du jeton"}}
+        raise urllib.error.HTTPError(
+            request.full_url, 403, "Forbidden", {}, io.BytesIO(json.dumps(body).encode())
+        )
+
+    monkeypatch.setattr(demo_agent, "_open", refuse)
+    path = tmp_path / "token"
+    path.write_text(TOKEN)
+    with pytest.raises(SystemExit) as exc:
+        run("nx-task-1", "--actor", "helios", "--token-file", str(path))
+    message = str(exc.value)
+    assert "refusé (403)" in message and "--actor <acteur du jeton>" in message
+    assert TOKEN not in message

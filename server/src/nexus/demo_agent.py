@@ -135,6 +135,9 @@ def call(base: str, method: str, path: str, body: dict | None = None) -> dict:
         hint = ""
         if err.code == 401 and not _bearer:
             hint = " — fournis le jeton de l'acteur par NEXUS_TOKEN ou --token-file"
+        if err.code == 403 and isinstance(detail, dict) and detail.get("code") == "actor_mismatch":
+            hint = (" — le jeton appartient à un autre acteur que --actor : "
+                    "passe --actor <acteur du jeton>")
         raise SystemExit(f"refusé ({err.code}) : {detail}{hint}") from err
 
 

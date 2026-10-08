@@ -60,15 +60,16 @@ def host_allowed(header: str | None, extra: frozenset[str]) -> bool:
 class HostCheckMiddleware:
     def __init__(self, app: ASGIApp, allowed_hosts: frozenset[str] = frozenset()) -> None:
         self.app = app
-        self.allowed_hosts = frozenset(h.lower() for h in allowed_hosts)
+        # Same normal form as the header: `fd7a:0:0::1` must match `Host: [fd7a::1]:8765`.
+        self.allowed_hosts = frozenset(normalize_host(h) or h.lower() for h in allowed_hosts)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return
-        header = next(
-            (v.decode("latin-1") for k, v in scope["headers"] if k == b"host"), None
-        )
+        headers = [v.decode("latin-1") for k, v in scope["headers"] if k == b"host"]
+        # More than one Host header is ambiguous: refused (RFC 9112 §3.2).
+        header = headers[0] if len(headers) == 1 else None
         if host_allowed(header, self.allowed_hosts):
             await self.app(scope, receive, send)
             return

@@ -1,7 +1,7 @@
 """Jeton exigé partout (#16, ADR-020, D5/D7/D8/D9) et invariant de couverture des routes."""
 
 from conftest import tailscale_json
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.routing import APIRoute, APIWebSocketRoute
 
 from nexus import actors
@@ -15,14 +15,28 @@ OPEN_WEBSOCKETS = {"/api/ws"}
 OPEN_STATIC = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
 
 
-def flat_routes(routes):
-    """Toutes les routes, y compris celles des routeurs inclus (non aplatis par FastAPI 0.141)."""
+def flat_routes(routes, prefix=""):
+    """(chemin complet, route) pour toutes les routes, préfixes des `include_router` cumulés.
+
+    FastAPI 0.141 n'aplatit pas les routeurs inclus : `route.path` seul perdrait le préfixe.
+    """
     for route in routes:
         inner = getattr(route, "original_router", None)
         if inner is not None:
-            yield from flat_routes(inner.routes)
+            yield from flat_routes(inner.routes, prefix + route.include_context.prefix)
         else:
-            yield route
+            yield prefix + getattr(route, "path", ""), route
+
+
+def all_routes(app: FastAPI):
+    """Routes normales puis routes à basse priorité (`app.frontend()`), routeurs inclus compris."""
+    yield from flat_routes(app.routes)
+    low = getattr(app.router, "_iter_low_priority_routes", None)
+    if low is not None:
+        for route in low():
+            route = getattr(route, "original_route", route)
+            for leaf in getattr(route, "routes", [route]):  # un groupe `frontend` en contient
+                yield getattr(leaf, "path", "") or "", leaf
 
 
 def fill(path):
@@ -34,8 +48,7 @@ def fill(path):
 def unauthenticated_routes(app: FastAPI, client) -> list[str]:
     """Routes qui répondent sans jeton, hors liste blanche (vide si tout est verrouillé)."""
     offenders = []
-    for route in flat_routes(app.routes):
-        path = getattr(route, "path", "")
+    for path, route in all_routes(app):
         if isinstance(route, APIRoute):
             for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
                 if (method, path) in OPEN_REST:
@@ -57,7 +70,7 @@ def test_every_route_requires_a_token_except_the_allow_list(anonymous):
 
 
 def test_the_walker_sees_every_router(anonymous):
-    seen = {(m, r.path) for r in flat_routes(anonymous.app.routes) if isinstance(r, APIRoute)
+    seen = {(m, p) for p, r in flat_routes(anonymous.app.routes) if isinstance(r, APIRoute)
             for m in r.methods}
     for expected in [
         ("GET", "/api/health"), ("GET", "/api/nodes"), ("GET", "/api/now"),
@@ -65,10 +78,10 @@ def test_the_walker_sees_every_router(anonymous):
         ("POST", "/api/approvals/{approval_ref}/answer"),
     ]:
         assert expected in seen, expected
-    assert any(isinstance(r, APIWebSocketRoute) for r in flat_routes(anonymous.app.routes))
+    assert any(isinstance(r, APIWebSocketRoute) for _, r in flat_routes(anonymous.app.routes))
 
 
-def test_a_route_added_without_a_token_fails_the_invariant(settings):
+def test_a_route_added_without_a_token_fails_the_invariant(settings, tmp_path):
     from conftest import ActorClient
 
     app = create_app(settings, nodes_runner=tailscale_json)
@@ -81,11 +94,28 @@ def test_a_route_added_without_a_token_fails_the_invariant(settings):
     async def oops_ws(websocket) -> None: ...
 
     app.mount("/static-oops", FastAPI())
+    v2 = APIRouter()
+    sub = APIRouter(prefix="/sub")
+
+    @v2.get("/open")
+    def v2_open() -> dict:
+        return {}
+
+    @sub.get("/deep")
+    def sub_deep() -> dict:
+        return {}
+
+    v2.include_router(sub, prefix="/inner")
+    app.include_router(v2, prefix="/v2")
+    app.frontend("/ui", directory=str(tmp_path), check_dir=False)
     with ActorClient(app, authenticate=False) as client:
         offenders = unauthenticated_routes(app, client)
     assert any(o.startswith("GET /api/oops ") for o in offenders)
     assert "WS /api/oops-ws" in offenders
     assert any("/static-oops" in o for o in offenders)
+    assert any(o.startswith("GET /v2/open ") for o in offenders)
+    assert any(o.startswith("GET /v2/inner/sub/deep ") for o in offenders)
+    assert any("/ui" in o for o in offenders)
 
 
 def test_health_stays_open_even_with_a_bad_authorization(anonymous):
