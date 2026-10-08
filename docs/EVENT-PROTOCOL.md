@@ -183,7 +183,7 @@ Nexus **ne lance et ne réveille aucun agent** (ADR-012) : valider ou répondre 
    - `response.text` : la réponse, ou la note de la décision (`null` sans note) ; secrets masqués, `response.redacted` en liste les types.
    - `response.choice` : l'**indice** (à partir de 0) de l'option dans `payload.options` de la demande, qui fait foi ; `null` sans choix. `options` dans `GET /api/approvals` garde les mêmes positions (un élément non textuel y devient une chaîne vide).
 
-**Écrire la décision** (Loïc, depuis l'interface ; l'acteur est l'en-tête `X-Nexus-Actor`, `loic` par défaut) :
+**Écrire la décision** (Loïc, depuis l'interface ; l'acteur est celui du jeton porteur s'il est présent, sinon l'en-tête `X-Nexus-Actor`, `loic` par défaut (ADR-020)) :
 
 | Route | Corps | Effet |
 |---|---|---|

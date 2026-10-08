@@ -153,12 +153,29 @@ Toute décision structurante s'ajoute ici.
   2. **D2** — la décision est binaire (`approved` / `rejected`) ; approuver un `needs_human` qui propose au moins 2 options exige `choice` (l'indice de l'option). Implémenté avec l'écriture des décisions (étape suivante).
   3. **D3** — `payload.consequence` est **obligatoire** pour tout **nouveau** `needs_human` (409 `consequence_required`), facultative pour une `question`, 1 000 caractères au plus. Un renvoi identique d'un ancien événement reste une relecture. Elle est **annoncée par le demandeur et non vérifiée par Nexus** (ADR-005) : l'interface dit « annoncée par <agent> ».
   4. **D4** — `payload.expires_at` facultatif, fixé par l'agent, sans valeur par défaut, de 1 minute à 30 jours après la réception ; le statut `expired` est **calculé** (`expires_at <= maintenant`, UTC) et jamais stocké.
-  5. **D5** — seuls les destinataires humains décident ; un autre acteur est refusé en 409, pas 403. Contrôle de cohérence, **pas de la sécurité** : l'acteur n'est que déclaré jusqu'à #16 (SECURITY §3).
+  5. **D5** — seuls les destinataires humains décident ; un autre acteur est refusé en 409, pas 403. Contrôle de cohérence, **pas de la sécurité** : l'acteur n'est que déclaré jusqu'à #16 (SECURITY §3). *Depuis ADR-020, l'acteur peut être authentifié par un jeton ; le contrôle reste un 409.*
   6. **D6** — pas de rétroremplissage : les demandes antérieures à la migration 0004 n'ont pas d'approbation.
   7. **D7** — Maintenant liste les demandes en attente de tout âge et les traitées des 7 derniers jours ; la tuile compte les demandes en attente (spec Maintenant, décision 2 révisée).
   8. **D8** — un nouveau `kind` `answer`, réservé à Nexus, est refusé dans `POST /api/events` : un agent ne peut pas fabriquer une réponse de Loïc.
   9. **D9** — pas de statut « retirée » : une demande dépassée se corrige par un nouvel événement.
 - **Conséquences :** migration `0004` (table `approvals`, sans rétroremplissage, réversible par `drop_table`) ; l'événement de demande consigne l'effet `approval` avec la référence ; l'agent relit `GET /api/approvals/<ref>` jusqu'à la fin de l'attente, valider ne déclenche rien chez lui (ADR-012, EVENT-PROTOCOL §6 ter) ; la création et la lecture arrivent avant l'écriture des réponses (PR en trois temps : modèle et lecture, réponses et décisions avec `/api/now`, interface). Contrepartie : une demande sans échéance attend sans limite, et une approbation « expirée » peut encore être tranchée si le produit le décide, puisque rien n'est écrit à l'échéance.
+- **Statut :** accepté.
+
+## ADR-020 — Authentification des acteurs par jeton porteur local
+
+- **Date :** 2026-10-07 (décidé par Loïc, issue #16 ; conception : `docs/superpowers/specs/2026-10-07-actor-auth-design.md`)
+- **Contexte :** l'acteur d'une requête n'est que déclaré (`X-Nexus-Actor`, `loic` par défaut) : une page web, un pair du tailnet ou un agent peut se faire passer pour Loïc. Les agents locaux tournent sous le même compte Windows que lui.
+- **Décision :** un jeton porteur par acteur, dont Nexus ne garde que l'empreinte. Neuf choix, pris par Loïc sur recommandation :
+  1. **D1** — `Authorization: Bearer nxt_<43 caractères base64url>` (32 octets de `secrets.token_bytes`) ; l'acteur se déduit du jeton, jamais d'un en-tête déclaratif.
+  2. **D2** — table `actor_tokens` (`id`, `actor`, `label`, `token_hash` SHA-256 unique, `created_at`, `revoked_at`) ; ni sel ni hachage lent (256 bits d'entropie) ; recherche par empreinte puis `hmac.compare_digest`, sans cache : une révocation vaut à la requête suivante. Une empreinte n'est pas un secret.
+  3. **D3** — provisionnement par la CLI locale `nexus-token` (`issue`, `list`, `revoke nx-tok-<n>`) ; le jeton n'est affiché qu'une fois ; plusieurs jetons par acteur ; la CLI ne migre jamais la base.
+  4. **D4** — l'interface s'authentifie comme `loic` avec un jeton envoyé dans `Authorization` (pas de cookie : pas de CSRF, compatible Tauri).
+  5. **D5** — jeton exigé sur toute route REST sauf `GET /api/health` ; WebSocket sans jeton en Phase 1 (références et types seulement, contrôle `Origin`). **Limite assumée :** un processus sous le compte OS de Loïc peut lire un jeton ou en émettre un ; le mécanisme arrête les pages web, les pairs du tailnet et l'erreur d'un agent, pas un agent local décidé à tricher.
+  6. **D6** — contrôle de `Host` contre le DNS rebinding (middleware maison, `400 invalid_host`).
+  7. **D7** — déploiement en trois PR sans drapeau de contournement : jeton accepté s'il est présent, puis envoyé par l'interface, puis exigé partout.
+  8. **D8** — `401 auth_required` (absent ou mal formé), `401 invalid_token` (inconnu ou révoqué, même message), `403` pour un droit que l'acteur n'a jamais (`actor_mismatch`, `assign_forbidden`, `human_only`), `409` pour une règle d'état (codes existants, dont `not_addressee`).
+  9. **D9** — `X-Nexus-Actor` devient facultatif et vérifié : s'il diffère de l'acteur du jeton, `403 actor_mismatch` ; de même pour `body.actor` dans `POST /api/events`.
+- **Conséquences :** PR 1 (migration `0005`, réversible par `drop_table`, modèle `ActorToken`, `nexus/auth/{tokens,deps,cli}.py`, motif `nxt_` dans `nexus/secrets.py` et règle gitleaks) accepte un jeton s'il est présent et **n'impose rien** : sans en-tête `Authorization`, le comportement reste celui d'avant, donc la limite d'ADR-019 D5 s'applique encore jusqu'à PR 3. Contrepartie : le jeton vit en clair chez l'agent, et la contrainte sur `actor` dans la base impose une migration pour ajouter un acteur.
 - **Statut :** accepté.
 
 ---

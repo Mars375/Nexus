@@ -153,6 +153,19 @@ Ce qui est demandé n'est **pas recopié** : `what` (sujet, détail), `requested
 - Écriture : `POST /api/approvals/<ref>/answer` (une `question`) et `POST /api/approvals/<ref>/decision` (un `needs_human`) ; ils écrivent l'événement `answer` et mettent à jour la ligne dans une seule transaction, sous le verrou de version (EVENT-PROTOCOL §6 ter). Seul un destinataire humain décide, jamais le demandeur ; une approbation `expired` est refusée (409).
 - Lecture : `GET /api/approvals` (filtres `status`, `task`, `limit` ; `status=expired` filtre sur le statut effectif) et `GET /api/approvals/<nx-appr-n>`. Chaque réponse porte `source` (`nexus.db`) et `measured_at`.
 
+### 2.10 bis ActorToken (jeton d'acteur) — native
+
+Un acteur s'authentifie par un jeton porteur (ADR-020). Table `actor_tokens`, référence `nx-tok-<n>`. Le jeton en clair n'est jamais stocké.
+
+| Champ | Notes |
+|---|---|
+| `id` | `nx-tok-<n>` |
+| `actor` | l'acteur du jeton (un de `ACTORS`) |
+| `label` | à quoi sert le jeton (1 à 64 caractères, sans secret) |
+| `token_hash` | SHA-256 hexadécimal du jeton, **jamais le jeton** ; unique |
+| `created_at` | instant d'émission |
+| `revoked_at` | nul tant que le jeton est actif ; une révocation prend effet dès la requête suivante |
+
 ### 2.11 Decision (décision) — native
 
 | Champ | Notes |
@@ -214,7 +227,7 @@ Decision *─* Task
 
 | Donnée | Propriétaire | Nexus |
 |---|---|---|
-| Tâches, événements, runs, approbations, décisions | **Nexus** (`nexus.db`) | propriétaire |
+| Tâches, événements, runs, approbations, décisions, empreintes des jetons d'acteur | **Nexus** (`nexus.db`) | propriétaire |
 | Conversations nées dans Nexus | **Nexus** | propriétaire |
 | Travail confié à Hermes / Claude / Codex / Orca | l'exécutant | suit via `Run.external_ref` |
 | Chats Telegram, sessions Hermes/Claude/Codex | leur système | lit, indexe ; envoie via adaptateur (gated) |

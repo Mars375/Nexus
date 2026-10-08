@@ -6,12 +6,13 @@ import re
 from datetime import datetime
 from typing import Annotated, Literal, Self
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, model_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.actors import ACTORS, DEFAULT_ACTOR, Actor, Human
+from nexus.actors import Actor, Human
+from nexus.auth.deps import authenticated_actor, get_session
 from nexus.clock import now
 from nexus.models import Task, TaskComment, TaskHistory
 from nexus.tasks import service
@@ -30,21 +31,6 @@ router = APIRouter(prefix="/api/tasks", tags=["tâches"])
 # --- Dépendances --------------------------------------------------------------------------
 
 
-def get_session(request: Request):
-    with request.app.state.sessionmaker() as session:
-        yield session
-
-
-def get_actor(x_nexus_actor: Annotated[str | None, Header()] = None) -> str:
-    actor = x_nexus_actor or DEFAULT_ACTOR
-    if actor not in ACTORS:
-        # La valeur reçue n'est jamais renvoyée : l'en-tête pourrait contenir un secret.
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT, "acteur inconnu dans l'en-tête X-Nexus-Actor"
-        )
-    return actor
-
-
 def parse_ref(task_ref: str) -> int:
     raw = task_ref.removeprefix("nx-task-")
     # Chiffres ASCII seulement, longueur raisonnable ; la valeur reçue n'est jamais recopiée
@@ -55,7 +41,7 @@ def parse_ref(task_ref: str) -> int:
 
 
 SessionDep = Annotated[Session, Depends(get_session)]
-ActorDep = Annotated[str, Depends(get_actor)]
+ActorDep = Annotated[str, Depends(authenticated_actor)]
 EvidenceRef = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 # Un titre ou un objectif fait seulement d'espaces est vide.
 Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]

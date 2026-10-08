@@ -6,7 +6,7 @@ import math
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Header, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from pydantic import (
     AwareDatetime,
     BaseModel,
@@ -16,6 +16,7 @@ from pydantic import (
 )
 
 from nexus.actors import Actor
+from nexus.auth.deps import token_actor
 from nexus.clock import now
 from nexus.events import service
 from nexus.events.limits import EVENT_ID_MAX, EVIDENCE_REF_MAX, RUN_MAX, SUBJECT_MAX
@@ -121,9 +122,17 @@ def publish(
     body: EventIn,
     session: SessionDep,
     response: Response,
+    from_token: Annotated[str | None, Depends(token_actor)],
     x_nexus_actor: Annotated[str | None, Header()] = None,
 ) -> EventOut:
-    if x_nexus_actor and x_nexus_actor != body.actor:
+    if from_token is not None:
+        # The token decides who speaks: the body may not claim another actor (ADR-020, D9).
+        if body.actor != from_token:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, {
+                "code": "actor_mismatch",
+                "message": "l'acteur de l'événement diffère de celui du jeton",
+            })
+    elif x_nexus_actor and x_nexus_actor != body.actor:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             "l'acteur de l'en-tête et celui de l'événement diffèrent",

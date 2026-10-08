@@ -6,6 +6,7 @@ import pytest
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 
@@ -57,7 +58,8 @@ def test_upgrading_a_populated_0003_database_keeps_its_data_and_opens_no_approva
         assert client.get("/api/tasks/nx-task-1").status_code == 200
 
     conn = sqlite3.connect(settings.db_path)
-    assert conn.execute("SELECT version_num FROM alembic_version").fetchone() == ("0004",)
+    head = ScriptDirectory.from_config(migrate.alembic_config(settings.db_url)).get_current_head()
+    assert conn.execute("SELECT version_num FROM alembic_version").fetchone() == (head,)
     conn.close()
 
 

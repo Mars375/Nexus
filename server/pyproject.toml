@@ -17,6 +17,7 @@ dependencies = [
 [project.scripts]
 nexus = "nexus:main"
 nexus-dev = "nexus:dev"
+nexus-token = "nexus.auth.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.12.14,<0.13.0"]
