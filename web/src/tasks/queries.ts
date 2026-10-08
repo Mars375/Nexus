@@ -9,6 +9,7 @@ import {
   type TaskChanges,
   type TaskDraft,
 } from '@/api'
+import { getAuthState } from '@/auth'
 
 export const tasksKey = ['tasks'] as const
 export const taskDetailKey = (id: string, part: 'comments' | 'history') => ['tasks', id, part]
@@ -18,6 +19,15 @@ const local = { networkMode: 'always' } as const
 
 function explain(error: unknown): string {
   return error instanceof ApiError ? error.message : 'Le serveur Nexus ne répond pas.'
+}
+
+/**
+ * A 401 that locked the app is told by the lock screen, which covers the toasts. A stale 401
+ * (the stored token changed while the request was in flight) does not lock: it keeps its toast.
+ */
+function notifyError(error: unknown) {
+  if (error instanceof ApiError && error.status === 401 && getAuthState().locked) return
+  toast.error(explain(error))
 }
 
 /** Relecture régulière, gardée comme filet à côté du temps réel (#5) : un message peut se perdre. */
@@ -60,7 +70,7 @@ export function useCreateTask() {
   return useMutation({
     mutationFn: (draft: TaskDraft) => tasksApi.create(draft),
     onSuccess: (task) => toast.success(`Tâche créée : ${task.title}`),
-    onError: (error) => toast.error(explain(error)),
+    onError: notifyError,
     onSettled: refresh,
     ...local,
   })
@@ -72,7 +82,7 @@ export function useUpdateTask() {
     mutationFn: ({ id, changes }: { id: string; changes: TaskChanges }) =>
       tasksApi.update(id, changes),
     onSuccess: () => toast.success('Modifications enregistrées'),
-    onError: (error) => toast.error(explain(error)),
+    onError: notifyError,
     onSettled: refresh,
     ...local,
   })
@@ -101,7 +111,7 @@ export function useMoveTask() {
     },
     onError: (error, _vars, context) => {
       if (context?.previous) client.setQueryData(tasksKey, context.previous)
-      toast.error(explain(error))
+      notifyError(error)
     },
     onSettled: () => client.invalidateQueries({ queryKey: tasksKey }),
     ...local,
@@ -112,7 +122,7 @@ export function useAddComment(id: string) {
   const client = useQueryClient()
   return useMutation({
     mutationFn: (body: string) => tasksApi.comment(id, body),
-    onError: (error) => toast.error(explain(error)),
+    onError: notifyError,
     onSettled: () => client.invalidateQueries({ queryKey: ['tasks', id] }),
     ...local,
   })
@@ -123,7 +133,7 @@ export function useLink(id: string) {
   return useMutation({
     mutationFn: ({ other, remove }: { other: string; remove?: boolean }) =>
       remove ? tasksApi.unlink(id, other) : tasksApi.link(id, other),
-    onError: (error) => toast.error(explain(error)),
+    onError: notifyError,
     onSettled: refresh,
     ...local,
   })

@@ -1,24 +1,23 @@
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { defineConfig } from '@playwright/test'
+import { API_PORT, WEB_PORT, dataDirPath, storageStatePath } from './e2e/e2e-env'
 
-// Base jetable : les tests de bout en bout ne touchent jamais la vraie nexus.db.
-const dataDir = mkdtempSync(join(tmpdir(), 'nexus-e2e-'))
-const API_PORT = '8799'
-const WEB_PORT = 5199
+const dataDir = dataDirPath()
 
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
   workers: 1,
   reporter: 'list',
+  // Après le démarrage du serveur : émet le jeton `loic` de la base jetable (e2e/global-setup.ts).
+  globalSetup: './e2e/global-setup.ts',
   use: {
     baseURL: `http://localhost:${WEB_PORT}`,
     locale: 'fr-FR',
     timezoneId: 'Europe/Paris',
     viewport: { width: 1440, height: 900 },
     trace: 'retain-on-failure',
+    // Le jeton `loic` est déjà dans le localStorage : les requêtes de l'interface portent Authorization.
+    storageState: storageStatePath(),
   },
   // work.spec attend une base vide ; now.spec y crée des données : il passe donc après.
   projects: [
@@ -27,6 +26,8 @@ export default defineConfig({
     // approvals.spec crée ses propres demandes (sujets uniques) : il ne dépend d'aucune donnée des autres.
     { name: 'approvals', testMatch: /approvals.spec.ts/, dependencies: ['work'] },
     { name: 'visuals', testMatch: /visuals.spec.ts/, dependencies: ['now'] },
+    // auth.spec simule les 401 côté navigateur et ne crée aucune donnée.
+    { name: 'auth', testMatch: /auth.spec.ts/, dependencies: ['work'] },
   ],
   webServer: [
     {

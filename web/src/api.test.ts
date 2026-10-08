@@ -1,5 +1,6 @@
-import { afterEach, expect, test, vi } from 'vitest'
-import { fetchHealth, request, tasksApi } from './api'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { ApiError, fetchHealth, request, retryQuery, tasksApi } from './api'
+import { clearToken, getAuthState, getToken, markUnlocked, setToken } from './auth'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -64,4 +65,121 @@ test("avec VITE_NEXUS_API_URL, les requêtes REST et le contrôle de santé vise
   expect(calls).toEqual(['http://127.0.0.1:8765/api/tasks', 'http://127.0.0.1:8765/api/health'])
   vi.unstubAllEnvs()
   vi.resetModules()
+})
+
+// --- Jeton d'acteur (ADR-020, D4) -------------------------------------------------------------
+
+describe('jeton porteur', () => {
+  const TOKEN = 'nxt_' + 'A'.repeat(43)
+  const OTHER = 'nxt_' + 'B'.repeat(43)
+
+  const refuse = (code: string, status = 401) =>
+    vi.fn(async (..._args: [string, RequestInit?]) =>
+      new Response(JSON.stringify({ detail: { code, message: 'refus' } }), { status, headers: { 'content-type': 'application/json' } }),
+    )
+  const ok = () => vi.fn(async (..._args: [string, RequestInit?]) => new Response('[]', { status: 200 }))
+  const headersOf = (fetchMock: ReturnType<typeof ok>) => new Headers(fetchMock.mock.calls[0][1]?.headers)
+
+  beforeEach(() => {
+    clearToken()
+    markUnlocked()
+  })
+
+  test("sans jeton, aucun en-tête Authorization n'est envoyé et l'application n'est pas verrouillée", async () => {
+    const fetchMock = ok()
+    vi.stubGlobal('fetch', fetchMock)
+    await tasksApi.list()
+    expect(headersOf(fetchMock).has('Authorization')).toBe(false)
+    expect(getAuthState().locked).toBe(false)
+  })
+
+  test('avec un jeton, request() envoie Authorization: Bearer', async () => {
+    setToken(TOKEN)
+    const fetchMock = ok()
+    vi.stubGlobal('fetch', fetchMock)
+    await tasksApi.list()
+    expect(headersOf(fetchMock).get('Authorization')).toBe(`Bearer ${TOKEN}`)
+  })
+
+  test("l'en-tête s'ajoute à ceux qui existent : Content-Type d'un corps, en-têtes de l'appelant", async () => {
+    setToken(TOKEN)
+    const fetchMock = ok()
+    vi.stubGlobal('fetch', fetchMock)
+    await request('/api/tasks', { method: 'POST', body: '{}', headers: { 'X-Test': '1' } })
+    const headers = headersOf(fetchMock)
+    expect(headers.get('Authorization')).toBe(`Bearer ${TOKEN}`)
+    expect(headers.get('Content-Type')).toBe('application/json')
+    expect(headers.get('X-Test')).toBe('1')
+  })
+
+  test("le jeton n'est jamais envoyé hors de l'API", async () => {
+    setToken(TOKEN)
+    const fetchMock = ok()
+    vi.stubGlobal('fetch', fetchMock)
+    await request('/autre/chemin')
+    await request('//evil.example/api/tasks')
+    for (const call of fetchMock.mock.calls) expect(new Headers(call[1]?.headers).has('Authorization')).toBe(false)
+  })
+
+  test('le contrôle de santé reste anonyme', async () => {
+    setToken(TOKEN)
+    const fetchMock = ok()
+    vi.stubGlobal('fetch', fetchMock)
+    await fetchHealth()
+    expect(new Headers(fetchMock.mock.calls[0][1]?.headers).has('Authorization')).toBe(false)
+  })
+
+  test.each(['auth_required', 'invalid_token'])('un 401 %s oublie le jeton et verrouille', async (code) => {
+    setToken(TOKEN)
+    vi.stubGlobal('fetch', refuse(code))
+    await expect(tasksApi.list()).rejects.toMatchObject({ status: 401, code })
+    expect(getToken()).toBeNull()
+    expect(getAuthState()).toMatchObject({ locked: true, lockReason: code, hasToken: false })
+  })
+
+  test("un 401 sans code connu verrouille mais garde le jeton (il ne vient peut-être pas de Nexus)", async () => {
+    setToken(TOKEN)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 401 })))
+    await expect(tasksApi.list()).rejects.toMatchObject({ status: 401, code: 'http_401' })
+    expect(getToken()).toBe(TOKEN)
+    expect(getAuthState()).toMatchObject({ locked: true, hasToken: true })
+  })
+
+  test.each([403, 409, 500])('un %i ne touche ni au jeton ni au verrou', async (status) => {
+    setToken(TOKEN)
+    vi.stubGlobal('fetch', refuse('human_only', status))
+    await expect(tasksApi.list()).rejects.toMatchObject({ status })
+    expect(getToken()).toBe(TOKEN)
+    expect(getAuthState().locked).toBe(false)
+  })
+
+  test("un 401 tardif d'un ancien jeton n'efface pas celui que Loïc vient d'enregistrer", async () => {
+    setToken(TOKEN)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      await gate
+      return new Response(JSON.stringify({ detail: { code: 'invalid_token', message: 'x' } }), { status: 401 })
+    }))
+    const pending = tasksApi.list()
+    setToken(OTHER) // saisi pendant que la requête est en vol
+    release()
+    await expect(pending).rejects.toMatchObject({ status: 401 })
+    expect(getToken()).toBe(OTHER)
+    expect(getAuthState().locked).toBe(false)
+  })
+
+  test("le jeton n'apparaît pas dans le message d'une erreur", async () => {
+    setToken(TOKEN)
+    vi.stubGlobal('fetch', refuse('invalid_token'))
+    const error = await tasksApi.list().catch((e: Error) => e)
+    expect(String((error as Error).message)).not.toContain(TOKEN)
+  })
+})
+
+test("TanStack ne réessaie pas après un 401, mais garde ses trois essais ailleurs", () => {
+  expect(retryQuery(0, new ApiError(401, 'invalid_token', 'x'))).toBe(false)
+  expect(retryQuery(0, new ApiError(500, 'http_500', 'x'))).toBe(true)
+  expect(retryQuery(2, new Error('réseau'))).toBe(true)
+  expect(retryQuery(3, new Error('réseau'))).toBe(false)
 })

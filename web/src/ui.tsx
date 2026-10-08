@@ -1,6 +1,7 @@
 import * as RadixDialog from '@radix-ui/react-dialog'
 import clsx from 'clsx'
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import { useAuth } from '@/auth'
 import type { Actor } from '@/api'
 import { ACTOR_NAME } from '@/tasks/vocabulary'
 
@@ -65,8 +66,10 @@ export function Dialog({
   description?: string
   children: ReactNode
 }) {
+  // The portal sits outside the inert app: a dialog left open would capture clicks and typing meant for the lock screen. The callers' drafts live above this component, so they survive the close.
+  const { locked } = useAuth()
   return (
-    <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
+    <RadixDialog.Root open={open && !locked} onOpenChange={onOpenChange}>
       <RadixDialog.Portal>
         <RadixDialog.Overlay className="fixed inset-0 bg-black/70 data-[state=open]:animate-[fade-in_120ms_ease-out]" />
         <RadixDialog.Content

@@ -96,6 +96,7 @@ watch(run_ref)          → événements du run (claimed, progress, blocked, don
 ### 3.4 Interface
 
 - **UI web locale** (servie sur le poste de Loïc) : les vues, recherche, provenance cliquable, actions. Encapsulée plus tard dans une **application Windows** (Tauri, §7).
+- **Contrat UI ↔ API** (#16, ADR-020 D4) : l'UI ne parle qu'à l'API FastAPI. Quand un jeton `loic` est enregistré dans le navigateur (`localStorage`, clé `nexus.token`), `request()` (`web/src/api.ts`) l'envoie dans `Authorization: Bearer …` sur les seules adresses `/api/…` ; `GET /api/health` reste anonyme. Un 401 de l'API affiche l'écran « Nexus verrouillé » (VIEWS §9), sauf si le jeton enregistré a changé depuis le départ de la requête (nouveau jeton ou jeton oublié) : la réponse tardive est alors ignorée par le verrou et signalée comme un échec ordinaire. Quand il verrouille, un 401 `auth_required` ou `invalid_token` fait aussi oublier le jeton envoyé. Le WebSocket `/api/ws` ne porte pas de jeton en Phase 1 (ADR-020 D5). Aucun cookie : l'en-tête n'est jamais joint automatiquement par le navigateur, le même contrat vaudra dans Tauri.
 - **Telegram** : alertes, rapports, questions urgentes (surface mobile).
 - Pas d'exposition publique ; pas d'app mobile dédiée. Seule exception envisagée : un webhook entrant WhatsApp, limité à cet endpoint (à trancher en Phase 3, ADR-018).
 
