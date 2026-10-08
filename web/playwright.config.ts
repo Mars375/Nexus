@@ -26,7 +26,7 @@ export default defineConfig({
     // approvals.spec crée ses propres demandes (sujets uniques) : il ne dépend d'aucune donnée des autres.
     { name: 'approvals', testMatch: /approvals.spec.ts/, dependencies: ['work'] },
     { name: 'visuals', testMatch: /visuals.spec.ts/, dependencies: ['now'] },
-    // auth.spec joue les 401 du vrai serveur (deux tests seulement les simulent) ; il n'écrit que dans actor_tokens (un jeton émis puis révoqué), aucune tâche.
+    // auth.spec joue les 401 du vrai serveur (deux tests seulement les simulent) ; il émet puis révoque un jeton et crée une tâche (« Brouillon sous verrou »), sans effet sur les autres projets.
     { name: 'auth', testMatch: /auth.spec.ts/, dependencies: ['work'] },
   ],
   webServer: [
