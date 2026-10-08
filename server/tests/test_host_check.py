@@ -150,3 +150,52 @@ def test_a_host_header_name_in_any_case_is_read():
 def test_two_host_headers_in_different_cases_are_refused():
     reached, sent = _asgi("http", [(b"host", b"localhost"), (b"HOST", b"evil.example")])
     assert not reached and sent[0]["status"] == 400
+
+
+def _serve(app):
+    """Runs a real uvicorn server on a free loopback port; returns (server, thread, port)."""
+    import threading
+    import time
+
+    import uvicorn
+
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started:
+        assert thread.is_alive() and time.monotonic() < deadline, "uvicorn did not start"
+        time.sleep(0.02)
+    return server, thread, server.servers[0].sockets[0].getsockname()[1]
+
+
+def _handshake(port, host):
+    import base64
+    import os
+    import socket
+
+    key = base64.b64encode(os.urandom(16)).decode()  # a fresh nonce, as a real client sends
+    request = (
+        "GET /api/ws HTTP/1.1\r\n"
+        f"Host: {host}\r\n"
+        "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+        f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n"
+        "Origin: http://localhost:5173\r\n\r\n"
+    )
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+        sock.sendall(request.encode("latin-1"))
+        return sock.recv(4096).decode("latin-1")
+
+
+def test_a_real_server_answers_403_to_a_websocket_with_a_foreign_host(settings):
+    """The middleware closes with 1008 before accept: the client sees HTTP 403 (SECURITY §3)."""
+    server, thread, port = _serve(create_app(settings, nodes_runner=tailscale_json))
+    try:
+        refused = _handshake(port, EVIL)
+        admitted = _handshake(port, f"localhost:{port}")
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+    assert refused.startswith("HTTP/1.1 403"), refused.splitlines()[:1]
+    assert EVIL not in refused
+    assert admitted.startswith("HTTP/1.1 101"), admitted.splitlines()[:1]

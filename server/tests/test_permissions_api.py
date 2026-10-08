@@ -223,6 +223,46 @@ def test_an_executor_handoff_to_a_human_is_applied(client, actor):
     assert lead_of(client, ref) == "loic"
 
 
+def next_action_of(client, ref):
+    return client.get(f"/api/tasks/{ref}").json()["next_action"]
+
+
+@pytest.mark.parametrize("actor", sorted(EXECUTORS))
+def test_an_executor_handoff_back_to_the_current_lead_changes_only_the_next_action(client, actor):
+    lead = "codex" if actor != "codex" else "claude"
+    ref = create(client, "loic", lead_agent=lead, collaborators=[actor]).json()["id"]
+    res = client.post("/api/events", json=handoff(actor, ref, lead), headers=as_(client, actor))
+    assert res.status_code == 201, res.text
+    assert res.json()["effects"] == [{"action": "handoff", "applied": True}]
+    assert lead_of(client, ref) == lead
+    assert next_action_of(client, ref) == "à toi"
+
+
+@pytest.mark.parametrize("actor", sorted(EXECUTORS))
+def test_an_executor_handoff_to_the_current_lead_that_changes_nothing_is_not_applied(
+    client, actor
+):
+    lead = "codex" if actor != "codex" else "claude"
+    ref = create(client, "loic", lead_agent=lead, next_action="à toi").json()["id"]
+    res = client.post("/api/events", json=handoff(actor, ref, lead), headers=as_(client, actor))
+    assert res.status_code == 201, res.text
+    [effect] = res.json()["effects"]
+    assert effect["action"] == "handoff" and effect["applied"] is False and effect["reason"]
+    assert lead_of(client, ref) == lead and next_action_of(client, ref) == "à toi"
+
+
+@pytest.mark.parametrize("actor", sorted(EXECUTORS))
+def test_an_executor_already_lead_changes_its_next_action_by_patch_not_handoff(client, actor):
+    ref = create(client, "loic", lead_agent=actor).json()["id"]
+    res = client.post("/api/events", json=handoff(actor, ref, actor), headers=as_(client, actor))
+    assert res.status_code == 409 and res.json()["detail"]["code"] == "handoff_to_self"
+    assert client.get("/api/events", headers=as_(client, actor)).json() == []
+    res = client.patch(f"/api/tasks/{ref}", json={"next_action": "relire"},
+                       headers=as_(client, actor))
+    assert res.status_code == 200, res.text
+    assert lead_of(client, ref) == actor and next_action_of(client, ref) == "relire"
+
+
 @pytest.mark.parametrize("actor", sorted(ACTORS - EXECUTORS - HUMANS))
 @pytest.mark.parametrize("target", ["claude", "codex", "aether", "loic"])
 def test_a_node_agent_handoff_is_applied(client, actor, target):

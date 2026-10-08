@@ -906,6 +906,17 @@ def test_http_api_refuses_unknown_actor_kind_or_recipient_with_422(client, field
     assert client.get("/api/events", params={"task": ref}).json() == []
 
 
+@pytest.mark.parametrize("actor", [[], {}, ["loic"], 7])
+def test_a_non_text_actor_is_refused_with_422(client, actor):
+    """The test client signs as loic when the body actor is not a name: the API validates."""
+    ref = task(client)
+    body = {"id": "evt_bad", "at": AT, "actor": actor, "kind": "question",
+            "subject": "s", "task": ref, "needs": ["loic"]}
+    res = client.post("/api/events", json=body)
+    assert res.status_code == 422, res.text
+    assert client.get("/api/events", params={"task": ref}).json() == []
+
+
 def test_same_id_in_the_repeated_autumn_hour_compares_instants(client):
     ref = task(client)
     base = {"id": "evt_dst", "actor": "helios", "kind": "claimed", "subject": "s", "task": ref}
