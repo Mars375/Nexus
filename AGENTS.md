@@ -4,7 +4,7 @@
 
 - `server/`: Python (FastAPI, SQLAlchemy, Alembic), managed with `uv`. `web/`: React + TypeScript + Vite, managed with `pnpm`.
 - From the repo root: `pnpm install` then `pnpm bootstrap` once; `pnpm dev` to run; run `pnpm test` and `pnpm lint` before committing.
-- The API requires a token (ADR-020). After the first `pnpm dev` (it creates and migrates the database), issue Loïc's browser token once with `uv run --directory server nexus-token issue loic --label navigateur` and paste it into the « Nexus verrouillé » screen; an agent uses its own token (`NEXUS_TOKEN` or `--token-file`). Never commit or log a token.
+- The API requires a token (ADR-020). After the first `pnpm dev` (it creates and migrates the database), issue Loïc's browser token once with `uv run --directory server nexus-token issue loic --label navigateur` and paste it into the « Nexus verrouillé » screen; an agent sends its own token as `Authorization: Bearer nxt_…` (`demo_agent` reads `NEXUS_TOKEN` or `--token-file`). `nexus-token` must see the same `NEXUS_DATA_DIR` as `pnpm dev`. Never commit or log a token.
 - A pre-commit hook (`.husky/pre-commit`) blocks test artefacts and local databases, runs gitleaks on staged changes (config: `.gitleaks.toml`), lints staged files, then typechecks and runs the fast tests. Never bypass it with `--no-verify`; fix the cause instead. Build fake secrets in tests at runtime (`"ghp_" + "A" * 36`).
 - Schema changes go through a new Alembic migration in `server/src/nexus/migrations/versions/`; the server applies migrations on startup.
 - The UI only talks to the FastAPI API — no browser-only APIs, so the same UI can ship inside Tauri later (ADR-017).
