@@ -1,5 +1,7 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
-import { TOKEN_KEY } from './e2e-env'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+import { TOKEN_KEY, dataDirPath } from './e2e-env'
 
 const TOKEN = process.env.NEXUS_E2E_TOKEN ?? ''
 const NO_TOKEN = { cookies: [], origins: [] }
@@ -7,6 +9,7 @@ const OTHER_TOKEN = 'nxt_' + 'B'.repeat(43) // well formed, unknown to the serve
 
 const stored = (page: Page) => page.evaluate((key) => localStorage.getItem(key), TOKEN_KEY)
 
+/** A 401 in the middle of an edit cannot be provoked on the real server: only these two tests mock it. */
 const refuse = (route: Route, code: string) =>
   route.fulfill({
     status: 401,
@@ -16,21 +19,30 @@ const refuse = (route: Route, code: string) =>
   })
 
 /**
- * Plays the server of PR 3: every API route but the health check answers 401 unless the request
- * carries the real token. The real server does not require it yet.
+ * Notes the `Authorization` header of every API request the page sends, without touching them:
+ * the server is the real one and answers 401 by itself since PR 3 (ADR-020).
  */
-async function requireToken(page: Page) {
+async function recordAuthorization(page: Page) {
   const seen: (string | undefined)[] = []
   await page.route(
-    (url) => url.pathname.startsWith('/api/') && url.pathname !== '/api/health',
+    (url) => url.pathname.startsWith('/api/'),
     (route) => {
-      const auth = route.request().headers()['authorization']
-      seen.push(auth)
-      if (auth === `Bearer ${TOKEN}`) return route.continue()
-      return refuse(route, auth ? 'invalid_token' : 'auth_required')
+      seen.push(route.request().headers()['authorization'])
+      return route.continue()
     },
   )
   return seen
+}
+
+/** Runs the product's own CLI against the throwaway database of the test server. */
+function nexusToken(...args: string[]) {
+  const done = spawnSync('uv', ['run', '--directory', '../server', 'nexus-token', ...args], {
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
+    env: { ...process.env, NEXUS_DATA_DIR: dataDirPath() },
+    encoding: 'utf8',
+  })
+  expect(done.status, done.stderr).toBe(0)
+  return done
 }
 
 const lockTitle = (page: Page) => page.getByRole('heading', { name: 'Nexus verrouillé' })
@@ -54,15 +66,19 @@ test('le contrôle de santé reste anonyme', async ({ page }) => {
 test.describe('sans jeton stocké', () => {
   test.use({ storageState: NO_TOKEN })
 
-  test('un serveur qui n’exige pas de jeton : l’application marche, sans écran verrouillé', async ({ page }) => {
+  test('un navigateur sans jeton : le vrai serveur répond 401 et Nexus reste verrouillé', async ({ page }) => {
+    const seen = await recordAuthorization(page)
+    const refused = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/tasks' && r.status() === 401)
     await page.goto('/#/travail')
-    await expect(page.getByRole('heading', { name: 'Travail' })).toBeVisible()
-    await expect(lockTitle(page)).toHaveCount(0)
+    expect((await (await refused).json()).detail.code).toBe('auth_required')
+
+    await expect(lockTitle(page)).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Travail' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Oublier le jeton' })).toHaveCount(0)
+    expect(seen.filter((auth) => auth !== undefined)).toEqual([]) // nothing to send: nothing was sent
   })
 
   test('un 401 de l’API affiche l’écran verrouillé : titre, consigne, champ focalisé', async ({ page }) => {
-    await requireToken(page)
     await page.goto('/#/travail')
 
     await expect(lockTitle(page)).toBeVisible()
@@ -73,7 +89,7 @@ test.describe('sans jeton stocké', () => {
   })
 
   test('un jeton au mauvais format : erreur qui nomme le champ, sans le recopier, rien n’est stocké', async ({ page }) => {
-    const seen = await requireToken(page)
+    const seen = await recordAuthorization(page)
     await page.goto('/#/travail')
     await expect(lockTitle(page)).toBeVisible()
     // The app stays mounted under the lock screen and may keep polling (without a token): only a request carrying one would be a leak.
@@ -93,7 +109,7 @@ test.describe('sans jeton stocké', () => {
   })
 
   test('le vrai jeton déverrouille : les données se relisent avec Authorization et le temps réel est là', async ({ page }) => {
-    const seen = await requireToken(page)
+    const seen = await recordAuthorization(page)
     await page.goto('/#/travail')
     await expect(lockTitle(page)).toBeVisible()
 
@@ -110,7 +126,6 @@ test.describe('sans jeton stocké', () => {
   })
 
   test('un jeton bien formé mais refusé par le serveur est oublié et ramène à l’écran verrouillé', async ({ page }) => {
-    await requireToken(page)
     await page.goto('/#/travail')
     await expect(lockTitle(page)).toBeVisible()
 
@@ -124,13 +139,14 @@ test.describe('sans jeton stocké', () => {
 })
 
 test('un jeton stocké puis révoqué : 401 invalid_token, jeton oublié, écran verrouillé', async ({ page }) => {
-  await page.addInitScript(([key, token]) => localStorage.setItem(key, token), [TOKEN_KEY, OTHER_TOKEN])
-  await page.route(
-    (url) => url.pathname.startsWith('/api/') && url.pathname !== '/api/health',
-    (route) => refuse(route, 'invalid_token'),
-  )
+  const issued = nexusToken('issue', 'loic', '--label', 'revoque')
+  const revoked = issued.stdout.trim()
+  nexusToken('revoke', /nx-tok-[0-9]+/.exec(issued.stderr)![0])
+  await page.addInitScript(([key, token]) => localStorage.setItem(key, token), [TOKEN_KEY, revoked])
+  const refused = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/tasks' && r.status() === 401)
   await page.goto('/#/travail')
 
+  expect((await (await refused).json()).detail.code).toBe('invalid_token')
   await expect(lockTitle(page)).toBeVisible()
   expect(await stored(page)).toBeNull()
 })
