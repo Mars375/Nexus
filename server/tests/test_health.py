@@ -27,7 +27,7 @@ def test_startup_creates_db_by_migration(client, settings):
 def test_existing_database_is_backed_up_before_migrating(tmp_path, keep):
     import sqlite3
 
-    from fastapi.testclient import TestClient
+    from conftest import ActorClient
 
     from nexus import backup
     from nexus.app import create_app
@@ -42,7 +42,7 @@ def test_existing_database_is_backed_up_before_migrating(tmp_path, keep):
     conn.commit()
     conn.close()
 
-    with TestClient(create_app(settings)):
+    with ActorClient(create_app(settings)):
         pass
 
     # Même avec KEEP=1, la seule copie restante est celle d'avant migration.
@@ -56,14 +56,14 @@ def test_existing_database_is_backed_up_before_migrating(tmp_path, keep):
 
 
 def test_no_extra_backup_when_nothing_to_migrate(settings):
-    from fastapi.testclient import TestClient
+    from conftest import ActorClient
 
     from nexus import backup
     from nexus.app import create_app
 
-    with TestClient(create_app(settings)):
+    with ActorClient(create_app(settings)):
         pass
-    with TestClient(create_app(settings)):
+    with ActorClient(create_app(settings)):
         pass
 
     assert len(backup.list_backups(settings.backup_dir)) == 2  # une par démarrage

@@ -1,14 +1,14 @@
 import { expect, test } from '@playwright/test'
+import { API, auth } from './api'
 
-const API = 'http://127.0.0.1:8799'
 const AT = new Date().toISOString()
 
 test('un agent qui commence un run allume son poste en moins d\'une seconde', async ({ page, request }) => {
   await page.goto('/#/maintenant')
   await expect(page.getByText('Temps réel : connecté')).toBeVisible()
-  const task = await (await request.post(`${API}/api/tasks`, { data: { title: 'Pont e2e', objective: 'Tester Maintenant', status: 'todo', next_action: 'x' } })).json()
+  const task = await (await request.post(`${API}/api/tasks`, { headers: auth(), data: { title: 'Pont e2e', objective: 'Tester Maintenant', status: 'todo', next_action: 'x' } })).json()
   for (const [kind, extra] of [['claimed', {}], ['working', { payload: { run_ref: 'session:e2e' } }]] as const) {
-    const res = await request.post(`${API}/api/events`, { data: { id: `evt_e2e_${kind}_${Date.now()}`, at: AT, actor: 'codex', kind, subject: 's', task: task.id, ...extra } })
+    const res = await request.post(`${API}/api/events`, { headers: auth('codex'), data: { id: `evt_e2e_${kind}_${Date.now()}`, at: AT, actor: 'codex', kind, subject: 's', task: task.id, ...extra } })
     expect(res.ok()).toBeTruthy()
   }
   await expect(page.locator('[data-agent="codex"]')).toHaveAttribute('data-run', 'true', { timeout: 1000 })
@@ -17,7 +17,7 @@ test('un agent qui commence un run allume son poste en moins d\'une seconde', as
 test('une question pour Loïc arrive sur sa table et dans les demandes reçues', async ({ page, request }) => {
   await page.goto('/#/maintenant')
   await expect(page.getByText('Temps réel : connecté')).toBeVisible()
-  const res = await request.post(`${API}/api/events`, { data: { id: `evt_e2e_q_${Date.now()}`, at: AT, actor: 'mnema', kind: 'question', subject: 'Quelle version de Python cibler ?', needs: ['loic'], payload: { options: ['3.12', '3.13'] } } })
+  const res = await request.post(`${API}/api/events`, { headers: auth('mnema'), data: { id: `evt_e2e_q_${Date.now()}`, at: AT, actor: 'mnema', kind: 'question', subject: 'Quelle version de Python cibler ?', needs: ['loic'], payload: { options: ['3.12', '3.13'] } } })
   expect(res.ok()).toBeTruthy()
   const ref = (await res.json()).id as string
   await expect(page.locator(`[data-ticket="${ref}"]`)).toBeAttached({ timeout: 1000 })
@@ -44,9 +44,9 @@ const AGENTS = ['helios', 'mnema', 'aether', 'artemis', 'claude', 'codex', 'orca
 async function seedAllAgents(request: import('@playwright/test').APIRequestContext) {
   // La moitié des agents travaillent (étiquette avec titre long et durée), les autres restent inactifs.
   for (const agent of AGENTS.slice(0, 5)) {
-    const task = await (await request.post(`${API}/api/tasks`, { data: { title: `Tâche de ${agent} avec un titre assez long`, objective: 'Étiquettes', status: 'todo', next_action: 'x' } })).json()
+    const task = await (await request.post(`${API}/api/tasks`, { headers: auth(), data: { title: `Tâche de ${agent} avec un titre assez long`, objective: 'Étiquettes', status: 'todo', next_action: 'x' } })).json()
     for (const [kind, extra] of [['claimed', {}], ['working', { payload: { run_ref: `session:lab-${agent}` } }]] as const) {
-      const res = await request.post(`${API}/api/events`, { data: { id: `evt_lab_${agent}_${kind}_${Date.now()}`, at: AT, actor: agent, kind, subject: 's', task: task.id, ...extra } })
+      const res = await request.post(`${API}/api/events`, { headers: auth(agent), data: { id: `evt_lab_${agent}_${kind}_${Date.now()}`, at: AT, actor: agent, kind, subject: 's', task: task.id, ...extra } })
       expect(res.ok()).toBeTruthy()
     }
   }
@@ -141,7 +141,7 @@ test('mouvement réduit : une demande fraîche garde son fond ambre', async ({ p
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.goto('/#/maintenant')
   await expect(page.getByText('Temps réel : connecté')).toBeVisible()
-  const res = await request.post(`${API}/api/events`, { data: { id: `evt_e2e_rm_${Date.now()}`, at: AT, actor: 'hermes', kind: 'question', subject: 'Question mouvement réduit', needs: ['loic'], payload: { options: ['a', 'b'] } } })
+  const res = await request.post(`${API}/api/events`, { headers: auth('hermes'), data: { id: `evt_e2e_rm_${Date.now()}`, at: AT, actor: 'hermes', kind: 'question', subject: 'Question mouvement réduit', needs: ['loic'], payload: { options: ['a', 'b'] } } })
   expect(res.ok()).toBeTruthy()
   const row = page.locator('.now-fresh', { hasText: 'Question mouvement réduit' })
   await expect(row).toBeVisible()

@@ -241,15 +241,14 @@ def test_a_foreign_origin_is_refused(client):
 
 
 def test_a_configured_origin_is_accepted(tmp_path):
-    from conftest import tailscale_json
-    from fastapi.testclient import TestClient
+    from conftest import ActorClient, tailscale_json
 
     from nexus.app import create_app
 
     settings = Settings(
         data_dir=tmp_path / "data", allowed_origins=frozenset({"tauri://localhost"})
     )
-    with TestClient(create_app(settings, nodes_runner=tailscale_json)) as client:
+    with ActorClient(create_app(settings, nodes_runner=tailscale_json)) as client:
         with client.websocket_connect("/api/ws", headers={"origin": "tauri://localhost"}) as ws:
             assert ws.receive_json()["type"] == "hello"
 
@@ -287,15 +286,14 @@ def test_hello_instance_is_16_hex_and_stable_for_one_app(client):
 
 
 def test_hello_instance_differs_between_apps(tmp_path):
-    from conftest import tailscale_json
-    from fastapi.testclient import TestClient
+    from conftest import ActorClient, tailscale_json
 
     from nexus.app import create_app
 
     seen = []
     for name in ("a", "b"):
         settings = Settings(data_dir=tmp_path / name)
-        with TestClient(create_app(settings, nodes_runner=tailscale_json)) as c:
+        with ActorClient(create_app(settings, nodes_runner=tailscale_json)) as c:
             seen.append(_hello(c)["instance"])
     assert seen[0] != seen[1]
 
@@ -317,13 +315,12 @@ def test_a_restored_base_makes_the_old_instance_reset(tmp_path):
     """Restore an older copy then rewrite past the cursor: ids reused, cursor not ahead."""
     import shutil
 
-    from conftest import tailscale_json
-    from fastapi.testclient import TestClient
+    from conftest import ActorClient, tailscale_json
 
     from nexus.app import create_app
 
     settings = Settings(data_dir=tmp_path / "data")
-    with TestClient(create_app(settings, nodes_runner=tailscale_json)) as one:
+    with ActorClient(create_app(settings, nodes_runner=tailscale_json)) as one:
         new_task(one)
         copy = tmp_path / "copy.db"
         shutil.copy(settings.db_path, copy)
@@ -337,7 +334,7 @@ def test_a_restored_base_makes_the_old_instance_reset(tmp_path):
     shutil.copy(copy, settings.db_path)
     for suffix in ("-wal", "-shm"):
         settings.db_path.with_name(settings.db_path.name + suffix).unlink(missing_ok=True)
-    with TestClient(create_app(settings, nodes_runner=tailscale_json)) as two:
+    with ActorClient(create_app(settings, nodes_runner=tailscale_json)) as two:
         for title in ("X", "Y", "Z", "W"):
             new_task(two, title)  # rewrites past the old cursor
         with db(two) as s:

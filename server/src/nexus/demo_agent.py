@@ -4,7 +4,8 @@
 
 Avec un jeton d'acteur (ADR-020), il l'envoie dans `Authorization: Bearer …`. Le jeton vient de la
 variable `NEXUS_TOKEN` ou d'un fichier (`--token-file <chemin>`, qui l'emporte) : jamais d'un
-argument `--token`, visible dans la liste des processus. Sans jeton, il se comporte comme avant.
+argument `--token`, visible dans la liste des processus. Nexus exige un jeton partout : sans lui,
+le serveur répond 401 (le jeton de l'acteur `--actor`, émis par `nexus-token issue <acteur>`).
 
 Avec `--ask`, il demande plutôt une validation à Loïc et, avec `--wait`, relit
 `GET /api/approvals/<ref>` jusqu'à la décision (EVENT-PROTOCOL §6 ter) :
@@ -131,7 +132,13 @@ def call(base: str, method: str, path: str, body: dict | None = None) -> dict:
             message = f"refusé ({err.code}) : redirection non suivie, vérifie --base"
             raise SystemExit(message) from err
         detail = json.load(err).get("detail")
-        raise SystemExit(f"refusé ({err.code}) : {detail}") from err
+        hint = ""
+        if err.code == 401 and not _bearer:
+            hint = " — fournis le jeton de l'acteur par NEXUS_TOKEN ou --token-file"
+        if err.code == 403 and isinstance(detail, dict) and detail.get("code") == "actor_mismatch":
+            hint = (" — le jeton appartient à un autre acteur que --actor : "
+                    "passe --actor <acteur du jeton>")
+        raise SystemExit(f"refusé ({err.code}) : {detail}{hint}") from err
 
 
 def publish(base: str, actor: str, task: str, kind: str, subject: str, **fields) -> dict:

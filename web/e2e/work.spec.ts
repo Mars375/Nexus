@@ -1,4 +1,5 @@
 import { expect, test, type Page, type WebSocketRoute } from '@playwright/test'
+import { API, auth } from './api'
 
 async function createTask(page: Page, title: string, opts: { todo?: string } = {}) {
   await page.getByRole('button', { name: 'Nouvelle tâche' }).first().click()
@@ -129,11 +130,11 @@ test("une modification d'un agent pendant la saisie n'efface pas le brouillon", 
   await pane.getByLabel('Titre').fill('Tâche partagée (renommée)')
 
   // Un agent change la prochaine action via l'API, pendant que Loïc tape.
-  const tasks = await (await page.request.get('/api/tasks')).json()
+  const tasks = await (await page.request.get('/api/tasks', { headers: auth() })).json()
   const id = tasks.find((t: { title: string }) => t.title === 'Tâche partagée').id
   const res = await page.request.patch(`/api/tasks/${id}`, {
     data: { next_action: "Étape posée par l'agent" },
-    headers: { 'X-Nexus-Actor': 'helios' },
+    headers: auth('helios'),
   })
   expect(res.ok()).toBeTruthy()
 
@@ -143,7 +144,7 @@ test("une modification d'un agent pendant la saisie n'efface pas le brouillon", 
 
   await pane.getByRole('button', { name: 'Enregistrer' }).click()
   await expect(page.getByText('Modifications enregistrées')).toBeVisible()
-  const saved = await (await page.request.get(`/api/tasks/${id}`)).json()
+  const saved = await (await page.request.get(`/api/tasks/${id}`, { headers: auth() })).json()
   expect(saved.title).toBe('Tâche partagée (renommée)')
   expect(saved.next_action).toBe("Étape posée par l'agent")
 })
@@ -157,11 +158,11 @@ test("un champ rempli par un agent pendant la saisie ne bloque pas l'enregistrem
   await pane.getByLabel('Objectif').fill('Objectif précisé par Loïc')
 
   // Pendant ce temps, un agent l'active (à faire) en posant une prochaine action.
-  const tasks = await (await page.request.get('/api/tasks')).json()
+  const tasks = await (await page.request.get('/api/tasks', { headers: auth() })).json()
   const id = tasks.find((t: { title: string }) => t.title === 'Idée à mûrir').id
   await page.request.post(`/api/tasks/${id}/status`, {
     data: { status: 'todo', next_action: 'Étape posée par Helios' },
-    headers: { 'X-Nexus-Actor': 'helios' },
+    headers: auth('helios'),
   })
 
   await expect(pane.getByText('Modifiée ailleurs pendant ta saisie')).toBeVisible({ timeout: 20_000 })
@@ -192,9 +193,9 @@ test("une tâche préparée « principale » démarre en auxiliaire si une autre
   await expect(column(page, 'En cours').getByText('Opération principale', { exact: true })).toBeVisible()
 
   await createTask(page, 'Préparée principale', { todo: 'Commencer' })
-  const tasks = await (await page.request.get('/api/tasks')).json()
+  const tasks = await (await page.request.get('/api/tasks', { headers: auth() })).json()
   const id = tasks.find((t: { title: string }) => t.title === 'Préparée principale').id
-  await page.request.patch(`/api/tasks/${id}`, { data: { operation_role: 'main' } })
+  await page.request.patch(`/api/tasks/${id}`, { headers: auth(), data: { operation_role: 'main' } })
   await page.reload()
 
   await drag(page, 'Préparée principale', 'En cours')
@@ -203,7 +204,7 @@ test("une tâche préparée « principale » démarre en auxiliaire si une autre
   await dialog.getByRole('button', { name: 'Déplacer en en cours' }).click()
 
   await expect(column(page, 'En cours').getByText('Préparée principale', { exact: true })).toBeVisible()
-  const started = await (await page.request.get(`/api/tasks/${id}`)).json()
+  const started = await (await page.request.get(`/api/tasks/${id}`, { headers: auth() })).json()
   expect(started.operation_role).toBe('auxiliary')
 })
 
@@ -216,12 +217,12 @@ test('le tableau et le détail disent d\'où viennent les données', async ({ pa
   await expect(pane.locator('header').getByText(/^source : nexus\.db · mesuré il y a/)).toBeVisible()
 })
 
-const API = 'http://127.0.0.1:8799'
 
 test('une tâche créée par l’API apparaît en moins d’une seconde', async ({ page, request }) => {
   await page.goto('/#/travail')
   await expect(page.getByText('Temps réel : connecté')).toBeVisible()
   const res = await request.post(`${API}/api/tasks`, {
+    headers: auth(),
     data: { title: 'Arrivée en direct', objective: 'Prouver le temps réel' },
   })
   expect(res.ok()).toBeTruthy()
@@ -259,6 +260,7 @@ test('après une coupure, la reconnexion rattrape ce qui a changé', async ({ pa
   await expect(page.getByText(/Temps réel : reconnexion/)).toBeVisible()
 
   const res = await request.post(`${API}/api/tasks`, {
+    headers: auth(),
     data: { title: 'Pendant la coupure', objective: 'Rattrapage' },
   })
   expect(res.ok()).toBeTruthy()

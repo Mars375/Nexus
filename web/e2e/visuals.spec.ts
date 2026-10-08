@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { API, auth } from './api'
 
 // Visual defects of #49: focus ring clipped, dialog opening jump, toast font and contrast.
 
@@ -46,10 +47,9 @@ test('l’anneau de focus de la première carte est entièrement visible dans sa
   expect(geometry.ringBottom).toBeLessThanOrEqual(geometry.clipBottom)
 })
 
-const API = 'http://127.0.0.1:8799'
 test('l’anneau de la première carte reste visible quand Shift+Tab la ramène dans une colonne défilée', async ({ page, request }) => {
   for (let i = 0; i < 14; i++) {
-    const res = await request.post(`${API}/api/tasks`, { data: {
+    const res = await request.post(`${API}/api/tasks`, { headers: auth(), data: {
       title: `Défilement ${i}`, objective: `Objectif ${'x'.repeat(80)}`, status: 'todo',
       next_action: 'Suite assez longue pour tenir sur deux lignes dans la carte',
     } })

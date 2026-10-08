@@ -7,7 +7,7 @@ from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from fastapi.testclient import TestClient
+from conftest import ActorClient
 from sqlalchemy import create_engine
 
 from nexus import migrate
@@ -43,9 +43,10 @@ def at_0004(settings):
 def test_upgrading_a_0004_database_keeps_its_data_and_adds_no_token(settings):
     at_0004(settings)
     assert "actor_tokens" not in tables(settings.db_path)
-    with TestClient(create_app(settings)) as client:
-        assert client.get("/api/tasks/nx-task-1").status_code == 200
+    with ActorClient(create_app(settings), authenticate=False) as client:
+        assert client.get("/api/health").status_code == 200
     conn = sqlite3.connect(settings.db_path)
+    assert conn.execute("SELECT title FROM tasks").fetchall() == [("Pont",)]
     head = ScriptDirectory.from_config(migrate.alembic_config(settings.db_url)).get_current_head()
     assert conn.execute("SELECT version_num FROM alembic_version").fetchone() == (head,)
     assert conn.execute("SELECT count(*) FROM actor_tokens").fetchone() == (0,)

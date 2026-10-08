@@ -1,17 +1,17 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
+import { API, auth, type Actor } from './api'
 
-const API = 'http://127.0.0.1:8799'
 const RUN = Date.now() // subjects are unique: the database is shared with the other specs
 
 type Published = { event: string; approval: string; subject: string }
 
-/** An agent publishes a request for Loïc through the API (the actor header must match the body). */
+/** An agent publishes a request for Loïc through the API (the token must be the actor's own). */
 async function publish(
-  request: APIRequestContext, actor: string, kind: 'question' | 'needs_human', slug: string, payload: Record<string, unknown>, text?: string,
+  request: APIRequestContext, actor: Actor, kind: 'question' | 'needs_human', slug: string, payload: Record<string, unknown>, text?: string,
 ): Promise<Published> {
   const subject = `${slug} ${RUN}`
   const res = await request.post(`${API}/api/events`, {
-    headers: { 'X-Nexus-Actor': actor },
+    headers: auth(actor),
     data: { id: `evt_appr_${slug}_${RUN}`.replace(/\W/g, '_'), at: new Date().toISOString(), actor, kind, subject, needs: ['loic'], payload, ...(text && { body: text }) },
   })
   expect(res.ok(), await res.text()).toBeTruthy()
@@ -20,7 +20,7 @@ async function publish(
   return { event: body.id, approval, subject }
 }
 
-const read = async (request: APIRequestContext, ref: string) => (await request.get(`${API}/api/approvals/${ref}`)).json()
+const read = async (request: APIRequestContext, ref: string) => (await request.get(`${API}/api/approvals/${ref}`, { headers: auth() })).json()
 const card = (page: Page, p: Published) => page.locator(`[data-ask="${p.event}"]`)
 
 async function openCard(page: Page, p: Published) {
@@ -119,7 +119,7 @@ test('une demande traitée ailleurs pendant la saisie : bandeau, saisie gardée'
   const ask = await publish(request, 'mnema', 'question', 'ailleurs', {})
   const c = await openCard(page, ask)
   await c.getByRole('textbox', { name: 'Ta réponse' }).fill('Ma réponse trop tardive')
-  const other = await request.post(`${API}/api/approvals/${ask.approval}/answer`, { data: { text: 'Déjà répondu' } })
+  const other = await request.post(`${API}/api/approvals/${ask.approval}/answer`, { headers: auth(), data: { text: 'Déjà répondu' } })
   expect(other.ok()).toBeTruthy()
   await expect(c.getByText('Traitée entre-temps par Loïc : ta réponse n\'a pas été envoyée')).toBeVisible({ timeout: 5_000 })
   await expect(c.getByRole('textbox', { name: 'Ta réponse' })).toHaveValue('Ma réponse trop tardive')

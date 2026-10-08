@@ -155,3 +155,17 @@ def test_a_read_only_database_is_not_reported_as_busy(env, monkeypatch, capsys):
     assert "occupée" not in err
     assert "la base est inaccessible (SQLITE_READONLY)" in err
     assert "Traceback" not in err and "INSERT" not in err
+
+
+@pytest.mark.parametrize("name,value", [
+    ("NEXUS_HOST", "0.0.0.0"),
+    ("NEXUS_ALLOWED_HOSTS", "http://evil.example/x"),
+])
+def test_an_invalid_configuration_is_a_french_error_without_traceback(
+    env, monkeypatch, capsys, name, value
+):
+    monkeypatch.setenv(name, value)
+    code, out, err = run(capsys, "list")
+    assert code == 1 and out == ""
+    assert err.startswith("Erreur : ") and "Traceback" not in err
+    assert value not in err

@@ -270,7 +270,8 @@ def test_the_list_reads_the_events_in_a_constant_number_of_queries(client):
     engine = client.app.state.engine
 
     def count(_conn, _cursor, statement, *_args):
-        statements.append(statement)
+        if "actor_tokens" not in statement:  # the token lookup is not part of the list's reads
+            statements.append(statement)
 
     sa_event.listen(engine, "before_cursor_execute", count)
     try:

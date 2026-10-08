@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.actors import Actor, Human
-from nexus.auth.deps import authenticated_actor, get_session
+from nexus.auth.deps import Authenticated, authenticated_actor, get_session
 from nexus.clock import now
 from nexus.models import Task, TaskComment, TaskHistory
 from nexus.tasks import service
@@ -25,7 +25,7 @@ Role = Literal["main", "auxiliary"]
 
 SOURCE = "nexus.db"
 
-router = APIRouter(prefix="/api/tasks", tags=["tâches"])
+router = APIRouter(prefix="/api/tasks", tags=["tâches"], dependencies=Authenticated)
 
 
 # --- Dépendances --------------------------------------------------------------------------

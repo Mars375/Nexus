@@ -16,12 +16,15 @@ from pydantic import BaseModel, StrictInt, StringConstraints
 
 from nexus.approvals import service
 from nexus.approvals.limits import ANSWER_TEXT_MAX, LIST_LIMIT_DEFAULT, LIST_LIMIT_MAX, NOTE_MAX
+from nexus.auth.deps import Authenticated
 from nexus.tasks.api import ActorDep, SessionDep, commit
 from nexus.validation import InputModel
 
 Status = Literal["pending", "approved", "rejected", "answered", "expired"]
 
-router = APIRouter(prefix="/api/approvals", tags=["approbations"])
+router = APIRouter(
+    prefix="/api/approvals", tags=["approbations"], dependencies=Authenticated
+)
 
 
 class ApprovalOut(BaseModel):

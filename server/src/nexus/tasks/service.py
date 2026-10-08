@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus import secrets
+from nexus import permissions, secrets
 from nexus.clock import now
 from nexus.models import Task, TaskComment, TaskDependency, TaskHistory
 from nexus.tasks import rules
@@ -77,6 +77,9 @@ def list_tasks(
 
 
 def create_task(session: Session, data: dict[str, Any], actor: str) -> Task:
+    permissions.check_create(
+        actor, lead_agent=data.get("lead_agent"), collaborators=data.get("collaborators") or []
+    )
     redacted: dict[str, list[str]] = {}
     data = _drop_blank_expectation(secrets.redact_fields(data, redacted.__setitem__))
     status = data.pop("status", "backlog")
@@ -108,6 +111,13 @@ def update_task(session: Session, task: Task, changes: dict[str, Any], actor: st
     unknown = set(changes) - UPDATABLE
     if unknown:
         raise RuleViolation("not_updatable", f"champs non modifiables ici : {sorted(unknown)}")
+    permissions.check_update(
+        actor,
+        lead_before=task.lead_agent,
+        lead_after=changes.get("lead_agent", task.lead_agent),
+        collaborators_before=task.collaborators,
+        collaborators_after=changes.get("collaborators", task.collaborators),
+    )
     redacted: dict[str, list[str]] = {}
     changes = _drop_blank_expectation(secrets.redact_fields(changes, redacted.__setitem__))
     role_before = task.operation_role
@@ -167,6 +177,7 @@ def change_status(
     next_action: str | None = None,
     role: str | None = None,
 ) -> Task:
+    permissions.check_status(actor, target)
     redacted: dict[str, list[str]] = {}
     texts = secrets.redact_fields(
         {"reason": reason, "block_cause": block_cause, "block_plan": block_plan,

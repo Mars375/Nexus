@@ -1,7 +1,7 @@
-"""Authentication dependency (ADR-020).
+"""Authentication dependency (ADR-020): every route but `GET /api/health` requires a token.
 
-PR 1: a bearer token is accepted when present; without an `Authorization` header the former
-behaviour stays (`X-Nexus-Actor`, `loic` by default). Nothing received is ever echoed back.
+The actor is the one the bearer token was issued to, never a declared header. `X-Nexus-Actor`
+stays optional and must equal that actor (D9). Nothing received is ever echoed back.
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ from typing import Annotated
 from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from nexus.actors import ACTORS, DEFAULT_ACTOR
 from nexus.auth import tokens
 
 _CHALLENGE = {"WWW-Authenticate": "Bearer"}
@@ -36,15 +35,13 @@ def bearer_token(authorization: str) -> str | None:
     return token
 
 
-def token_actor(
+def authenticated_actor(
     session: Annotated[Session, Depends(get_session)],
     authorization: Annotated[str | None, Header()] = None,
     x_nexus_actor: Annotated[str | None, Header()] = None,
-) -> str | None:
-    """The actor of the presented token; None when no `Authorization` header is sent."""
-    if authorization is None:
-        return None
-    token = bearer_token(authorization)
+) -> str:
+    """The actor of the presented token; 401 without a valid one, 403 on a header mismatch."""
+    token = None if authorization is None else bearer_token(authorization)
     if token is None:
         raise _unauthorized(
             "auth_required", "en-tête Authorization : jeton porteur attendu (Bearer nxt_…)"
@@ -60,16 +57,5 @@ def token_actor(
     return actor
 
 
-def authenticated_actor(
-    from_token: Annotated[str | None, Depends(token_actor)],
-    x_nexus_actor: Annotated[str | None, Header()] = None,
-) -> str:
-    if from_token is not None:
-        return from_token
-    actor = x_nexus_actor or DEFAULT_ACTOR
-    if actor not in ACTORS:
-        # The received value is never sent back: the header could hold a secret.
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT, "acteur inconnu dans l'en-tête X-Nexus-Actor"
-        )
-    return actor
+Authenticated = [Depends(authenticated_actor)]
+"""Router-level dependency list: `APIRouter(dependencies=Authenticated)`."""

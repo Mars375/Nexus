@@ -32,6 +32,7 @@ from nexus.events.limits import (
 )
 from nexus.events.rules import Envelope
 from nexus.models import Approval, Event, Task
+from nexus.permissions import Forbidden
 from nexus.tasks import service as tasks
 from nexus.tasks.rules import RuleViolation
 from nexus.validation import has_unencodable
@@ -500,10 +501,14 @@ def _apply_effects(session: Session, event: Event, e: Envelope, task: Task) -> l
             except StaleDataError:
                 savepoint.rollback()
                 session.refresh(task)
-            except (RuleViolation, IntegrityError) as exc:
+            except (RuleViolation, Forbidden, IntegrityError) as exc:
+                # A right the actor never has (ADR-020) is refused like a broken rule: the event
+                # stays recorded, only its effect on the task is not applied.
                 savepoint.rollback()
                 session.refresh(task)
-                message = exc.message if isinstance(exc, RuleViolation) else "conflit en base"
+                message = exc.message if isinstance(exc, RuleViolation | Forbidden) else (
+                    "conflit en base"
+                )
                 effects.append({"action": action, "applied": False, "reason": message})
                 return
         effects.append({"action": action, "applied": False,

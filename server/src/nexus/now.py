@@ -15,12 +15,13 @@ from sqlalchemy.orm import Session, aliased
 
 from nexus.actors import Agent
 from nexus.approvals.service import consequence_of, effective_status, options_of
+from nexus.auth.deps import Authenticated
 from nexus.clock import now
 from nexus.events.service import RUN_CLOSERS
 from nexus.models import Approval, Event, Task, TaskHistory
 from nexus.tasks.api import SessionDep
 
-router = APIRouter(prefix="/api/now", tags=["maintenant"])
+router = APIRouter(prefix="/api/now", tags=["maintenant"], dependencies=Authenticated)
 
 AGENT_ORDER: tuple[str, ...] = get_args(Agent)
 WINDOW = timedelta(days=7)

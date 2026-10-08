@@ -372,16 +372,17 @@ def test_an_agent_requester_deciding_its_own_request_is_a_self_decision(client):
     untouched(client)
 
 
-def test_an_unknown_actor_header_is_a_422_without_echo(client):
+def test_an_unknown_actor_header_is_a_403_without_echo(client):
     ask(client)
 
     res = answer(client, actor=f"token={TOKEN}")
 
-    assert res.status_code == 422 and TOKEN not in res.text
+    assert res.status_code == 403 and TOKEN not in res.text
+    assert res.json()["detail"]["code"] == "actor_mismatch"
     untouched(client)
 
 
-def test_an_absent_actor_header_defaults_to_loic(client):
+def test_an_absent_actor_header_is_the_token_actor(client):
     ask(client)
 
     assert answer(client).json()["decided_by"] == "loic"
