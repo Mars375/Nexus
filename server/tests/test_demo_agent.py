@@ -288,7 +288,8 @@ def test_a_token_reaches_the_server_and_names_the_actor(http, task, tmp_path, mo
 
 @pytest.mark.parametrize("content", [
     b"", b"\n", b"contenu-confidentiel-xyz", b"nxt_" + b"A" * 42, b"\xff\xfe\x00",
-    b"nxt_" + b"A" * 43 + b"\nautre ligne", b"x" * 100_000,
+    b"nxt_" + b"A" * 43 + b"\nautre ligne",
+    pytest.param(b"x" * 100_000, id="huge"),  # a long id breaks PYTEST_CURRENT_TEST on Windows
 ])
 def test_a_bad_token_file_is_a_usage_error_that_never_echoes_its_content(
     wire, tmp_path, capsys, content
