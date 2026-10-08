@@ -54,8 +54,10 @@ class ActorClient(TestClient):
                 candidates = (headers.get("X-Nexus-Actor"), body.get("actor") if isinstance(
                     body, dict) else None)
                 # An unknown name is not an identity: sign as loic, so that the server's
-                # `actor_mismatch` is what gets exercised.
-                actor = next((c for c in candidates if c in ACTORS), "loic")
+                # `actor_mismatch` (or its 422 for a non-text actor) is what gets exercised.
+                actor = next(
+                    (c for c in candidates if isinstance(c, str) and c in ACTORS), "loic"
+                )
                 headers |= self.headers_for(actor)
                 kwargs["headers"] = headers
         return super().request(method, url, **kwargs)
