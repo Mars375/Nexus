@@ -8,6 +8,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from nexus.hosts import LOOPBACK_HOSTS, normalize_host
+
 
 def _default_data_dir() -> Path:
     local_app_data = os.environ.get("LOCALAPPDATA")
@@ -35,8 +37,24 @@ class Settings:
     nodes_refresh_seconds: float = 60.0
     # Origines admises en plus de la boucle locale pour le WebSocket (ex. Tauri plus tard).
     allowed_origins: frozenset[str] = frozenset()
+    # Noms d'hôte admis en plus de la boucle locale dans l'en-tête Host (ADR-020, D6).
+    allowed_hosts: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
+        if self.host.lower() not in LOOPBACK_HOSTS:
+            # Jamais la valeur reçue dans le message (ADR-006).
+            raise ValueError(
+                "NEXUS_HOST doit être une adresse de la boucle locale (127.0.0.1, localhost "
+                "ou l'adresse IPv6 de bouclage) : le WebSocket n'a pas encore de ticket "
+                "(ADR-020, D5), donc Nexus ne peut pas écouter sur le réseau tant que ce "
+                "ticket WebSocket n'existe pas"
+            )
+        for name in self.allowed_hosts:
+            if normalize_host(name) is None:
+                raise ValueError(
+                    "NEXUS_ALLOWED_HOSTS : chaque entrée doit être un nom d'hôte ou une "
+                    "adresse IP seule, sans port, sans schéma, sans chemin ni joker"
+                )
         if self.backup_keep < 1:
             raise ValueError(f"NEXUS_BACKUP_KEEP doit être ≥ 1 (reçu : {self.backup_keep})")
         if not (math.isfinite(self.backup_interval_hours) and self.backup_interval_hours > 0):
@@ -85,6 +103,11 @@ class Settings:
             allowed_origins=frozenset(
                 item.strip()
                 for item in os.environ.get("NEXUS_ALLOWED_ORIGINS", "").split(",")
+                if item.strip()
+            ),
+            allowed_hosts=frozenset(
+                item.strip().lower()
+                for item in os.environ.get("NEXUS_ALLOWED_HOSTS", "").split(",")
                 if item.strip()
             ),
         )

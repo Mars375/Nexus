@@ -489,3 +489,18 @@ def test_an_http_proxy_never_sees_the_token():
     assert proxied == []
     assert direct == [f"Bearer {TOKEN}"]
     assert TOKEN not in done.stdout + done.stderr
+
+
+def test_a_401_without_a_token_says_where_to_put_it(monkeypatch):
+    import io
+    import urllib.error
+
+    def refuse(request, timeout=None):
+        body = {"detail": {"code": "auth_required", "message": "jeton porteur attendu"}}
+        raise urllib.error.HTTPError(
+            request.full_url, 401, "Unauthorized", {}, io.BytesIO(json.dumps(body).encode())
+        )
+
+    monkeypatch.setattr(demo_agent, "_open", refuse)
+    with pytest.raises(SystemExit, match=r"refusé \(401\).*NEXUS_TOKEN ou --token-file"):
+        run("nx-task-1")

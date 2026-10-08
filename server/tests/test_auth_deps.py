@@ -1,4 +1,4 @@
-"""Authentification par jeton porteur (#16, ADR-020, PR 1) : acceptée si présente."""
+"""Authentification par jeton porteur (#16, ADR-020) : lecture du jeton, 401 et 403 d'identité."""
 
 import logging
 
@@ -26,12 +26,6 @@ def bearer(token):
 
 def create_task(client, **headers):
     return client.post("/api/tasks", json={"title": "t", "objective": "o"}, headers=headers)
-
-
-def test_without_authorization_the_old_behaviour_is_kept(client):
-    assert create_task(client).json()["created_by"] == "loic"
-    assert create_task(client, **{"X-Nexus-Actor": "helios"}).json()["created_by"] == "helios"
-    assert create_task(client, **{"X-Nexus-Actor": "mallory"}).status_code == 422
 
 
 def test_a_valid_token_sets_the_actor(client):
@@ -174,20 +168,9 @@ def test_events_header_mismatch_with_token_is_403(client):
     assert res.status_code == 403
 
 
-def test_events_without_token_keep_the_422_header_body_check(client):
-    res = client.post("/api/events", json=event("helios"), headers={"X-Nexus-Actor": "codex"})
-    assert res.status_code == 422
-    assert client.post("/api/events", json=event("helios")).status_code == 201
-
-
 def test_events_with_a_malformed_authorization_are_401(client):
     res = client.post("/api/events", json=event("helios"), headers={"Authorization": "Basic x"})
     assert res.status_code == 401
-
-
-def test_read_routes_are_not_gated_yet(client):
-    assert client.get("/api/tasks").status_code == 200
-    assert client.get("/api/tasks", headers={"Authorization": "Basic x"}).status_code == 200
 
 
 def test_the_token_never_reaches_the_access_log(client, caplog):

@@ -6,7 +6,7 @@ import math
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 from pydantic import (
     AwareDatetime,
     BaseModel,
@@ -16,13 +16,13 @@ from pydantic import (
 )
 
 from nexus.actors import Actor
-from nexus.auth.deps import token_actor
+from nexus.auth.deps import Authenticated
 from nexus.clock import now
 from nexus.events import service
 from nexus.events.limits import EVENT_ID_MAX, EVIDENCE_REF_MAX, RUN_MAX, SUBJECT_MAX
 from nexus.events.rules import RESERVED_KINDS, Envelope
 from nexus.models import Event
-from nexus.tasks.api import SessionDep, commit
+from nexus.tasks.api import ActorDep, SessionDep, commit
 from nexus.validation import InputModel
 
 # What an agent may publish. `answer` is written by Nexus only (ADR-019, D8).
@@ -35,7 +35,7 @@ Ref = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=EVIDENCE_REF_MAX)
 ]
 
-router = APIRouter(prefix="/api/events", tags=["événements"])
+router = APIRouter(prefix="/api/events", tags=["événements"], dependencies=Authenticated)
 
 
 class EventIn(InputModel):
@@ -122,21 +122,14 @@ def publish(
     body: EventIn,
     session: SessionDep,
     response: Response,
-    from_token: Annotated[str | None, Depends(token_actor)],
-    x_nexus_actor: Annotated[str | None, Header()] = None,
+    actor: ActorDep,
 ) -> EventOut:
-    if from_token is not None:
+    if body.actor != actor:
         # The token decides who speaks: the body may not claim another actor (ADR-020, D9).
-        if body.actor != from_token:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, {
-                "code": "actor_mismatch",
-                "message": "l'acteur de l'événement diffère de celui du jeton",
-            })
-    elif x_nexus_actor and x_nexus_actor != body.actor:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            "l'acteur de l'en-tête et celui de l'événement diffèrent",
-        )
+        raise HTTPException(status.HTTP_403_FORBIDDEN, {
+            "code": "actor_mismatch",
+            "message": "l'acteur de l'événement diffère de celui du jeton",
+        })
     envelope = Envelope(
         actor=body.actor, kind=body.kind, subject=body.subject, task=body.task, run=body.run,
         body=body.body, payload=body.payload, evidence=body.evidence, needs=body.needs,

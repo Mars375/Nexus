@@ -47,7 +47,8 @@ def test_unknown_actor_is_refused(client):
     res = client.post(
         "/api/tasks", json={"title": "x", "objective": "y"}, headers={"X-Nexus-Actor": "mallory"}
     )
-    assert res.status_code == 422
+    assert res.status_code == 403
+    assert res.json()["detail"]["code"] == "actor_mismatch"
 
 
 def test_actor_header_is_recorded(client):
@@ -437,7 +438,7 @@ def test_unknown_actor_value_is_never_echoed(client):
     res = client.post(
         "/api/tasks", json={"title": "x", "objective": "y"}, headers={"X-Nexus-Actor": SECRET}
     )
-    assert res.status_code == 422
+    assert res.status_code == 403
     assert SECRET not in res.text
 
 

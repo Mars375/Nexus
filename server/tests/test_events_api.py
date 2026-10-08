@@ -307,7 +307,8 @@ def test_actor_header_must_match(client):
               "needs": ["loic"]},
         headers={"X-Nexus-Actor": "codex"},
     )
-    assert res.status_code == 422
+    assert res.status_code == 403
+    assert res.json()["detail"]["code"] == "actor_mismatch"
 
 
 def test_unknown_task_and_event_404(client):
@@ -900,7 +901,7 @@ def test_http_api_refuses_unknown_actor_kind_or_recipient_with_422(client, field
     ref = task(client)
     body = {"id": "evt_bad", "at": AT, "actor": "helios", "kind": "question",
             "subject": "s", "task": ref, "needs": ["loic"]} | fields
-    res = client.post("/api/events", json=body)
+    res = client.post("/api/events", json=body, headers=client.headers_for("helios"))
     assert res.status_code == 422, res.text
     assert client.get("/api/events", params={"task": ref}).json() == []
 

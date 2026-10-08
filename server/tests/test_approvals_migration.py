@@ -7,7 +7,7 @@ from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from fastapi.testclient import TestClient
+from conftest import ActorClient
 from sqlalchemy import create_engine
 
 from nexus import backup, migrate
@@ -50,7 +50,7 @@ def test_upgrading_a_populated_0003_database_keeps_its_data_and_opens_no_approva
     populated_0003(settings)
     assert "approvals" not in tables(settings.db_path)
 
-    with TestClient(create_app(settings)) as client:
+    with ActorClient(create_app(settings)) as client:
         events = client.get("/api/events").json()
         assert [e["subject"] for e in events] == ["Ancienne demande"]
         assert events[0]["effects"] == []
@@ -66,7 +66,7 @@ def test_upgrading_a_populated_0003_database_keeps_its_data_and_opens_no_approva
 def test_the_database_is_copied_before_migrating_to_0004(settings):
     populated_0003(settings)
 
-    with TestClient(create_app(settings)):
+    with ActorClient(create_app(settings)):
         pass
 
     backups = backup.list_backups(settings.backup_dir)
@@ -81,7 +81,7 @@ def test_the_database_is_copied_before_migrating_to_0004(settings):
 def test_a_new_ask_after_the_upgrade_gets_the_first_approval(settings):
     populated_0003(settings)
 
-    with TestClient(create_app(settings)) as client:
+    with ActorClient(create_app(settings)) as client:
         res = client.post("/api/events", json={
             "id": "new", "at": "2026-09-28T09:05:00+02:00", "actor": "helios",
             "kind": "question", "subject": "Nouvelle", "needs": ["loic"],

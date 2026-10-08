@@ -3,8 +3,7 @@ import subprocess
 from datetime import datetime
 
 import pytest
-from conftest import tailscale_json
-from fastapi.testclient import TestClient
+from conftest import ActorClient, tailscale_json
 
 from nexus import nodes
 from nexus.app import create_app
@@ -124,7 +123,7 @@ def test_hanging_tailscale_does_not_block_the_api(settings):
         release.wait(10)
         return tailscale_json()
 
-    with TestClient(create_app(settings, nodes_runner=hanging)) as client:
+    with ActorClient(create_app(settings, nodes_runner=hanging)) as client:
         # Late in the full suite the heap is large: a generation-2 collection takes about 0.5 s
         # and, when it lands inside the timed request, fails the test without the API being slow.
         gc.collect()
@@ -158,7 +157,7 @@ def test_nodes_order_is_importance_order():
 
 def test_api_survives_tailscale_being_absent(settings):
     app = create_app(settings, nodes_runner=_raise(FileNotFoundError()))
-    with TestClient(app) as client:
+    with ActorClient(app) as client:
         res = client.get("/api/nodes")
 
     assert res.status_code == 200
@@ -170,7 +169,7 @@ def test_unexpected_exception_in_first_read_is_logged(settings, caplog):
     def boom():
         raise RuntimeError("boom")
 
-    with TestClient(create_app(settings, nodes_runner=boom)) as client:
+    with ActorClient(create_app(settings, nodes_runner=boom)) as client:
         res = client.get("/api/nodes")
 
     # L'API répond 200 même si la première lecture a échoué

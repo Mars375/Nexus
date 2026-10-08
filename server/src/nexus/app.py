@@ -20,12 +20,15 @@ from nexus import backup, live, migrate, nodes
 from nexus import now as now_view
 from nexus.approvals import api as approvals_api
 from nexus.approvals.service import ApprovalNotFound
+from nexus.auth.deps import Authenticated
 from nexus.clock import now
 from nexus.config import Settings
 from nexus.db import make_engine
 from nexus.events import api as events_api
 from nexus.events.service import EventNotFound
+from nexus.hosts import HostCheckMiddleware
 from nexus.logs import AccessLogMiddleware
+from nexus.permissions import Forbidden
 from nexus.tasks import api as tasks_api
 from nexus.tasks.rules import RuleViolation
 from nexus.tasks.service import TaskNotFound
@@ -121,12 +124,15 @@ def create_app(
     app = FastAPI(title="Nexus", version=version("nexus"), lifespan=lifespan)
     # Journal d'accès sans valeur reçue (ADR-006) : gabarit de route, jamais le chemin réel.
     app.add_middleware(AccessLogMiddleware)
+    # Added after the log so that it is outermost: a foreign Host (DNS rebinding) reaches nothing,
+    # neither a route nor the database (ADR-020, D6). The log then does not see its refusals.
+    app.add_middleware(HostCheckMiddleware, allowed_hosts=settings.allowed_hosts)
     app.state.settings = settings
     app.include_router(tasks_api.router)
     app.include_router(events_api.router)
     app.include_router(approvals_api.router)
     app.include_router(now_view.router)
-    app.include_router(live.router)
+    app.include_router(live.router)  # sans jeton : Origin et Host seulement (ADR-020, D5)
 
     @app.exception_handler(RequestValidationError)
     def _invalid(_request: Request, exc: RequestValidationError) -> JSONResponse:
@@ -146,6 +152,12 @@ def create_app(
     def _rule_violation(_request: Request, exc: RuleViolation) -> JSONResponse:
         return JSONResponse(
             status_code=409, content={"detail": {"code": exc.code, "message": exc.message}}
+        )
+
+    @app.exception_handler(Forbidden)
+    def _forbidden(_request: Request, exc: Forbidden) -> JSONResponse:
+        return JSONResponse(
+            status_code=403, content={"detail": {"code": exc.code, "message": exc.message}}
         )
 
     @app.exception_handler(TaskNotFound)
@@ -175,7 +187,7 @@ def create_app(
                        "measured_at": measured_at},
         }
 
-    @app.get("/api/nodes")
+    @app.get("/api/nodes", dependencies=Authenticated)
     async def list_nodes() -> list[dict]:
         """État des nœuds (lecture seule), chacun avec sa source et sa fraîcheur."""
         return [s.to_dict() for s in app.state.nodes]
