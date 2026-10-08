@@ -49,7 +49,7 @@
 | `POST …/status` vers `dropped` | ✓ | ✗ | ✗ | 403 `human_only` |
 | `POST /api/events` | `actor` = acteur du jeton | idem | idem | 403 `actor_mismatch` |
 | effet `claimed` | l'émetteur devient agent principal | idem | idem (il ne désigne que lui-même) | — |
-| effet `handoff` | appliqué vers n'importe qui | idem | appliqué vers un humain, ou si l'agent principal ne change pas (seule la prochaine action change) ; vers un autre agent : événement enregistré, effet non appliqué (`applied: false` + raison) | pas d'erreur |
+| effet `handoff` | appliqué vers n'importe qui (sauf vers soi-même : 409 `handoff_to_self`, pour tout acteur) | idem | appliqué vers un humain, ou si l'agent principal ne change pas (seule la prochaine action change) ; vers un autre agent : événement enregistré, effet non appliqué (`applied: false` + raison) | pas d'erreur |
 | `POST /api/approvals/<ref>/answer`, `/decision` | si destinataire | 409 `not_addressee` | 409 `not_addressee` | inchangé (ADR-019) |
 
 Un changement d'assignation n'est contrôlé que s'il **change** quelque chose : un exécutant peut renommer une tâche menée par un autre agent. Abandonner une tâche (`dropped`) est la « suppression » du produit, donc réservée aux humains : un agent propose l'abandon par un événement `needs_human`. Aucune route ne supprime une tâche, ni ne confie une exécution (ADR-012) ; la future route « confier à » sera réservée aux humains.
