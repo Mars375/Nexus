@@ -179,7 +179,7 @@ Toute décision structurante s'ajoute ici.
 - **Règles d'application de la matrice** (PR 3) : les trois premières précisent la conception du 2026-10-07 ; seule l'ouverture de la documentation OpenAPI s'en écarte (la conception n'ouvrait que `/api/health` et `/api/ws`), ce que Loïc a validé le 2026-10-08 sur recommandation de l'agent :
   - `PATCH /api/tasks/<ref>` ne contrôle que les champs d'assignation qui **changent** : un exécutant peut renommer une tâche menée par un autre agent ;
   - abandonner une tâche (`dropped`) est réservé aux humains (403 `human_only`) : c'est la « suppression » du produit ;
-  - un `handoff` d'un exécutant vers un autre agent est enregistré sans effet (`applied: false` et sa raison), pas refusé ; vers un humain ou sans changer d'agent principal, il s'applique (un handoff vers soi-même est refusé en 409 `handoff_to_self`, comme avant) ;
+  - un `handoff` d'un exécutant vers un autre agent qui n'est pas déjà l'agent principal est enregistré sans effet (`applied: false` et sa raison), pas refusé ; vers un humain, ou vers l'agent principal actuel avec une nouvelle prochaine action, il s'applique (s'il ne change rien, l'effet est noté non appliqué, `applied: false` ; un handoff vers soi-même est refusé en 409 `handoff_to_self`, comme avant) ;
   - la documentation OpenAPI reste ouverte (D5).
 - **Statut :** accepté.
 
