@@ -139,3 +139,14 @@ def test_two_host_headers_are_refused_over_websocket():
 def test_a_single_host_header_still_passes():
     reached, _ = _asgi("http", [(b"host", b"localhost:5173")])
     assert reached
+
+
+def test_a_host_header_name_in_any_case_is_read():
+    """ASGI only recommends lowercase header names: a server may pass b"Host" as is."""
+    reached, _ = _asgi("http", [(b"Host", b"localhost:8765")])
+    assert reached
+
+
+def test_two_host_headers_in_different_cases_are_refused():
+    reached, sent = _asgi("http", [(b"host", b"localhost"), (b"HOST", b"evil.example")])
+    assert not reached and sent[0]["status"] == 400

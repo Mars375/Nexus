@@ -67,7 +67,7 @@ class HostCheckMiddleware:
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return
-        headers = [v.decode("latin-1") for k, v in scope["headers"] if k == b"host"]
+        headers = [v.decode("latin-1") for k, v in scope["headers"] if k.lower() == b"host"]
         # More than one Host header is ambiguous: refused (RFC 9112 §3.2).
         header = headers[0] if len(headers) == 1 else None
         if host_allowed(header, self.allowed_hosts):
