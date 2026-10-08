@@ -243,12 +243,16 @@ def test_an_executor_handoff_to_the_current_lead_that_changes_nothing_is_not_app
     client, actor
 ):
     lead = "codex" if actor != "codex" else "claude"
-    ref = create(client, "loic", lead_agent=lead, next_action="à toi").json()["id"]
+    created = create(client, "loic", lead_agent=lead, next_action="à toi").json()
+    ref = created["id"]
     res = client.post("/api/events", json=handoff(actor, ref, lead), headers=as_(client, actor))
     assert res.status_code == 201, res.text
     [effect] = res.json()["effects"]
-    assert effect["action"] == "handoff" and effect["applied"] is False and effect["reason"]
-    assert lead_of(client, ref) == lead and next_action_of(client, ref) == "à toi"
+    assert effect["action"] == "handoff" and effect["applied"] is False
+    assert "a déjà la main" in effect["reason"]  # unchanged, not forbidden
+    after = client.get(f"/api/tasks/{ref}").json()
+    assert after["lead_agent"] == lead and after["next_action"] == "à toi"
+    assert after["updated_at"] == created["updated_at"]
 
 
 @pytest.mark.parametrize("actor", sorted(EXECUTORS))

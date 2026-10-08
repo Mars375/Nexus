@@ -914,6 +914,7 @@ def test_a_non_text_actor_is_refused_with_422(client, actor):
             "subject": "s", "task": ref, "needs": ["loic"]}
     res = client.post("/api/events", json=body)
     assert res.status_code == 422, res.text
+    assert [e["loc"] for e in res.json()["detail"]] == [["body", "actor"]]
     assert client.get("/api/events", params={"task": ref}).json() == []
 
 
