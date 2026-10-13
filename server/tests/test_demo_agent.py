@@ -253,7 +253,7 @@ def test_a_blank_next_action_is_a_usage_error_before_anything_is_sent(http, task
 @pytest.mark.parametrize("evidence", [
     "   ", "commit:" + "a" * 600, "commit:\udcff",
     # Only a label left: Nexus would record the `done` as `review` (secrets.is_blank_reference).
-    "commit:", "[REDACTED]", "commit: token=[REDACTED]",
+    "commit:", "[REDACTED]", "commit: token=[REDACTED]", "commit: url:",
 ])
 def test_an_unusable_evidence_is_a_usage_error_before_anything_is_sent(http, task, evidence):
     with pytest.raises(SystemExit) as exit_:
