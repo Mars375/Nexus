@@ -266,9 +266,9 @@ def main(argv: list[str] | None = None, sleep=time.sleep, monotonic=time.monoton
             args.evidence.encode("utf-8")  # a lone surrogate (non-UTF-8 argv) cannot be sent
         except UnicodeEncodeError:
             args.evidence = ""
-        if not args.evidence or len(args.evidence) > EVIDENCE_REF_MAX:
-            parser.error(f"--evidence : une référence non vide de {EVIDENCE_REF_MAX} caractères "
-                         "au plus, ex. commit:a1b2c3d")
+        if _blank_reference(args.evidence) or len(args.evidence) > EVIDENCE_REF_MAX:
+            parser.error(f"--evidence : une référence qui garde un identifiant, de "
+                         f"{EVIDENCE_REF_MAX} caractères au plus, ex. commit:a1b2c3d")
     if _blank(args.next_action):  # refused by Nexus anyway, but only once `working` opened a run
         parser.error("--next-action : une prochaine action non vide")
     if not math.isfinite(args.wait) or args.wait < 0:
@@ -301,6 +301,16 @@ def _blank(text: str | None) -> bool:
     return not text or not re.search(r"\w", _REDACTED_SPAN.sub("", text))
 
 
+def _blank_reference(text: str | None) -> bool:
+    """Only a label left (`commit:`, `commit: token=[REDACTED]`): Nexus would not count it as
+    evidence (nexus.secrets.is_blank_reference) and would record the `done` as `review`."""
+    if _blank(text):
+        return True
+    rest = re.sub(r"^\s*[\w.-]+\s*:", "", _REDACTED_SPAN.sub("", text), count=1)
+    rest = re.sub(r"[\w.-]+\s*[:=](?=\s|$)", "", rest)
+    return not re.search(r"\w", rest)
+
+
 def landed(event: dict, actions: set[str]) -> str | None:
     """None when the read-back event reached one of `actions` (applied, or the task was already
     there); else the server's reason. Judged on the event's own effects, not on a later read of
@@ -318,7 +328,13 @@ def landed(event: dict, actions: set[str]) -> str | None:
         reasons.append(f"{effect['action']} : {reason}")
     if not reasons and actions == {"lead_agent"}:
         return None  # `claimed` adds no effect when the task already names this agent as lead
-    return "; ".join(reasons) or "aucun effet sur la tâche"
+    if reasons:
+        return "; ".join(reasons)
+    # Another effect may have moved the task (e.g. `status:review` when `done` was expected).
+    other = [e["action"] for e in event["effects"] if e["applied"]]
+    if other:
+        return f"{', '.join(other)} appliqué, {' ou '.join(sorted(actions))} attendu"
+    return "aucun effet sur la tâche"
 
 
 def play(base: str, actor: str, ref: str, evidence: str | None, next_action: str) -> int:
@@ -348,11 +364,15 @@ def play(base: str, actor: str, ref: str, evidence: str | None, next_action: str
     def close_run(subject: str, cause: str) -> None:
         # An open run left behind makes every later run of this agent on this task refused
         # (run_already_active): close it with the true cause.
+        sent = []
         try:
             publish(base, actor, ref, "failed", subject, payload={"cause": cause[:500]},
-                    run=run_ref)
+                    run=run_ref, after_post=lambda: sent.append(True))
         except (SystemExit, OSError, KeyboardInterrupt):
-            print(f"le run {run_ref} reste ouvert : clos-le par un failed qui le nomme")
+            if sent:  # recorded: the run is closed, only its read-back failed
+                print(f"clôture du run {run_ref} envoyée, relecture impossible")
+            else:
+                print(f"le run {run_ref} reste ouvert : clos-le par un failed qui le nomme")
 
     def cause_of(exc: BaseException) -> str:
         if isinstance(exc, SystemExit):

@@ -222,7 +222,8 @@ def test_with_evidence_a_done_left_in_review_is_exit_4(http, task, monkeypatch, 
 
     monkeypatch.setattr(demo_agent, "publish", publish)
     assert run(task, "--evidence", "commit:a1b2c3d") == demo_agent.EXIT_EFFECT_REFUSED
-    assert "effet attendu non appliqué (aucun effet sur la tâche)" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "effet attendu non appliqué (status:review appliqué, status:done attendu)" in out
 
 
 def test_without_evidence_the_expected_effect_is_review(http, task, monkeypatch):
@@ -249,7 +250,11 @@ def test_a_blank_next_action_is_a_usage_error_before_anything_is_sent(http, task
     assert http.get(f"/api/tasks/{task}").json()["next_action"] is None
 
 
-@pytest.mark.parametrize("evidence", ["   ", "commit:" + "a" * 600, "commit:\udcff"])
+@pytest.mark.parametrize("evidence", [
+    "   ", "commit:" + "a" * 600, "commit:\udcff",
+    # Only a label left: Nexus would record the `done` as `review` (secrets.is_blank_reference).
+    "commit:", "[REDACTED]", "commit: token=[REDACTED]",
+])
 def test_an_unusable_evidence_is_a_usage_error_before_anything_is_sent(http, task, evidence):
     with pytest.raises(SystemExit) as exit_:
         run(task, "--evidence", evidence)
@@ -347,6 +352,25 @@ def test_a_working_recorded_but_not_read_back_still_closes_the_run(http, task, m
     events = http.get("/api/events").json()
     assert [e["kind"] for e in events][:2] == ["failed", "working"]
     assert events[0]["run"] == events[1]["run"]
+
+
+def test_a_failed_recorded_but_not_read_back_is_not_called_open(http, task, monkeypatch, capsys):
+    """The closing `failed` reached Nexus: the run is closed even if its read-back fails."""
+    other = http.post("/api/tasks", json={"title": "Avant", "objective": "o"}).json()["id"]
+    http.put(f"/api/tasks/{task}/dependencies/{other}")
+    real = demo_agent.call
+
+    def call(base, method, path, body=None):
+        if method == "GET" and path.startswith("/api/events/"):
+            if http.get(path).json()["kind"] == "failed":
+                raise OSError("connection reset")
+        return real(base, method, path, body)
+
+    monkeypatch.setattr(demo_agent, "call", call)
+    assert run(task) == demo_agent.EXIT_EFFECT_REFUSED
+    out = capsys.readouterr().out
+    assert "reste ouvert" not in out and "relecture impossible" in out
+    assert http.get("/api/events").json()[0]["kind"] == "failed"
 
 
 def test_a_secret_in_next_action_is_not_echoed(http, task, capsys):
