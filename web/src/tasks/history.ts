@@ -41,12 +41,24 @@ export function describeHistory(entry: HistoryEntry): string {
     case 'created':
       return 'a créé la tâche'
     case 'status': {
+      // `changes.status` is `[from, to]`; anything else must not throw.
+      if (!Array.isArray(c.status) || c.status.length !== 2) return 'a changé le statut'
       const [from, to] = c.status as [Status, Status]
       return `l'a passée de ${STATUS_LABEL[from]?.toLowerCase() ?? '?'} à ${STATUS_LABEL[to]?.toLowerCase() ?? '?'}`
     }
     case 'updated': {
       const keys = Object.keys(c)
       if (keys.length === 1 && keys[0] === 'lead_agent') return describeLead(entry.actor, c.lead_agent)
+      if (keys.length === 1 && keys[0] === 'evidence') return 'a joint une preuve'
+      if (keys.length > 1 && keys.length <= MAX_LISTED_FIELDS + 1 && keys.includes('lead_agent')) {
+        // Same rules as the single-key case for the lead part, then the other fields (unknown ones stay generic).
+        const others = keys.filter((key) => key !== 'lead_agent')
+        const otherLabels = others.map((key) => (Object.hasOwn(FIELD_LABEL, key) ? FIELD_LABEL[key] : null))
+        const rest = others.length > MAX_LISTED_FIELDS || otherLabels.some((l) => l === null)
+          ? others.length === 1 ? 'un champ' : 'plusieurs champs'
+          : joinFrench(otherLabels as string[])
+        return `${describeLead(entry.actor, c.lead_agent)} et modifié ${rest}`
+      }
       const labels = keys.map((key) => (Object.hasOwn(FIELD_LABEL, key) ? FIELD_LABEL[key] : null))
       if (keys.length === 1) return labels[0] ? `a modifié ${labels[0]}` : 'a modifié un champ'
       if (keys.length <= MAX_LISTED_FIELDS && labels.every((l) => l !== null)) {

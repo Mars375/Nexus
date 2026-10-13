@@ -59,7 +59,11 @@ test('créer, déplacer, commenter et filtrer une tâche', async ({ page }) => {
   // L'historique suit tout de suite, sans attendre le rafraîchissement périodique (10 s).
   await expect(pane.getByText('Loïc a confié la tâche à Helios')).toBeVisible({ timeout: 3_000 })
   await expect(pane.getByText('Agent principal : Helios')).toBeVisible()
-  await expect(card(page, 'Relever les statuts').getByText('Helios', { exact: true })).toBeVisible()
+  const leadName = card(page, 'Relever les statuts').getByText('Helios', { exact: true })
+  await expect(leadName).toBeVisible()
+  // `.sr-only` stays "visible" to Playwright: check it is really painted and not the screen-reader copy.
+  expect((await leadName.boundingBox())?.width ?? 0).toBeGreaterThan(1)
+  expect(await leadName.evaluate((el) => el.closest('.sr-only'))).toBeNull()
 
   await createTask(page, 'Écrire la note')
   await page.getByLabel('Filtrer par agent').selectOption('helios')

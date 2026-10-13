@@ -152,6 +152,21 @@ test('le panneau dit qui est l’agent principal, et suit la donnée vivante', (
   expect(screen.queryByText('Aucun agent principal')).not.toBeInTheDocument()
 })
 
+test('le libellé de l’agent principal ignore le brouillon du formulaire', () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json([])))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const task = { ...TASK, lead_agent: 'helios' as const }
+  render(
+    <QueryClientProvider client={client}>
+      <TaskPane task={task} tasks={[task]} onClose={() => {}} />
+    </QueryClientProvider>,
+  )
+  fireEvent.change(screen.getByLabelText('Agent principal'), { target: { value: 'hermes' } })
+  expect(screen.getByLabelText('Agent principal')).toHaveValue('hermes')
+  expect(screen.getByText('Agent principal : Helios')).toBeInTheDocument()
+  expect(screen.queryByText('Agent principal : Hermes')).not.toBeInTheDocument()
+})
+
 test('un agent principal inconnu ne plante pas le panneau', () => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json([])))
   const odd = 'inconnu' as unknown as Task['lead_agent']

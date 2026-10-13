@@ -95,7 +95,7 @@ export function Dialog({
   )
 }
 
-/** Marque d'identité d'un acteur : initiale sur sa couleur, nom complet au survol. */
+/** Identity mark of an actor: initial on their colour, full name on hover (or written out with `withName`). */
 export function AgentMark({ actor, withName = false }: { actor: Actor; withName?: boolean }) {
   const color = `var(--agent-${actor})`
   const name = actorName(actor)

@@ -66,6 +66,42 @@ test('une forme inattendue de changements ne plante pas', () => {
   expect(describeHistory(entry('loic', { lead_agent: 'oops' }))).toBe('a changé l’agent principal')
 })
 
+test('un transfert nomme le nouvel agent principal parmi d’autres champs', () => {
+  const changes = { lead_agent: ['helios', 'loic'], next_action: ['a', 'b'] }
+  expect(describeHistory(entry('hermes', changes))).toBe('a confié la tâche à Loïc et modifié la prochaine action')
+})
+
+test('un transfert parmi d’autres champs : l’agent qui se l’attribue, ou un retrait', () => {
+  expect(describeHistory(entry('hermes', { lead_agent: [null, 'hermes'], next_action: ['a', 'b'] }))).toBe(
+    'est devenu agent principal et modifié la prochaine action',
+  )
+  expect(describeHistory(entry('loic', { lead_agent: ['helios', null], next_action: ['a', 'b'] }))).toBe(
+    'a retiré l’agent principal et modifié la prochaine action',
+  )
+})
+
+test('un transfert parmi d’autres champs n’affiche jamais une valeur inconnue', () => {
+  const text = describeHistory(entry('loic', { lead_agent: [null, 'ghp_secret'], next_action: ['a', 'b'] }))
+  expect(text).toBe('a changé l’agent principal et modifié la prochaine action')
+  expect(text).not.toMatch(/ghp_/)
+})
+
+test('un transfert avec un champ inconnu reste générique', () => {
+  const changes = { lead_agent: ['helios', 'loic'], 'sk-abc': [1, 2] }
+  expect(describeHistory(entry('hermes', changes))).toBe('a confié la tâche à Loïc et modifié un champ')
+})
+
+test('une preuve jointe a son propre libellé, sans afficher la preuve', () => {
+  const text = describeHistory(entry('helios', { evidence: [['token=[REDACTED]']] }))
+  expect(text).toBe('a joint une preuve')
+})
+
+test('un statut de forme inattendue ne plante pas', () => {
+  expect(describeHistory(entry('loic', { status: 'oops' }, 'status'))).toBe('a changé le statut')
+  expect(describeHistory(entry('loic', {}, 'status'))).toBe('a changé le statut')
+  expect(describeHistory(entry('loic', { status: ['todo'] }, 'status'))).toBe('a changé le statut')
+})
+
 test('les autres actions gardent leur libellé', () => {
   expect(describeHistory(entry('loic', {}, 'created'))).toBe('a créé la tâche')
 })

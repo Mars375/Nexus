@@ -28,9 +28,14 @@ test("une tâche en cours sans rôle ne porte aucun marqueur d'opération", () =
 
 test("l'agent principal est nommé en clair sur la carte, sans survol", () => {
   render(<TaskCardBody task={task({ lead_agent: 'helios' })} pendingDependencies={[]} now={0} />)
-  expect(screen.getByText('Helios')).toBeVisible()
+  // jsdom has no CSS: `toBeVisible` alone also passes on a `.sr-only` name, so check the class.
+  const helios = screen.getByText('Helios')
+  expect(helios).toBeVisible()
+  expect(helios.closest('.sr-only')).toBeNull()
   render(<TaskCardBody task={task({ lead_agent: 'hermes' })} pendingDependencies={[]} now={0} />)
-  expect(screen.getByText('Hermes')).toBeVisible()
+  const hermes = screen.getByText('Hermes')
+  expect(hermes).toBeVisible()
+  expect(hermes.closest('.sr-only')).toBeNull()
 })
 
 test('une tâche sans agent principal ne montre aucun nom d’agent', () => {
