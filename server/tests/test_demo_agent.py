@@ -209,6 +209,46 @@ def test_a_refused_done_is_exit_4(http, task, monkeypatch, capsys):
     assert "effet attendu non appliqué (status:done : refus)" in capsys.readouterr().out
 
 
+def test_with_evidence_a_done_left_in_review_is_exit_4(http, task, monkeypatch, capsys):
+    """With evidence the expected effect is `done`: `review` would let an orchestrator read 0 as
+    « finished » while the task still waits for Loïc."""
+    real = demo_agent.publish
+
+    def publish(base, actor, ref, kind, subject, **fields):
+        event = real(base, actor, ref, kind, subject, **fields)
+        if kind == "done":
+            event["effects"] = [{"action": "status:review", "applied": True}]
+        return event
+
+    monkeypatch.setattr(demo_agent, "publish", publish)
+    assert run(task, "--evidence", "commit:a1b2c3d") == demo_agent.EXIT_EFFECT_REFUSED
+    assert "effet attendu non appliqué (aucun effet sur la tâche)" in capsys.readouterr().out
+
+
+def test_without_evidence_the_expected_effect_is_review(http, task, monkeypatch):
+    """Without evidence Nexus records the agent's `done` as `review`: that is the expected effect,
+    and a `done` effect would not be."""
+    real = demo_agent.publish
+
+    def publish(base, actor, ref, kind, subject, **fields):
+        event = real(base, actor, ref, kind, subject, **fields)
+        if kind == "done":
+            event["effects"] = [{"action": "status:done", "applied": True}]
+        return event
+
+    monkeypatch.setattr(demo_agent, "publish", publish)
+    assert run(task) == demo_agent.EXIT_EFFECT_REFUSED
+
+
+@pytest.mark.parametrize("next_action", ["", "   ", "[REDACTED]"])
+def test_a_blank_next_action_is_a_usage_error_before_anything_is_sent(http, task, next_action):
+    with pytest.raises(SystemExit) as exit_:
+        run(task, "--next-action", next_action, "--evidence", "commit:a1b2c3d")
+    assert exit_.value.code == 2
+    assert http.get("/api/events").json() == []
+    assert http.get(f"/api/tasks/{task}").json()["next_action"] is None
+
+
 @pytest.mark.parametrize("evidence", ["   ", "commit:" + "a" * 600, "commit:\udcff"])
 def test_an_unusable_evidence_is_a_usage_error_before_anything_is_sent(http, task, evidence):
     with pytest.raises(SystemExit) as exit_:

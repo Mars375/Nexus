@@ -15,8 +15,9 @@ Avec `--ask`, il demande plutôt une validation à Loïc et, avec `--wait`, reli
 Une tâche active doit avoir une prochaine action : si la tâche n'en a pas, l'agent en donne une
 (`--next-action`, par `PATCH /api/tasks/<ref>`) avant `working`. Il vérifie après chaque étape que
 l'effet attendu est appliqué (agent principal, en cours, terminée) et s'arrête sinon, avec le
-code 4 ; sans preuve, `done` laisse la tâche en `review`, à valider par Loïc. Relancé sur une
-tâche qu'il mène déjà, il ne republie pas `claimed`.
+code 4. Sans `--evidence`, Nexus enregistre `done` comme `review`, à valider par Loïc : c'est
+alors l'effet attendu, et le code 0 ne veut pas dire « terminée ». Relancé sur une tâche qu'il
+mène déjà, il ne republie pas `claimed`.
 
 Montre à un agent lancé ailleurs comment se déclarer dans Nexus (EVENT-PROTOCOL, ADR-015 b).
 N'utilise que la bibliothèque standard : un agent peut copier ce code tel quel.
@@ -45,7 +46,7 @@ EXIT_NO_ANSWER = 1  # --ask --wait: timeout, expired request, Nexus unreachable;
 EXIT_USAGE = 2  # invalid arguments: argparse exits with it
 EXIT_REJECTED = 3  # --ask --wait: Loïc refused
 EXIT_EFFECT_REFUSED = 4  # the story: an event was recorded but its expected effect was not applied
-# 0: the story was played (task done, or in review without evidence); with --ask, approved or
+# 0: the story was played (task done with --evidence, in review without); with --ask, approved or
 # answered (or, without --wait, asked and not waiting)
 
 
@@ -268,6 +269,8 @@ def main(argv: list[str] | None = None, sleep=time.sleep, monotonic=time.monoton
         if not args.evidence or len(args.evidence) > EVIDENCE_REF_MAX:
             parser.error(f"--evidence : une référence non vide de {EVIDENCE_REF_MAX} caractères "
                          "au plus, ex. commit:a1b2c3d")
+    if _blank(args.next_action):  # refused by Nexus anyway, but only once `working` opened a run
+        parser.error("--next-action : une prochaine action non vide")
     if not math.isfinite(args.wait) or args.wait < 0:
         parser.error("--wait : un nombre de secondes fini, 0 ou plus")
     if not math.isfinite(args.interval) or args.interval < MIN_INTERVAL:
@@ -379,7 +382,8 @@ def play(base: str, actor: str, ref: str, evidence: str | None, next_action: str
     except (SystemExit, OSError, KeyboardInterrupt) as exc:
         close_run("Arrêt du run", cause_of(exc))
         raise
-    reason = landed(done, {"status:done", "status:review"})
+    # Judged on what was asked: with evidence, a task left in `review` is not finished.
+    reason = landed(done, {"status:done"} if evidence else {"status:review"})
     return stop(reason) if reason else 0
 
 
