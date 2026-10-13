@@ -249,6 +249,33 @@ def test_a_claimed_without_effect_because_already_lead_is_not_a_failure(http, ta
     assert run(task, "--evidence", "commit:a1b2c3d") == 0
 
 
+def test_a_working_refused_by_the_main_operation_rule_stops_at_once(http, task, capsys):
+    """« … est déjà en cours … » is a refusal, not « already there »: failed(run), exit 4."""
+    other = http.post("/api/tasks", json={"title": "Autre", "objective": "o",
+                                          "next_action": "x"}).json()["id"]
+    assert http.post(f"/api/tasks/{other}/status",
+                     json={"status": "in_progress"}).json()["operation_role"] == "main"
+    http.patch(f"/api/tasks/{task}", json={"next_action": "x", "operation_role": "main"})
+    assert run(task, "--evidence", "commit:a1b2c3d") == demo_agent.EXIT_EFFECT_REFUSED
+    kinds = [e["kind"] for e in http.get("/api/events").json()][::-1]
+    assert kinds == ["claimed", "working", "failed"]
+    assert "opération principale" in capsys.readouterr().out
+
+
+def test_nexus_unreachable_after_working_still_tries_to_close_the_run(http, task, monkeypatch):
+    real = demo_agent.publish
+
+    def publish(base, actor, ref, kind, subject, **fields):
+        if kind == "progress":
+            raise OSError("connection reset")
+        return real(base, actor, ref, kind, subject, **fields)
+
+    monkeypatch.setattr(demo_agent, "publish", publish)
+    with pytest.raises(OSError):
+        run(task, "--evidence", "commit:a1b2c3d")
+    assert http.get("/api/events").json()[0]["kind"] == "failed"
+
+
 def test_a_secret_in_next_action_is_not_echoed(http, task, capsys):
     secret = "ghp_" + "A" * 36
     assert run(task, "--next-action", f"publier avec {secret}", "--evidence", "commit:a1") == 0

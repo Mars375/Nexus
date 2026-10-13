@@ -296,8 +296,11 @@ def landed(event: dict, actions: set[str]) -> str | None:
         if effect["action"] not in actions:
             continue
         reason = effect.get("reason", "")
-        if effect["applied"] or reason.startswith("déjà en ") or "est déjà " in reason:
-            return None  # « déjà en X », « … est déjà l'agent principal », « … est déjà en X »
+        # Only the server's exact « already there » wordings: a looser match would hide real
+        # refusals, e.g. « une autre opération principale est déjà en cours pour cet humain ».
+        if (effect["applied"] or reason.startswith(("déjà en ", "la tâche est déjà en "))
+                or reason.endswith("est déjà l'agent principal")):
+            return None
         reasons.append(f"{effect['action']} : {reason}")
     if not reasons and actions == {"lead_agent"}:
         return None  # `claimed` adds no effect when the task already names this agent as lead
@@ -331,8 +334,11 @@ def play(base: str, actor: str, ref: str, evidence: str | None, next_action: str
     if reason:
         # The run is open even though the task did not move: close it, or every later run of
         # this agent on this task would be refused (run_already_active).
-        publish(base, actor, ref, "failed", "La tâche n'a pas pu passer en cours",
-                payload={"cause": reason[:500]}, run=run_ref)
+        try:
+            publish(base, actor, ref, "failed", "La tâche n'a pas pu passer en cours",
+                    payload={"cause": reason[:500]}, run=run_ref)
+        except SystemExit:
+            print(f"le run {run_ref} reste ouvert : clos-le par un failed qui le nomme")
         return stop(reason)
     try:
         # The progress names its run: each run's progress is a new fact, not noise.
@@ -341,12 +347,13 @@ def play(base: str, actor: str, ref: str, evidence: str | None, next_action: str
         # Without evidence, an agent's `done` is recorded as `review`: Loïc validates.
         done = publish(base, actor, ref, "done", "Terminé",
                        evidence=[evidence] if evidence else [], run=run_ref)
-    except SystemExit:
-        # A request refused after `working` would leave the run open: close it, then stop.
+    except (SystemExit, OSError, KeyboardInterrupt):
+        # A request refused (or Nexus unreachable, or Ctrl-C) after `working` would leave the run
+        # open, and every later run on this task refused: close it, then stop.
         try:
             publish(base, actor, ref, "failed", "Arrêt sur une requête refusée",
                     payload={"cause": "une requête de l'agent a été refusée"}, run=run_ref)
-        except SystemExit:
+        except (SystemExit, OSError):
             print(f"le run {run_ref} reste ouvert : clos-le par un failed qui le nomme")
         raise
     reason = landed(done, {"status:done", "status:review"})
