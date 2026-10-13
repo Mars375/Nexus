@@ -12,6 +12,13 @@ Avec `--ask`, il demande plutôt une validation à Loïc et, avec `--wait`, reli
 
     uv run python -m nexus.demo_agent --task nx-task-1 --ask "Publier ?" --wait 120
 
+Une tâche active doit avoir une prochaine action : si la tâche n'en a pas, l'agent en donne une
+(`--next-action`, par `PATCH /api/tasks/<ref>`) avant `working`. Il vérifie après chaque étape que
+l'effet attendu est appliqué (agent principal, en cours, terminée) et s'arrête sinon, avec le
+code 4. Sans `--evidence`, Nexus enregistre `done` comme `review`, à valider par Loïc : c'est
+alors l'effet attendu, et le code 0 ne veut pas dire « terminée ». Relancé sur une tâche qu'il
+mène déjà, il ne republie pas `claimed`.
+
 Montre à un agent lancé ailleurs comment se déclarer dans Nexus (EVENT-PROTOCOL, ADR-015 b).
 N'utilise que la bibliothèque standard : un agent peut copier ce code tel quel.
 """
@@ -33,14 +40,18 @@ import uuid
 
 from nexus.clock import now
 
-# Exit codes of `--ask --wait`: an agent that reads 0 as « go » must not go after a refusal.
-EXIT_NO_ANSWER = 1  # timeout, expired request, or Nexus unreachable
+# Exit codes: an agent that reads 0 as « go » must not go after a refusal.
+EXIT_NO_ANSWER = 1  # --ask --wait: timeout, expired request, Nexus unreachable; also any refused
+# request (4xx, e.g. 409 noise or run_already_active), which stops the agent with its message
 EXIT_USAGE = 2  # invalid arguments: argparse exits with it
-EXIT_REJECTED = 3  # Loïc refused
-# 0: approved or answered (or, without --wait, asked and not waiting)
+EXIT_REJECTED = 3  # --ask --wait: Loïc refused
+EXIT_EFFECT_REFUSED = 4  # the story: an event was recorded but its expected effect was not applied
+# 0: the story was played (task done with --evidence, in review without); with --ask, approved or
+# answered (or, without --wait, asked and not waiting)
 
 
 MIN_INTERVAL = 0.1  # seconds between two reads of the approval
+EVIDENCE_REF_MAX = 512  # nexus.events.limits, after stripping; checked before anything is sent
 
 # `nxt_` + 43 base64url characters (nexus.auth.tokens); spelled out here so the file stays copyable.
 _TOKEN_FORMAT = re.compile(r"nxt_[A-Za-z0-9_-]{43}")
@@ -131,7 +142,10 @@ def call(base: str, method: str, path: str, body: dict | None = None) -> dict:
         if 300 <= err.code < 400:
             message = f"refusé ({err.code}) : redirection non suivie, vérifie --base"
             raise SystemExit(message) from err
-        detail = json.load(err).get("detail")
+        try:
+            detail = json.load(err).get("detail")
+        except (ValueError, AttributeError):  # e.g. a 500 answered as plain text
+            raise SystemExit(f"refusé ({err.code}) : réponse illisible du serveur") from err
         hint = ""
         if err.code == 401 and not _bearer:
             hint = " — fournis le jeton de l'acteur par NEXUS_TOKEN ou --token-file"
@@ -141,12 +155,16 @@ def call(base: str, method: str, path: str, body: dict | None = None) -> dict:
         raise SystemExit(f"refusé ({err.code}) : {detail}{hint}") from err
 
 
-def publish(base: str, actor: str, task: str, kind: str, subject: str, **fields) -> dict:
+def publish(base: str, actor: str, task: str, kind: str, subject: str, *,
+            after_post=None, **fields) -> dict:
+    """POST the event then read it back; `after_post` runs once the POST is recorded."""
     event = {
         "v": 1, "id": f"evt_{actor}_{uuid.uuid4().hex[:12]}", "at": now().isoformat(),
         "actor": actor, "task": task, "kind": kind, "subject": subject,
     } | fields
     created = call(base, "POST", "/api/events", event)
+    if after_post is not None:
+        after_post()
     # Read-back : l'événement n'est publié qu'une fois relu (EVENT-PROTOCOL §6).
     read = call(base, "GET", f"/api/events/{created['id']}")
     if read["actor_event_id"] != event["id"]:
@@ -214,6 +232,8 @@ def main(argv: list[str] | None = None, sleep=time.sleep, monotonic=time.monoton
     parser.add_argument("--task", required=True, help="ex. nx-task-1")
     parser.add_argument("--actor", default="helios")
     parser.add_argument("--evidence", default=None, help="preuve de fin, ex. commit:a1b2c3d")
+    parser.add_argument("--next-action", default="Mener la démo à son terme",
+                        help="prochaine action donnée à la tâche si elle n'en a pas")
     parser.add_argument("--ask", metavar="SUJET", help="demander une décision à Loïc, sans jouer")
     parser.add_argument("--ask-kind", choices=["needs_human", "question"], default="needs_human")
     parser.add_argument("--option", action="append", dest="options", help="option (répétable)")
@@ -239,6 +259,18 @@ def main(argv: list[str] | None = None, sleep=time.sleep, monotonic=time.monoton
                      "(localhost, 127.0.0.0/8, ::1) ou une adresse Tailscale (100.64.0.0/10)")
     if args.ask is not None and not args.ask.strip():
         parser.error("--ask : le sujet ne peut pas être vide")
+    if args.evidence is not None:
+        # Checked before `working` opens a run: a refused `done` would leave that run open.
+        args.evidence = args.evidence.strip()
+        try:
+            args.evidence.encode("utf-8")  # a lone surrogate (non-UTF-8 argv) cannot be sent
+        except UnicodeEncodeError:
+            args.evidence = ""
+        if _blank_reference(args.evidence) or len(args.evidence) > EVIDENCE_REF_MAX:
+            parser.error(f"--evidence : une référence qui garde un identifiant, de "
+                         f"{EVIDENCE_REF_MAX} caractères au plus, ex. commit:a1b2c3d")
+    if _blank(args.next_action):  # refused by Nexus anyway, but only once `working` opened a run
+        parser.error("--next-action : une prochaine action non vide")
     if not math.isfinite(args.wait) or args.wait < 0:
         parser.error("--wait : un nombre de secondes fini, 0 ou plus")
     if not math.isfinite(args.interval) or args.interval < MIN_INTERVAL:
@@ -257,16 +289,122 @@ def main(argv: list[str] | None = None, sleep=time.sleep, monotonic=time.monoton
             return EXIT_NO_ANSWER
         return report(approval)
 
-    publish(args.base, args.actor, args.task, "claimed", "Je prends la tâche")
+    return play(args.base, args.actor, args.task, args.evidence, args.next_action)
+
+
+# A masked secret says nothing: a next action made only of `[REDACTED]` counts as absent, as the
+# server judges it (nexus.secrets.is_blank); spelled out here so the file stays copyable.
+_REDACTED_SPAN = re.compile(r"(?:[\w.-]+\s*[:=]\s*)?[\"'(\[]*\[REDACTED\][\"')\]]*")
+
+
+def _blank(text: str | None) -> bool:
+    return not text or not re.search(r"\w", _REDACTED_SPAN.sub("", text))
+
+
+def _blank_reference(text: str | None) -> bool:
+    """Only a label left (`commit:`, `commit: token=[REDACTED]`): Nexus would not count it as
+    evidence (nexus.secrets.is_blank_reference) and would record the `done` as `review`."""
+    if _blank(text):
+        return True
+    rest = re.sub(r"^\s*[\w.-]+\s*:", "", _REDACTED_SPAN.sub("", text), count=1)
+    rest = re.sub(r"[\w.-]+\s*[:=](?=\s|$)", "", rest)
+    return not re.search(r"\w", rest)
+
+
+def landed(event: dict, actions: set[str]) -> str | None:
+    """None when the read-back event reached one of `actions` (applied, or the task was already
+    there); else the server's reason. Judged on the event's own effects, not on a later read of
+    the task that another writer may have changed in between."""
+    reasons = []
+    for effect in event["effects"]:
+        if effect["action"] not in actions:
+            continue
+        reason = effect.get("reason", "")
+        # Only the server's exact « already there » wordings: a looser match would hide real
+        # refusals, e.g. « une autre opération principale est déjà en cours pour cet humain ».
+        if (effect["applied"] or reason.startswith(("déjà en ", "la tâche est déjà en "))
+                or reason.endswith("est déjà l'agent principal")):
+            return None
+        reasons.append(f"{effect['action']} : {reason}")
+    if not reasons and actions == {"lead_agent"}:
+        return None  # `claimed` adds no effect when the task already names this agent as lead
+    if reasons:
+        return "; ".join(reasons)
+    # Another effect may have moved the task (e.g. `status:review` when `done` was expected).
+    other = [e["action"] for e in event["effects"] if e["applied"]]
+    if other:
+        return f"{', '.join(other)} appliqué, {' ou '.join(sorted(actions))} attendu"
+    return "aucun effet sur la tâche"
+
+
+def play(base: str, actor: str, ref: str, evidence: str | None, next_action: str) -> int:
+    """Plays claimed → working → progress → done, checking the effect of each step."""
+
+    def stop(reason: str) -> int:
+        print(f"effet attendu non appliqué ({reason}) ; l'agent s'arrête")
+        return EXIT_EFFECT_REFUSED
+
+    task = call(base, "GET", f"/api/tasks/{ref}")
+    if _blank(task.get("next_action")):
+        # An active task needs a next action: without one, `working` is refused (and so `done`).
+        stored = call(base, "PATCH", f"/api/tasks/{ref}", {"next_action": next_action})
+        # The stored text, which the server masked: the argument may carry a secret.
+        print(f"{ref}  prochaine action donnée : {stored.get('next_action')}")
+    if task["lead_agent"] == actor:
+        # Re-publishing the same `claimed` within the noise window would be refused (409 noise).
+        print(f"{ref}  {actor} est déjà l'agent principal : pas de nouveau claimed")
+    else:
+        reason = landed(publish(base, actor, ref, "claimed", "Je prends la tâche"), {"lead_agent"})
+        if reason:
+            return stop(reason)
     # working ouvre le run : c'est lui qui fait passer la tâche en cours (EVENT-PROTOCOL §3).
     run_ref = f"demo:{uuid.uuid4().hex[:8]}"
-    publish(args.base, args.actor, args.task, "working", "Je commence",
-            payload={"run_ref": run_ref})
-    publish(args.base, args.actor, args.task, "progress", "À mi-chemin", payload={"percent": 50})
-    evidence = [args.evidence] if args.evidence else []
-    # Chaque clôture nomme son run : sans lui, Nexus ne peut pas savoir quel run elle termine.
-    publish(args.base, args.actor, args.task, "done", "Terminé", evidence=evidence, run=run_ref)
-    return 0
+    opened = []  # set once the `working` POST is recorded: from then on the run is open
+
+    def close_run(subject: str, cause: str) -> None:
+        # An open run left behind makes every later run of this agent on this task refused
+        # (run_already_active): close it with the true cause.
+        sent = []
+        try:
+            publish(base, actor, ref, "failed", subject, payload={"cause": cause[:500]},
+                    run=run_ref, after_post=lambda: sent.append(True))
+        except (SystemExit, OSError, KeyboardInterrupt):
+            if sent:  # recorded: the run is closed, only its read-back failed
+                print(f"clôture du run {run_ref} envoyée, relecture impossible")
+            else:
+                print(f"le run {run_ref} reste ouvert : clos-le par un failed qui le nomme")
+
+    def cause_of(exc: BaseException) -> str:
+        if isinstance(exc, SystemExit):
+            return "une requête de l'agent a été refusée"
+        return "Nexus injoignable pendant le run" if isinstance(exc, OSError) else (
+            "agent interrompu")
+
+    try:
+        working = publish(base, actor, ref, "working", "Je commence",
+                          payload={"run_ref": run_ref}, after_post=lambda: opened.append(True))
+    except (SystemExit, OSError, KeyboardInterrupt) as exc:
+        if opened:  # recorded, but its read-back failed: the run is open all the same
+            close_run("Arrêt du run", cause_of(exc))
+        raise
+    reason = landed(working, {"status:in_progress"})
+    if reason:
+        # The run is open even though the task did not move.
+        close_run("La tâche n'a pas pu passer en cours", reason)
+        return stop(reason)
+    try:
+        # The progress names its run: each run's progress is a new fact, not noise.
+        publish(base, actor, ref, "progress", "À mi-chemin", payload={"percent": 50}, run=run_ref)
+        # Chaque clôture nomme son run : sans lui, Nexus ne peut pas savoir quel run elle termine.
+        # Without evidence, an agent's `done` is recorded as `review`: Loïc validates.
+        done = publish(base, actor, ref, "done", "Terminé",
+                       evidence=[evidence] if evidence else [], run=run_ref)
+    except (SystemExit, OSError, KeyboardInterrupt) as exc:
+        close_run("Arrêt du run", cause_of(exc))
+        raise
+    # Judged on what was asked: with evidence, a task left in `review` is not finished.
+    reason = landed(done, {"status:done"} if evidence else {"status:review"})
+    return stop(reason) if reason else 0
 
 
 if __name__ == "__main__":
