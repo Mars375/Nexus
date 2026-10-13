@@ -73,7 +73,7 @@ test('un transfert nomme le nouvel agent principal parmi d’autres champs', () 
 
 test('un transfert parmi d’autres champs : l’agent qui se l’attribue, ou un retrait', () => {
   expect(describeHistory(entry('hermes', { lead_agent: [null, 'hermes'], next_action: ['a', 'b'] }))).toBe(
-    'est devenu agent principal et modifié la prochaine action',
+    'est devenu agent principal et a modifié la prochaine action',
   )
   expect(describeHistory(entry('loic', { lead_agent: ['helios', null], next_action: ['a', 'b'] }))).toBe(
     'a retiré l’agent principal et modifié la prochaine action',
@@ -91,6 +91,13 @@ test('un transfert avec un champ inconnu reste générique', () => {
   expect(describeHistory(entry('hermes', changes))).toBe('a confié la tâche à Loïc et modifié un champ')
 })
 
+test('un transfert reste nommé même avec beaucoup d’autres champs', () => {
+  const changes = {
+    lead_agent: [null, 'helios'], title: ['a', 'b'], objective: ['a', 'b'], priority: [1, 2], due_at: [null, 'x'],
+  }
+  expect(describeHistory(entry('loic', changes))).toBe('a confié la tâche à Helios et modifié plusieurs champs')
+})
+
 test('une preuve jointe a son propre libellé, sans afficher la preuve', () => {
   const text = describeHistory(entry('helios', { evidence: [['token=[REDACTED]']] }))
   expect(text).toBe('a joint une preuve')
@@ -100,6 +107,8 @@ test('un statut de forme inattendue ne plante pas', () => {
   expect(describeHistory(entry('loic', { status: 'oops' }, 'status'))).toBe('a changé le statut')
   expect(describeHistory(entry('loic', {}, 'status'))).toBe('a changé le statut')
   expect(describeHistory(entry('loic', { status: ['todo'] }, 'status'))).toBe('a changé le statut')
+  // A key of the prototype is not a status: `toString` must not be called as a label.
+  expect(describeHistory(entry('loic', { status: ['toString', 'done'] }, 'status'))).toBe('l\'a passée de ? à terminé')
 })
 
 test('les autres actions gardent leur libellé', () => {
