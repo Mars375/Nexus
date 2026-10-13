@@ -209,7 +209,7 @@ def test_a_refused_done_is_exit_4(http, task, monkeypatch, capsys):
     assert "effet attendu non appliqué (status:done : refus)" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("evidence", ["   ", "commit:" + "a" * 600])
+@pytest.mark.parametrize("evidence", ["   ", "commit:" + "a" * 600, "commit:\udcff"])
 def test_an_unusable_evidence_is_a_usage_error_before_anything_is_sent(http, task, evidence):
     with pytest.raises(SystemExit) as exit_:
         run(task, "--evidence", evidence)
@@ -289,6 +289,24 @@ def test_a_non_json_error_reply_is_a_short_refusal(monkeypatch):
     monkeypatch.setattr(demo_agent, "_open", urlopen)
     with pytest.raises(SystemExit, match="réponse illisible"):
         demo_agent.call("http://127.0.0.1:8765", "GET", "/api/tasks/nx-task-1")
+
+
+def test_a_working_recorded_but_not_read_back_still_closes_the_run(http, task, monkeypatch):
+    real = demo_agent.call
+
+    def call(base, method, path, body=None):
+        if method == "GET" and path.startswith("/api/events/"):
+            kind = http.get(path).json()["kind"]
+            if kind == "working":
+                raise OSError("connection reset")
+        return real(base, method, path, body)
+
+    monkeypatch.setattr(demo_agent, "call", call)
+    with pytest.raises(OSError):
+        run(task, "--evidence", "commit:a1b2c3d")
+    events = http.get("/api/events").json()
+    assert [e["kind"] for e in events][:2] == ["failed", "working"]
+    assert events[0]["run"] == events[1]["run"]
 
 
 def test_a_secret_in_next_action_is_not_echoed(http, task, capsys):

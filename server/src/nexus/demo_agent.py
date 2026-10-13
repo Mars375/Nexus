@@ -154,12 +154,16 @@ def call(base: str, method: str, path: str, body: dict | None = None) -> dict:
         raise SystemExit(f"refusé ({err.code}) : {detail}{hint}") from err
 
 
-def publish(base: str, actor: str, task: str, kind: str, subject: str, **fields) -> dict:
+def publish(base: str, actor: str, task: str, kind: str, subject: str, *,
+            after_post=None, **fields) -> dict:
+    """POST the event then read it back; `after_post` runs once the POST is recorded."""
     event = {
         "v": 1, "id": f"evt_{actor}_{uuid.uuid4().hex[:12]}", "at": now().isoformat(),
         "actor": actor, "task": task, "kind": kind, "subject": subject,
     } | fields
     created = call(base, "POST", "/api/events", event)
+    if after_post is not None:
+        after_post()
     # Read-back : l'événement n'est publié qu'une fois relu (EVENT-PROTOCOL §6).
     read = call(base, "GET", f"/api/events/{created['id']}")
     if read["actor_event_id"] != event["id"]:
@@ -257,6 +261,10 @@ def main(argv: list[str] | None = None, sleep=time.sleep, monotonic=time.monoton
     if args.evidence is not None:
         # Checked before `working` opens a run: a refused `done` would leave that run open.
         args.evidence = args.evidence.strip()
+        try:
+            args.evidence.encode("utf-8")  # a lone surrogate (non-UTF-8 argv) cannot be sent
+        except UnicodeEncodeError:
+            args.evidence = ""
         if not args.evidence or len(args.evidence) > EVIDENCE_REF_MAX:
             parser.error(f"--evidence : une référence non vide de {EVIDENCE_REF_MAX} caractères "
                          "au plus, ex. commit:a1b2c3d")
@@ -332,16 +340,34 @@ def play(base: str, actor: str, ref: str, evidence: str | None, next_action: str
             return stop(reason)
     # working ouvre le run : c'est lui qui fait passer la tâche en cours (EVENT-PROTOCOL §3).
     run_ref = f"demo:{uuid.uuid4().hex[:8]}"
-    working = publish(base, actor, ref, "working", "Je commence", payload={"run_ref": run_ref})
+    opened = []  # set once the `working` POST is recorded: from then on the run is open
+
+    def close_run(subject: str, cause: str) -> None:
+        # An open run left behind makes every later run of this agent on this task refused
+        # (run_already_active): close it with the true cause.
+        try:
+            publish(base, actor, ref, "failed", subject, payload={"cause": cause[:500]},
+                    run=run_ref)
+        except (SystemExit, OSError, KeyboardInterrupt):
+            print(f"le run {run_ref} reste ouvert : clos-le par un failed qui le nomme")
+
+    def cause_of(exc: BaseException) -> str:
+        if isinstance(exc, SystemExit):
+            return "une requête de l'agent a été refusée"
+        return "Nexus injoignable pendant le run" if isinstance(exc, OSError) else (
+            "agent interrompu")
+
+    try:
+        working = publish(base, actor, ref, "working", "Je commence",
+                          payload={"run_ref": run_ref}, after_post=lambda: opened.append(True))
+    except (SystemExit, OSError, KeyboardInterrupt) as exc:
+        if opened:  # recorded, but its read-back failed: the run is open all the same
+            close_run("Arrêt du run", cause_of(exc))
+        raise
     reason = landed(working, {"status:in_progress"})
     if reason:
-        # The run is open even though the task did not move: close it, or every later run of
-        # this agent on this task would be refused (run_already_active).
-        try:
-            publish(base, actor, ref, "failed", "La tâche n'a pas pu passer en cours",
-                    payload={"cause": reason[:500]}, run=run_ref)
-        except (SystemExit, OSError):
-            print(f"le run {run_ref} reste ouvert : clos-le par un failed qui le nomme")
+        # The run is open even though the task did not move.
+        close_run("La tâche n'a pas pu passer en cours", reason)
         return stop(reason)
     try:
         # The progress names its run: each run's progress is a new fact, not noise.
@@ -351,18 +377,7 @@ def play(base: str, actor: str, ref: str, evidence: str | None, next_action: str
         done = publish(base, actor, ref, "done", "Terminé",
                        evidence=[evidence] if evidence else [], run=run_ref)
     except (SystemExit, OSError, KeyboardInterrupt) as exc:
-        # A request refused (or Nexus unreachable, or Ctrl-C) after `working` would leave the run
-        # open, and every later run on this task refused: close it, with the true cause, then stop.
-        cause = (
-            "une requête de l'agent a été refusée" if isinstance(exc, SystemExit)
-            else "Nexus injoignable pendant le run" if isinstance(exc, OSError)
-            else "agent interrompu"
-        )
-        try:
-            publish(base, actor, ref, "failed", "Arrêt du run", payload={"cause": cause},
-                    run=run_ref)
-        except (SystemExit, OSError):
-            print(f"le run {run_ref} reste ouvert : clos-le par un failed qui le nomme")
+        close_run("Arrêt du run", cause_of(exc))
         raise
     reason = landed(done, {"status:done", "status:review"})
     return stop(reason) if reason else 0
