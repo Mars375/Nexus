@@ -57,7 +57,9 @@ test('créer, déplacer, commenter et filtrer une tâche', async ({ page }) => {
   await pane.getByRole('button', { name: 'Enregistrer' }).click()
   await expect(page.getByText('Modifications enregistrées')).toBeVisible()
   // L'historique suit tout de suite, sans attendre le rafraîchissement périodique (10 s).
-  await expect(pane.getByText('Loïc a modifié un champ')).toBeVisible({ timeout: 3_000 })
+  await expect(pane.getByText('Loïc a confié la tâche à Helios')).toBeVisible({ timeout: 3_000 })
+  await expect(pane.getByText('Agent principal : Helios')).toBeVisible()
+  await expect(card(page, 'Relever les statuts').getByText('Helios', { exact: true })).toBeVisible()
 
   await createTask(page, 'Écrire la note')
   await page.getByLabel('Filtrer par agent').selectOption('helios')

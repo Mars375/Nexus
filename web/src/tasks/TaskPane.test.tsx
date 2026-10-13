@@ -135,3 +135,44 @@ test('le panneau dit d’où viennent la tâche, ses commentaires et son histori
     expect(screen.getAllByText(/^source : nexus\.db · mesuré il y a/)).toHaveLength(3),
   )
 })
+
+test('le panneau dit qui est l’agent principal, et suit la donnée vivante', () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json([])))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const pane = (task: Task) => (
+    <QueryClientProvider client={client}>
+      <TaskPane task={task} tasks={[task]} onClose={() => {}} />
+    </QueryClientProvider>
+  )
+  const { rerender } = render(pane(TASK))
+  expect(screen.getByText('Aucun agent principal')).toBeInTheDocument()
+
+  rerender(pane({ ...TASK, lead_agent: 'helios', updated_at: '2026-09-28T11:00:00+02:00' }))
+  expect(screen.getByText('Agent principal : Helios')).toBeInTheDocument()
+  expect(screen.queryByText('Aucun agent principal')).not.toBeInTheDocument()
+})
+
+test('un agent principal inconnu ne plante pas le panneau', () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json([])))
+  const odd = 'inconnu' as unknown as Task['lead_agent']
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(
+    <QueryClientProvider client={client}>
+      <TaskPane task={{ ...TASK, lead_agent: odd }} tasks={[TASK]} onClose={() => {}} />
+    </QueryClientProvider>,
+  )
+  expect(screen.getByText('Agent principal : Agent inconnu')).toBeInTheDocument()
+})
+
+test('l’historique nomme le changement d’agent principal', async () => {
+  const now = new Date().toISOString()
+  const entry = {
+    id: 1, task: TASK.id, actor: 'helios', at: now, action: 'updated',
+    changes: { lead_agent: [null, 'helios'] }, source: 'nexus.db', measured_at: now,
+  }
+  vi.stubGlobal('fetch', vi.fn(async (url: string) =>
+    Response.json(String(url).endsWith('/comments') ? [] : [entry]),
+  ))
+  renderPane()
+  expect(await screen.findByText('Helios est devenu agent principal')).toBeInTheDocument()
+})

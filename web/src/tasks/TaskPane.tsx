@@ -1,7 +1,7 @@
 import clsx from 'clsx'
 import { toast } from 'sonner'
 import { useState, type FormEvent, type ReactNode } from 'react'
-import type { Actor, HistoryEntry, Priority, Status, Task, TaskChanges } from '@/api'
+import type { Actor, Priority, Status, Task, TaskChanges } from '@/api'
 import { formatDateTime, isoToLocalInput, localInputToIso } from '@/format'
 import { listProvenance, type Provenanced } from '@/freshness'
 import { Provenance } from '@/Provenance'
@@ -24,7 +24,8 @@ import {
   useMoveTask,
   useUpdateTask,
 } from './queries'
-import { ACTOR_NAME, ACTORS, PRIORITY_LABEL, ROLE_LABEL, STATUS_LABEL } from './vocabulary'
+import { describeHistory } from './history'
+import { ACTOR_NAME, ACTORS, actorName, PRIORITY_LABEL, ROLE_LABEL, STATUS_LABEL } from './vocabulary'
 
 type Props = { task: Task; tasks: Task[]; onClose: () => void }
 
@@ -239,6 +240,9 @@ function EditForm({ task }: { task: Task }) {
     <form onSubmit={save}>
       <Section title="Détails">
         <div className="grid gap-3">
+          <p className="text-sm">
+            {task.lead_agent ? `Agent principal : ${actorName(task.lead_agent)}` : 'Aucun agent principal'}
+          </p>
           <Field label="Titre">
             <input className={inputClass} maxLength={200} value={form.title} onChange={(e) => set('title', e.target.value)} />
           </Field>
@@ -464,30 +468,6 @@ function Comments({ id }: { id: string }) {
   )
 }
 
-function describe(entry: HistoryEntry): string {
-  const c = entry.changes
-  switch (entry.action) {
-    case 'created':
-      return 'a créé la tâche'
-    case 'status': {
-      const [from, to] = c.status as [Status, Status]
-      return `l'a passée de ${STATUS_LABEL[from].toLowerCase()} à ${STATUS_LABEL[to].toLowerCase()}`
-    }
-    case 'updated':
-      return `a modifié ${Object.keys(c).length > 1 ? 'plusieurs champs' : 'un champ'}`
-    case 'commented':
-      return 'a commenté'
-    case 'linked':
-      return 'a ajouté une dépendance'
-    case 'unlinked':
-      return 'a retiré une dépendance'
-    case 'secret_redacted':
-      return 'a collé un secret, masqué automatiquement'
-    default:
-      return entry.action
-  }
-}
-
 function History({ id }: { id: string }) {
   const history = useHistory(id)
   return (
@@ -502,7 +482,7 @@ function History({ id }: { id: string }) {
             <li key={entry.id} className="flex gap-2">
               <span className="w-28 shrink-0 text-muted tabular-nums">{formatDateTime(entry.at)}</span>
               <span>
-                {ACTOR_NAME[entry.actor]} {describe(entry)}
+                {actorName(entry.actor)} {describeHistory(entry)}
               </span>
             </li>
           ))}
