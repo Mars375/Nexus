@@ -174,13 +174,49 @@ def test_a_rerun_on_a_task_it_already_leads_does_not_trip_the_noise_rule(http, t
     assert http.get(f"/api/tasks/{task}").json()["status"] == "done"
 
 
-def test_two_runs_on_two_tasks_back_to_back_both_succeed(http, client):
-    refs = [client.post("/api/tasks", json={"title": f"T{i}", "objective": "o"}).json()["id"]
-            for i in range(2)]
-    assert [run(ref) for ref in refs] == [0, 0]
+def test_two_full_runs_on_the_same_task_within_the_noise_window_both_succeed(http, task):
+    """The second run's progress names its own run: it is a new fact, not noise."""
+    assert run(task, "--evidence", "commit:a1b2c3d") == 0
+    assert run(task, "--evidence", "commit:d4e5f6a") == 0
+    kinds = [e["kind"] for e in http.get("/api/events").json()][::-1]
+    assert kinds == ["claimed", "working", "progress", "done", "working", "progress", "done"]
 
 
-# --- Exit codes and arguments (0 approved/answered, 3 rejected, 1 timeout/expired/network, 2 usage)
+def test_after_a_refused_working_the_run_is_closed_so_a_rerun_works(http, task, capsys):
+    """A recorded `working` whose effect is refused still opens a run: the agent closes it."""
+    other = http.post("/api/tasks", json={"title": "Avant", "objective": "o"}).json()["id"]
+    http.put(f"/api/tasks/{task}/dependencies/{other}")
+    assert run(task) == demo_agent.EXIT_EFFECT_REFUSED
+    failed = http.get("/api/events").json()[0]
+    assert failed["kind"] == "failed" and failed["run"] == http.get("/api/events").json()[1]["run"]
+    assert http.delete(f"/api/tasks/{task}/dependencies/{other}").status_code in (200, 204)
+    assert run(task, "--evidence", "commit:a1b2c3d") == 0
+    assert http.get(f"/api/tasks/{task}").json()["status"] == "done"
+
+
+def test_a_refused_done_is_exit_4(http, task, monkeypatch, capsys):
+    """The verdict comes from the event's own effects: a refused `done` effect stops the agent."""
+    real = demo_agent.publish
+
+    def publish(base, actor, ref, kind, subject, **fields):
+        event = real(base, actor, ref, kind, subject, **fields)
+        if kind == "done":
+            event["effects"] = [{"action": "status:done", "applied": False, "reason": "refus"}]
+        return event
+
+    monkeypatch.setattr(demo_agent, "publish", publish)
+    assert run(task, "--evidence", "commit:a1b2c3d") == demo_agent.EXIT_EFFECT_REFUSED
+    assert "effet attendu non appliqué (status:done : refus)" in capsys.readouterr().out
+
+
+def test_a_next_action_made_only_of_a_masked_secret_counts_as_absent(http, task):
+    http.patch(f"/api/tasks/{task}", json={"next_action": "token=[REDACTED]"})
+    assert run(task, "--next-action", "Relire", "--evidence", "commit:a1b2c3d") == 0
+    assert http.get(f"/api/tasks/{task}").json()["next_action"] == "Relire"
+
+
+# --- Exit codes and arguments (0 played/approved/answered, 3 rejected, 1 timeout/expired/network
+# or refused request, 2 usage, 4 expected effect not applied)
 
 
 def decide_in_sleep(http, **body):

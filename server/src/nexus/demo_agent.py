@@ -39,12 +39,14 @@ import uuid
 
 from nexus.clock import now
 
-# Exit codes of `--ask --wait`: an agent that reads 0 as « go » must not go after a refusal.
-EXIT_NO_ANSWER = 1  # timeout, expired request, or Nexus unreachable
+# Exit codes: an agent that reads 0 as « go » must not go after a refusal.
+EXIT_NO_ANSWER = 1  # --ask --wait: timeout, expired request, Nexus unreachable; also any refused
+# request (4xx, e.g. 409 noise or run_already_active), which stops the agent with its message
 EXIT_USAGE = 2  # invalid arguments: argparse exits with it
-EXIT_REJECTED = 3  # Loïc refused
-EXIT_EFFECT_REFUSED = 4  # the story stopped: an expected effect on the task was not applied
-# 0: approved or answered (or, without --wait, asked and not waiting)
+EXIT_REJECTED = 3  # --ask --wait: Loïc refused
+EXIT_EFFECT_REFUSED = 4  # the story: an event was recorded but its expected effect was not applied
+# 0: the story was played (task done, or in review without evidence); with --ask, approved or
+# answered (or, without --wait, asked and not waiting)
 
 
 MIN_INTERVAL = 0.1  # seconds between two reads of the approval
@@ -269,19 +271,41 @@ def main(argv: list[str] | None = None, sleep=time.sleep, monotonic=time.monoton
     return play(args.base, args.actor, args.task, args.evidence, args.next_action)
 
 
-def play(base: str, actor: str, ref: str, evidence: str | None, next_action: str) -> int:
-    """Plays claimed → working → progress → done, checking each expected effect on the task."""
+# A masked secret says nothing: a next action made only of `[REDACTED]` counts as absent, as the
+# server judges it (nexus.secrets.is_blank); spelled out here so the file stays copyable.
+_REDACTED_SPAN = re.compile(r"(?:[\w.-]+\s*[:=]\s*)?[\"'(\[]*\[REDACTED\][\"')\]]*")
 
-    def expect(field: str, values: tuple[str, ...], effect: str) -> bool:
-        task = call(base, "GET", f"/api/tasks/{ref}")
-        if task[field] in values:
-            return True
-        print(f"effet attendu non appliqué : {effect} — la tâche a {field} = {task[field]!r}, "
-              "voir la raison ci-dessus ; l'agent s'arrête")
-        return False
+
+def _blank(text: str | None) -> bool:
+    return not text or not re.search(r"\w", _REDACTED_SPAN.sub("", text))
+
+
+def landed(event: dict, actions: set[str]) -> str | None:
+    """None when the read-back event reached one of `actions` (applied, or the task was already
+    there); else the server's reason. Judged on the event's own effects, not on a later read of
+    the task that another writer may have changed in between."""
+    reasons = []
+    for effect in event["effects"]:
+        if effect["action"] not in actions:
+            continue
+        reason = effect.get("reason", "")
+        if effect["applied"] or reason.startswith("déjà en ") or reason.endswith(
+            "est déjà l'agent principal"
+        ):
+            return None
+        reasons.append(f"{effect['action']} : {reason}")
+    return "; ".join(reasons) or "aucun effet sur la tâche"
+
+
+def play(base: str, actor: str, ref: str, evidence: str | None, next_action: str) -> int:
+    """Plays claimed → working → progress → done, checking the effect of each step."""
+
+    def stop(reason: str) -> int:
+        print(f"effet attendu non appliqué ({reason}) ; l'agent s'arrête")
+        return EXIT_EFFECT_REFUSED
 
     task = call(base, "GET", f"/api/tasks/{ref}")
-    if not (task.get("next_action") or "").strip():
+    if _blank(task.get("next_action")):
         # An active task needs a next action: without one, `working` is refused (and so `done`).
         call(base, "PATCH", f"/api/tasks/{ref}", {"next_action": next_action})
         print(f"{ref}  prochaine action donnée : {next_action}")
@@ -289,23 +313,27 @@ def play(base: str, actor: str, ref: str, evidence: str | None, next_action: str
         # Re-publishing the same `claimed` within the noise window would be refused (409 noise).
         print(f"{ref}  {actor} est déjà l'agent principal : pas de nouveau claimed")
     else:
-        publish(base, actor, ref, "claimed", "Je prends la tâche")
-        if not expect("lead_agent", (actor,), "lead_agent"):
-            return EXIT_EFFECT_REFUSED
+        reason = landed(publish(base, actor, ref, "claimed", "Je prends la tâche"), {"lead_agent"})
+        if reason:
+            return stop(reason)
     # working ouvre le run : c'est lui qui fait passer la tâche en cours (EVENT-PROTOCOL §3).
     run_ref = f"demo:{uuid.uuid4().hex[:8]}"
-    publish(base, actor, ref, "working", "Je commence", payload={"run_ref": run_ref})
-    if not expect("status", ("in_progress",), "status:in_progress"):
-        return EXIT_EFFECT_REFUSED
+    working = publish(base, actor, ref, "working", "Je commence", payload={"run_ref": run_ref})
+    reason = landed(working, {"status:in_progress"})
+    if reason:
+        # The run is open even though the task did not move: close it, or every later run of
+        # this agent on this task would be refused (run_already_active).
+        publish(base, actor, ref, "failed", "La tâche n'a pas pu passer en cours",
+                payload={"cause": reason[:500]}, run=run_ref)
+        return stop(reason)
     # The progress names its run: each run's progress is a new fact, not noise.
     publish(base, actor, ref, "progress", "À mi-chemin", payload={"percent": 50}, run=run_ref)
     # Chaque clôture nomme son run : sans lui, Nexus ne peut pas savoir quel run elle termine.
-    publish(base, actor, ref, "done", "Terminé", evidence=[evidence] if evidence else [],
-            run=run_ref)
-    # Without evidence, an agent's `done` lands in `review`: Loïc validates (proof or review).
-    if not expect("status", ("done", "review"), "status:done"):
-        return EXIT_EFFECT_REFUSED
-    return 0
+    # Without evidence, an agent's `done` is recorded as `review`: Loïc validates (proof or review).
+    done = publish(base, actor, ref, "done", "Terminé", evidence=[evidence] if evidence else [],
+                   run=run_ref)
+    reason = landed(done, {"status:done", "status:review"})
+    return stop(reason) if reason else 0
 
 
 if __name__ == "__main__":
