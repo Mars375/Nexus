@@ -209,6 +209,52 @@ def test_a_refused_done_is_exit_4(http, task, monkeypatch, capsys):
     assert "effet attendu non appliqué (status:done : refus)" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("evidence", ["   ", "commit:" + "a" * 600])
+def test_an_unusable_evidence_is_a_usage_error_before_anything_is_sent(http, task, evidence):
+    with pytest.raises(SystemExit) as exit_:
+        run(task, "--evidence", evidence)
+    assert exit_.value.code == 2
+    assert http.get("/api/events").json() == []
+    assert run(task, "--evidence", "commit:a1b2c3d") == 0
+
+
+def test_a_request_refused_after_working_closes_the_run(http, task, monkeypatch):
+    real = demo_agent.publish
+
+    def publish(base, actor, ref, kind, subject, **fields):
+        if kind == "done" and not getattr(publish, "refused", False):
+            publish.refused = True
+            raise SystemExit("refusé (422) : simulé")
+        return real(base, actor, ref, kind, subject, **fields)
+
+    monkeypatch.setattr(demo_agent, "publish", publish)
+    with pytest.raises(SystemExit):
+        run(task, "--evidence", "commit:a1b2c3d")
+    events = http.get("/api/events").json()
+    assert events[0]["kind"] == "failed" and events[0]["run"] == events[1]["run"]
+    assert run(task, "--evidence", "commit:a1b2c3d") == 0  # nothing left open
+
+
+def test_a_claimed_without_effect_because_already_lead_is_not_a_failure(http, task, monkeypatch):
+    """Someone made this agent lead between its read of the task and its `claimed`."""
+    http.patch(f"/api/tasks/{task}", json={"next_action": "x"})
+    real = demo_agent.call
+
+    def call(base, method, path, body=None):
+        if method == "POST" and path == "/api/events" and body["kind"] == "claimed":
+            http.patch(f"/api/tasks/{task}", json={"lead_agent": "helios"})
+        return real(base, method, path, body)
+
+    monkeypatch.setattr(demo_agent, "call", call)
+    assert run(task, "--evidence", "commit:a1b2c3d") == 0
+
+
+def test_a_secret_in_next_action_is_not_echoed(http, task, capsys):
+    secret = "ghp_" + "A" * 36
+    assert run(task, "--next-action", f"publier avec {secret}", "--evidence", "commit:a1") == 0
+    assert secret not in capsys.readouterr().out
+
+
 def test_a_next_action_made_only_of_a_masked_secret_counts_as_absent(http, task):
     http.patch(f"/api/tasks/{task}", json={"next_action": "token=[REDACTED]"})
     assert run(task, "--next-action", "Relire", "--evidence", "commit:a1b2c3d") == 0

@@ -50,6 +50,7 @@ EXIT_EFFECT_REFUSED = 4  # the story: an event was recorded but its expected eff
 
 
 MIN_INTERVAL = 0.1  # seconds between two reads of the approval
+EVIDENCE_REF_MAX = 512  # nexus.events.limits, after stripping; checked before anything is sent
 
 # `nxt_` + 43 base64url characters (nexus.auth.tokens); spelled out here so the file stays copyable.
 _TOKEN_FORMAT = re.compile(r"nxt_[A-Za-z0-9_-]{43}")
@@ -250,6 +251,12 @@ def main(argv: list[str] | None = None, sleep=time.sleep, monotonic=time.monoton
                      "(localhost, 127.0.0.0/8, ::1) ou une adresse Tailscale (100.64.0.0/10)")
     if args.ask is not None and not args.ask.strip():
         parser.error("--ask : le sujet ne peut pas être vide")
+    if args.evidence is not None:
+        # Checked before `working` opens a run: a refused `done` would leave that run open.
+        args.evidence = args.evidence.strip()
+        if not args.evidence or len(args.evidence) > EVIDENCE_REF_MAX:
+            parser.error(f"--evidence : une référence non vide de {EVIDENCE_REF_MAX} caractères "
+                         "au plus, ex. commit:a1b2c3d")
     if not math.isfinite(args.wait) or args.wait < 0:
         parser.error("--wait : un nombre de secondes fini, 0 ou plus")
     if not math.isfinite(args.interval) or args.interval < MIN_INTERVAL:
@@ -289,11 +296,11 @@ def landed(event: dict, actions: set[str]) -> str | None:
         if effect["action"] not in actions:
             continue
         reason = effect.get("reason", "")
-        if effect["applied"] or reason.startswith("déjà en ") or reason.endswith(
-            "est déjà l'agent principal"
-        ):
-            return None
+        if effect["applied"] or reason.startswith("déjà en ") or "est déjà " in reason:
+            return None  # « déjà en X », « … est déjà l'agent principal », « … est déjà en X »
         reasons.append(f"{effect['action']} : {reason}")
+    if not reasons and actions == {"lead_agent"}:
+        return None  # `claimed` adds no effect when the task already names this agent as lead
     return "; ".join(reasons) or "aucun effet sur la tâche"
 
 
@@ -307,8 +314,9 @@ def play(base: str, actor: str, ref: str, evidence: str | None, next_action: str
     task = call(base, "GET", f"/api/tasks/{ref}")
     if _blank(task.get("next_action")):
         # An active task needs a next action: without one, `working` is refused (and so `done`).
-        call(base, "PATCH", f"/api/tasks/{ref}", {"next_action": next_action})
-        print(f"{ref}  prochaine action donnée : {next_action}")
+        stored = call(base, "PATCH", f"/api/tasks/{ref}", {"next_action": next_action})
+        # The stored text, which the server masked: the argument may carry a secret.
+        print(f"{ref}  prochaine action donnée : {stored.get('next_action')}")
     if task["lead_agent"] == actor:
         # Re-publishing the same `claimed` within the noise window would be refused (409 noise).
         print(f"{ref}  {actor} est déjà l'agent principal : pas de nouveau claimed")
@@ -326,12 +334,21 @@ def play(base: str, actor: str, ref: str, evidence: str | None, next_action: str
         publish(base, actor, ref, "failed", "La tâche n'a pas pu passer en cours",
                 payload={"cause": reason[:500]}, run=run_ref)
         return stop(reason)
-    # The progress names its run: each run's progress is a new fact, not noise.
-    publish(base, actor, ref, "progress", "À mi-chemin", payload={"percent": 50}, run=run_ref)
-    # Chaque clôture nomme son run : sans lui, Nexus ne peut pas savoir quel run elle termine.
-    # Without evidence, an agent's `done` is recorded as `review`: Loïc validates (proof or review).
-    done = publish(base, actor, ref, "done", "Terminé", evidence=[evidence] if evidence else [],
-                   run=run_ref)
+    try:
+        # The progress names its run: each run's progress is a new fact, not noise.
+        publish(base, actor, ref, "progress", "À mi-chemin", payload={"percent": 50}, run=run_ref)
+        # Chaque clôture nomme son run : sans lui, Nexus ne peut pas savoir quel run elle termine.
+        # Without evidence, an agent's `done` is recorded as `review`: Loïc validates.
+        done = publish(base, actor, ref, "done", "Terminé",
+                       evidence=[evidence] if evidence else [], run=run_ref)
+    except SystemExit:
+        # A request refused after `working` would leave the run open: close it, then stop.
+        try:
+            publish(base, actor, ref, "failed", "Arrêt sur une requête refusée",
+                    payload={"cause": "une requête de l'agent a été refusée"}, run=run_ref)
+        except SystemExit:
+            print(f"le run {run_ref} reste ouvert : clos-le par un failed qui le nomme")
+        raise
     reason = landed(done, {"status:done", "status:review"})
     return stop(reason) if reason else 0
 
