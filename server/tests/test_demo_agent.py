@@ -130,6 +130,54 @@ def test_without_ask_the_agent_plays_the_usual_story(http, task, capsys):
     assert [e["kind"] for e in http.get("/api/events").json()][::-1] == [
         "claimed", "working", "progress", "done"
     ]
+    done = http.get(f"/api/tasks/{task}").json()
+    assert done["status"] == "done" and done["lead_agent"] == "helios"
+    assert done["evidence"] == ["commit:a1b2c3d"]
+
+
+def test_a_task_without_next_action_gets_one_before_work_starts(http, task):
+    """An active task needs a next action: the agent gives one instead of failing silently."""
+    assert http.get(f"/api/tasks/{task}").json()["next_action"] is None
+    assert run(task, "--next-action", "Relire le pont", "--evidence", "commit:a1b2c3d") == 0
+    after = http.get(f"/api/tasks/{task}").json()
+    assert after["status"] == "done" and after["next_action"] == "Relire le pont"
+
+
+def test_an_existing_next_action_is_kept(http, task):
+    http.patch(f"/api/tasks/{task}", json={"next_action": "Garder celle-ci"})
+    assert run(task) == 0
+    after = http.get(f"/api/tasks/{task}").json()
+    assert after["next_action"] == "Garder celle-ci"
+    assert after["status"] == "review"  # no evidence: the agent's done waits for Loïc
+
+
+def test_a_refused_effect_is_a_non_zero_exit_that_names_it(http, task, capsys):
+    """An unresolved dependency refuses `in_progress`: the event is recorded, the effect is not."""
+    other = http.post("/api/tasks", json={"title": "Avant", "objective": "o"}).json()["id"]
+    http.put(f"/api/tasks/{task}/dependencies/{other}")
+    code = run(task)
+    assert code == demo_agent.EXIT_EFFECT_REFUSED
+    out = capsys.readouterr().out
+    assert "effet attendu non appliqué" in out and "status:in_progress" in out
+    kinds = [e["kind"] for e in http.get("/api/events").json()]
+    assert "done" not in kinds  # it stops at the first unmet effect
+
+
+def test_a_rerun_on_a_task_it_already_leads_does_not_trip_the_noise_rule(http, task):
+    """Re-running within NOISE_WINDOW used to stop on a 409 noise for the same `claimed`."""
+    http.patch(f"/api/tasks/{task}", json={"next_action": "Reprendre"})
+    first = demo_agent.publish("", "helios", task, "claimed", "Je prends la tâche")
+    assert first["effects"][0]["applied"] is True
+    assert run(task, "--evidence", "commit:a1b2c3d") == 0
+    kinds = [e["kind"] for e in http.get("/api/events").json()][::-1]
+    assert kinds == ["claimed", "working", "progress", "done"]
+    assert http.get(f"/api/tasks/{task}").json()["status"] == "done"
+
+
+def test_two_runs_on_two_tasks_back_to_back_both_succeed(http, client):
+    refs = [client.post("/api/tasks", json={"title": f"T{i}", "objective": "o"}).json()["id"]
+            for i in range(2)]
+    assert [run(ref) for ref in refs] == [0, 0]
 
 
 # --- Exit codes and arguments (0 approved/answered, 3 rejected, 1 timeout/expired/network, 2 usage)
@@ -226,7 +274,9 @@ def wire(monkeypatch):
 
     def urlopen(request, timeout=None):
         sent.append(request)
-        body = {"id": "evt_1", "actor_event_id": "x", "kind": "claimed", "effects": []}
+        # One body for every request: it reads as an event and as a task (lead, next action).
+        body = {"id": "evt_1", "actor_event_id": "x", "kind": "claimed", "effects": [],
+                "lead_agent": None, "next_action": "x", "status": "backlog"}
         return io.BytesIO(json.dumps(body).encode())
 
     monkeypatch.setattr(demo_agent, "_open", urlopen)
@@ -462,6 +512,8 @@ def test_an_http_proxy_never_sees_the_token():
                 self.send_response(500)
                 self.end_headers()
                 self.wfile.write(b'{"detail": "stop"}')
+
+            do_GET = do_POST  # the agent reads the task first
 
             def log_message(self, *args):
                 pass

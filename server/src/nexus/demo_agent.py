@@ -12,6 +12,12 @@ Avec `--ask`, il demande plutôt une validation à Loïc et, avec `--wait`, reli
 
     uv run python -m nexus.demo_agent --task nx-task-1 --ask "Publier ?" --wait 120
 
+Une tâche active doit avoir une prochaine action : si la tâche n'en a pas, l'agent en donne une
+(`--next-action`, par `PATCH /api/tasks/<ref>`) avant `working`. Il vérifie après chaque étape que
+l'effet attendu est appliqué (agent principal, en cours, terminée) et s'arrête sinon, avec le
+code 4 ; sans preuve, `done` laisse la tâche en `review`, à valider par Loïc. Relancé sur une
+tâche qu'il mène déjà, il ne republie pas `claimed`.
+
 Montre à un agent lancé ailleurs comment se déclarer dans Nexus (EVENT-PROTOCOL, ADR-015 b).
 N'utilise que la bibliothèque standard : un agent peut copier ce code tel quel.
 """
@@ -37,6 +43,7 @@ from nexus.clock import now
 EXIT_NO_ANSWER = 1  # timeout, expired request, or Nexus unreachable
 EXIT_USAGE = 2  # invalid arguments: argparse exits with it
 EXIT_REJECTED = 3  # Loïc refused
+EXIT_EFFECT_REFUSED = 4  # the story stopped: an expected effect on the task was not applied
 # 0: approved or answered (or, without --wait, asked and not waiting)
 
 
@@ -214,6 +221,8 @@ def main(argv: list[str] | None = None, sleep=time.sleep, monotonic=time.monoton
     parser.add_argument("--task", required=True, help="ex. nx-task-1")
     parser.add_argument("--actor", default="helios")
     parser.add_argument("--evidence", default=None, help="preuve de fin, ex. commit:a1b2c3d")
+    parser.add_argument("--next-action", default="Mener la démo à son terme",
+                        help="prochaine action donnée à la tâche si elle n'en a pas")
     parser.add_argument("--ask", metavar="SUJET", help="demander une décision à Loïc, sans jouer")
     parser.add_argument("--ask-kind", choices=["needs_human", "question"], default="needs_human")
     parser.add_argument("--option", action="append", dest="options", help="option (répétable)")
@@ -257,15 +266,45 @@ def main(argv: list[str] | None = None, sleep=time.sleep, monotonic=time.monoton
             return EXIT_NO_ANSWER
         return report(approval)
 
-    publish(args.base, args.actor, args.task, "claimed", "Je prends la tâche")
+    return play(args.base, args.actor, args.task, args.evidence, args.next_action)
+
+
+def play(base: str, actor: str, ref: str, evidence: str | None, next_action: str) -> int:
+    """Plays claimed → working → progress → done, checking each expected effect on the task."""
+
+    def expect(field: str, values: tuple[str, ...], effect: str) -> bool:
+        task = call(base, "GET", f"/api/tasks/{ref}")
+        if task[field] in values:
+            return True
+        print(f"effet attendu non appliqué : {effect} — la tâche a {field} = {task[field]!r}, "
+              "voir la raison ci-dessus ; l'agent s'arrête")
+        return False
+
+    task = call(base, "GET", f"/api/tasks/{ref}")
+    if not (task.get("next_action") or "").strip():
+        # An active task needs a next action: without one, `working` is refused (and so `done`).
+        call(base, "PATCH", f"/api/tasks/{ref}", {"next_action": next_action})
+        print(f"{ref}  prochaine action donnée : {next_action}")
+    if task["lead_agent"] == actor:
+        # Re-publishing the same `claimed` within the noise window would be refused (409 noise).
+        print(f"{ref}  {actor} est déjà l'agent principal : pas de nouveau claimed")
+    else:
+        publish(base, actor, ref, "claimed", "Je prends la tâche")
+        if not expect("lead_agent", (actor,), "lead_agent"):
+            return EXIT_EFFECT_REFUSED
     # working ouvre le run : c'est lui qui fait passer la tâche en cours (EVENT-PROTOCOL §3).
     run_ref = f"demo:{uuid.uuid4().hex[:8]}"
-    publish(args.base, args.actor, args.task, "working", "Je commence",
-            payload={"run_ref": run_ref})
-    publish(args.base, args.actor, args.task, "progress", "À mi-chemin", payload={"percent": 50})
-    evidence = [args.evidence] if args.evidence else []
+    publish(base, actor, ref, "working", "Je commence", payload={"run_ref": run_ref})
+    if not expect("status", ("in_progress",), "status:in_progress"):
+        return EXIT_EFFECT_REFUSED
+    # The progress names its run: each run's progress is a new fact, not noise.
+    publish(base, actor, ref, "progress", "À mi-chemin", payload={"percent": 50}, run=run_ref)
     # Chaque clôture nomme son run : sans lui, Nexus ne peut pas savoir quel run elle termine.
-    publish(args.base, args.actor, args.task, "done", "Terminé", evidence=evidence, run=run_ref)
+    publish(base, actor, ref, "done", "Terminé", evidence=[evidence] if evidence else [],
+            run=run_ref)
+    # Without evidence, an agent's `done` lands in `review`: Loïc validates (proof or review).
+    if not expect("status", ("done", "review"), "status:done"):
+        return EXIT_EFFECT_REFUSED
     return 0
 
 
