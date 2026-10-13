@@ -273,7 +273,22 @@ def test_nexus_unreachable_after_working_still_tries_to_close_the_run(http, task
     monkeypatch.setattr(demo_agent, "publish", publish)
     with pytest.raises(OSError):
         run(task, "--evidence", "commit:a1b2c3d")
-    assert http.get("/api/events").json()[0]["kind"] == "failed"
+    failed = http.get("/api/events").json()[0]
+    assert failed["kind"] == "failed"
+    assert failed["payload"]["cause"] == "Nexus injoignable pendant le run"
+
+
+def test_a_non_json_error_reply_is_a_short_refusal(monkeypatch):
+    import io
+    import urllib.error
+
+    def urlopen(request, timeout=None):
+        body = io.BytesIO(b"Internal Server Error")
+        raise urllib.error.HTTPError(request.full_url, 500, "x", {}, body)
+
+    monkeypatch.setattr(demo_agent, "_open", urlopen)
+    with pytest.raises(SystemExit, match="réponse illisible"):
+        demo_agent.call("http://127.0.0.1:8765", "GET", "/api/tasks/nx-task-1")
 
 
 def test_a_secret_in_next_action_is_not_echoed(http, task, capsys):

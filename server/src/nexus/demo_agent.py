@@ -141,7 +141,10 @@ def call(base: str, method: str, path: str, body: dict | None = None) -> dict:
         if 300 <= err.code < 400:
             message = f"refusé ({err.code}) : redirection non suivie, vérifie --base"
             raise SystemExit(message) from err
-        detail = json.load(err).get("detail")
+        try:
+            detail = json.load(err).get("detail")
+        except (ValueError, AttributeError):  # e.g. a 500 answered as plain text
+            raise SystemExit(f"refusé ({err.code}) : réponse illisible du serveur") from err
         hint = ""
         if err.code == 401 and not _bearer:
             hint = " — fournis le jeton de l'acteur par NEXUS_TOKEN ou --token-file"
@@ -337,7 +340,7 @@ def play(base: str, actor: str, ref: str, evidence: str | None, next_action: str
         try:
             publish(base, actor, ref, "failed", "La tâche n'a pas pu passer en cours",
                     payload={"cause": reason[:500]}, run=run_ref)
-        except SystemExit:
+        except (SystemExit, OSError):
             print(f"le run {run_ref} reste ouvert : clos-le par un failed qui le nomme")
         return stop(reason)
     try:
@@ -347,12 +350,17 @@ def play(base: str, actor: str, ref: str, evidence: str | None, next_action: str
         # Without evidence, an agent's `done` is recorded as `review`: Loïc validates.
         done = publish(base, actor, ref, "done", "Terminé",
                        evidence=[evidence] if evidence else [], run=run_ref)
-    except (SystemExit, OSError, KeyboardInterrupt):
+    except (SystemExit, OSError, KeyboardInterrupt) as exc:
         # A request refused (or Nexus unreachable, or Ctrl-C) after `working` would leave the run
-        # open, and every later run on this task refused: close it, then stop.
+        # open, and every later run on this task refused: close it, with the true cause, then stop.
+        cause = (
+            "une requête de l'agent a été refusée" if isinstance(exc, SystemExit)
+            else "Nexus injoignable pendant le run" if isinstance(exc, OSError)
+            else "agent interrompu"
+        )
         try:
-            publish(base, actor, ref, "failed", "Arrêt sur une requête refusée",
-                    payload={"cause": "une requête de l'agent a été refusée"}, run=run_ref)
+            publish(base, actor, ref, "failed", "Arrêt du run", payload={"cause": cause},
+                    run=run_ref)
         except (SystemExit, OSError):
             print(f"le run {run_ref} reste ouvert : clos-le par un failed qui le nomme")
         raise
