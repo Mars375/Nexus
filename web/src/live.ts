@@ -185,6 +185,13 @@ export function connectLive(options: {
     }
     if (stopped || pendingTicket !== request) return // a late answer is ignored
     pendingTicket = undefined
+    if (options.isLocked()) {
+      // A REST 401 locked the app while the ticket request was in flight: do not use the ticket
+      // (it is dropped, never reused) and wait for the unlock.
+      clearTimeout(silenceTimer)
+      waitingUnlock = true
+      return
+    }
     const current = options.open(liveUrl(cursor, instance), [LIVE_PROTOCOL, ticket])
     socket = current
     armSilence()

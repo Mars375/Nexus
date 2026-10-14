@@ -37,7 +37,7 @@ async function harness(options: HarnessOptions = {}) {
   const stop = connectLive({
     ticket: (signal) => {
       signals.push(signal)
-      if (options.lockOnTicket) lock.locked = true
+      if (options.lockOnTicket && signals.length === 1) lock.locked = true // first request only
       return issue(signal)
     },
     isLocked: () => lock.locked,
@@ -586,6 +586,18 @@ describe('ticket WebSocket (#57)', () => {
     expect(h.signals).toHaveLength(1)
   })
 
+  test("verrouillée pendant la demande, ticket obtenu quand même : aucune socket ouverte avant le déverrouillage", async () => {
+    const h = await harness({ lockOnTicket: true }) // the ticket request succeeds while a REST 401 locks the app
+    expect(h.signals).toHaveLength(1)
+    expect(h.sockets).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(h.sockets).toHaveLength(0)
+    await h.unlock()
+    expect(h.signals).toHaveLength(2) // a fresh ticket: the first one is never reused
+    expect(h.sockets).toHaveLength(1)
+    expect(h.sockets[0].protocols[1]).toBe('nxw_' + '2'.padStart(43, 'A'))
+  })
+
   test("une perte de connexion alors que l'application est verrouillée : aucune demande avant le déverrouillage", async () => {
     const h = await harness()
     h.up()
@@ -597,6 +609,12 @@ describe('ticket WebSocket (#57)', () => {
     await h.unlock()
     expect(h.signals).toHaveLength(2)
     expect(h.sockets).toHaveLength(2)
+    // The unlock reset attempt (it was 1 after the drop): the next loss waits the first delay, not the second.
+    h.drop()
+    await vi.advanceTimersByTimeAsync(499)
+    expect(h.sockets).toHaveLength(2)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(h.sockets).toHaveLength(3)
   })
 
   test('au déverrouillage, une demande immédiate et les essais repartent de zéro', async () => {
