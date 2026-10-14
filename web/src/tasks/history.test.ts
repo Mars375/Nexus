@@ -114,3 +114,31 @@ test('un statut de forme inattendue ne plante pas', () => {
 test('les autres actions gardent leur libellé', () => {
   expect(describeHistory(entry('loic', {}, 'created'))).toBe('a créé la tâche')
 })
+
+test('la création d’une tâche de suite nomme la tâche suivie', () => {
+  expect(describeHistory(entry('loic', { follows: [null, 'nx-task-7'] }, 'created'))).toBe(
+    'a créé la tâche, suite de nx-task-7',
+  )
+})
+
+test('une référence de suite de forme inattendue n’est pas affichée', () => {
+  for (const odd of ['ghp_secret', 'nx-task-7\n', 'nx-task-', 'nx-task-²', 42, null]) {
+    expect(describeHistory(entry('loic', { follows: [null, odd] }, 'created'))).toBe('a créé la tâche')
+  }
+  expect(describeHistory(entry('loic', { follows: 'nx-task-7' }, 'created'))).toBe('a créé la tâche')
+  expect(describeHistory(entry('loic', { title: ['a', 'b'] }, 'created'))).toBe('a créé la tâche')
+})
+
+test('rattacher, retirer ou modifier le lien de suite', () => {
+  expect(describeHistory(entry('loic', { follows: [null, 'nx-task-7'] }))).toBe('l’a rattachée à nx-task-7')
+  expect(describeHistory(entry('loic', { follows: ['nx-task-7', 'nx-task-8'] }))).toBe('l’a rattachée à nx-task-8')
+  expect(describeHistory(entry('loic', { follows: ['nx-task-7', null] }))).toBe('a retiré le lien de suite')
+  expect(describeHistory(entry('loic', { follows: [null, 'ghp_secret'] }))).toBe('a modifié le lien de suite')
+  expect(describeHistory(entry('loic', { follows: 'oops' }))).toBe('a modifié le lien de suite')
+})
+
+test('le lien de suite est nommé avec les autres champs modifiés', () => {
+  expect(describeHistory(entry('loic', { title: ['a', 'b'], follows: [null, 'nx-task-7'] }))).toBe(
+    'a modifié le titre et le lien de suite',
+  )
+})

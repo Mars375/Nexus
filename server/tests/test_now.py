@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta
 
+import pytest
 from sqlalchemy import delete, event, update
 
 from nexus import now as now_module
@@ -183,15 +184,24 @@ def test_done_tasks_older_than_seven_days_are_left_out(client, monkeypatch):
     assert snapshot(client)["done"] == []
 
 
-def test_a_done_task_edited_later_still_leaves_the_window_on_its_done_instant(client, monkeypatch):
+@pytest.mark.parametrize("touch", ["comment", "evidence"])
+def test_a_done_task_touched_later_still_leaves_the_window_on_its_done_instant(
+    client, monkeypatch, touch
+):
     ref = create(client, title="Livrée", next_action="x")
     move(client, ref, "in_progress")
     move(client, ref, "done", evidence=["PR #1"])
     later = now() + timedelta(days=7, minutes=1)
     # `updated_at` est récent (retouche), mais le passage à done date de plus de sept jours
     monkeypatch.setattr("nexus.tasks.service.now", lambda: later)
-    res = client.patch(f"/api/tasks/{ref}", json={"title": "Livrée (retitrée)"})
-    assert res.status_code == 200, res.text
+    if touch == "comment":
+        res = client.post(f"/api/tasks/{ref}/comments", json={"body": "Relu après coup"})
+    else:
+        res = client.post(f"/api/tasks/{ref}/evidence", json={"evidence": ["PR #2"]})
+    assert res.status_code in (200, 201), res.text
+    assert client.get(f"/api/tasks/{ref}").json()["updated_at"].startswith(
+        later.isoformat()[:19]
+    )
     monkeypatch.setattr("nexus.now.now", lambda: later)
     assert snapshot(client)["done"] == []
 

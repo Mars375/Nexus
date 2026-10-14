@@ -16,6 +16,17 @@ const FIELD_LABEL: Record<string, string> = {
   operation_role: 'le rôle d’opération',
   origin: 'l’origine',
   context: 'le contexte',
+  follows: 'le lien de suite',
+}
+
+/** A task reference is only ever printed in the form the server writes it. */
+const TASK_REF = /^nx-task-\d+$/
+
+function followsRef(change: unknown): string | null {
+  // `changes.follows` is `[before, after]`; only a well-formed reference is printed.
+  if (!Array.isArray(change) || change.length !== 2) return null
+  const after: unknown = change[1]
+  return typeof after === 'string' && TASK_REF.test(after) ? after : null
 }
 
 /** Beyond this many fields, the list would be longer than the sentence is useful. */
@@ -45,8 +56,10 @@ function joinFrench(items: string[]): string {
 export function describeHistory(entry: HistoryEntry): string {
   const c = entry.changes
   switch (entry.action) {
-    case 'created':
-      return 'a créé la tâche'
+    case 'created': {
+      const ref = followsRef(c.follows)
+      return ref ? `a créé la tâche, suite de ${ref}` : 'a créé la tâche'
+    }
     case 'status': {
       // `changes.status` is `[from, to]`; anything else must not throw.
       if (!Array.isArray(c.status) || c.status.length !== 2) return 'a changé le statut'
@@ -57,6 +70,12 @@ export function describeHistory(entry: HistoryEntry): string {
       const keys = Object.keys(c)
       if (keys.length === 1 && keys[0] === 'lead_agent') return describeLead(entry.actor, c.lead_agent)
       if (keys.length === 1 && keys[0] === 'evidence') return 'a joint une preuve'
+      if (keys.length === 1 && keys[0] === 'follows') {
+        const ref = followsRef(c.follows)
+        if (ref) return `l’a rattachée à ${ref}`
+        const removed = Array.isArray(c.follows) && c.follows.length === 2 && c.follows[1] === null
+        return removed ? 'a retiré le lien de suite' : 'a modifié le lien de suite'
+      }
       if (keys.length > 1 && keys.includes('lead_agent')) {
         // Same rules as the single-key case for the lead part, then the other fields (unknown ones stay generic).
         const others = keys.filter((key) => key !== 'lead_agent')

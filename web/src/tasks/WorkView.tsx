@@ -22,7 +22,9 @@ export function WorkView({ openTask }: { openTask?: string | null } = {}) {
     setSeenOpenTask(openTask)
     setOpenId(openTask ?? null)
   }
-  const [creating, setCreating] = useState(false)
+  // La cible de la boîte de création vit ici (le verrouillage ne démonte pas la vue) : après
+  // un 401, la boîte revient sur la même cible, avec son brouillon.
+  const [creating, setCreating] = useState<{ follows: string | null } | null>(null)
   const set = <K extends keyof Filters>(key: K, value: Filters[K]) =>
     setFilters((f) => ({ ...f, [key]: value }))
 
@@ -85,7 +87,7 @@ export function WorkView({ openTask }: { openTask?: string | null } = {}) {
               Effacer les filtres
             </Button>
           )}
-          <Button variant="primary" className="ml-auto" onClick={() => setCreating(true)}>
+          <Button variant="primary" className="ml-auto" onClick={() => setCreating({ follows: null })}>
             Nouvelle tâche
           </Button>
         </header>
@@ -113,7 +115,7 @@ export function WorkView({ openTask }: { openTask?: string | null } = {}) {
           <div className="px-5 py-10 text-sm">
             <p className="font-medium">Aucune tâche pour l'instant.</p>
             <p className="mt-1 text-muted">Crée la première : elle restera ici, sans lancer d'agent.</p>
-            <Button variant="primary" className="mt-4" onClick={() => setCreating(true)}>
+            <Button variant="primary" className="mt-4" onClick={() => setCreating({ follows: null })}>
               Nouvelle tâche
             </Button>
           </div>
@@ -124,8 +126,22 @@ export function WorkView({ openTask }: { openTask?: string | null } = {}) {
       </div>
 
       {/* Clé par tâche : brouillons et commentaires en cours ne passent jamais d'une tâche à l'autre. */}
-      {open && <TaskPane key={open.id} task={open} tasks={all} onClose={() => setOpenId(null)} />}
-      <CreateTaskDialog open={creating} onOpenChange={setCreating} />
+      {open && (
+        <TaskPane
+          key={open.id}
+          task={open}
+          tasks={all}
+          onClose={() => setOpenId(null)}
+          onOpen={setOpenId}
+          onFollowUp={(id) => setCreating({ follows: id })}
+        />
+      )}
+      <CreateTaskDialog
+        open={creating !== null}
+        follows={creating?.follows ?? null}
+        tasks={all}
+        onOpenChange={(next) => !next && setCreating(null)}
+      />
     </div>
   )
 }

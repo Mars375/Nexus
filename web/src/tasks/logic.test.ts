@@ -8,6 +8,7 @@ import {
   dependencyRefusal,
   moveNeeds,
   needsPrompt,
+  TRANSITIONS,
 } from './moves'
 import { compareTasks } from './vocabulary'
 
@@ -35,6 +36,7 @@ function task(overrides: Partial<Task> = {}): Task {
     origin: null,
     context: [],
     depends_on: [],
+    follows: null,
     created_by: 'loic',
     created_at: '2026-09-28T10:00:00+02:00',
     updated_at: '2026-09-28T10:00:00+02:00',
@@ -48,7 +50,9 @@ describe('déplacements', () => {
   test('suit la table de transitions du serveur', () => {
     expect(canMove('todo', 'in_progress')).toBe(true)
     expect(canMove('backlog', 'review')).toBe(false)
-    expect(canMove('done', 'in_progress')).toBe(true)
+    // Une tâche terminée est finale (ADR-022) : aucune sortie.
+    expect(canMove('done', 'in_progress')).toBe(false)
+    expect(canMove('dropped', 'backlog')).toBe(true)
     expect(canMove('dropped', 'todo')).toBe(false)
   })
 
@@ -119,14 +123,18 @@ describe('dépendances', () => {
     expect(dependencyBlock(dependent, 'backlog', [prereq, dependent])).toBeNull()
   })
 
-  test("rouvrir un prérequis dont une dépendante a avancé est bloqué", () => {
-    const done = task({ id: 'p', title: 'Prérequis', status: 'done' })
+  test("reprendre un prérequis abandonné dont une dépendante a avancé est bloqué", () => {
+    const dropped = task({ id: 'p', title: 'Prérequis', status: 'dropped' })
     const advanced = task({ id: 'd', title: 'Dépendante', status: 'in_progress', depends_on: ['p'] })
-    expect(dependencyBlock(done, 'in_progress', [done, advanced])).toBe(
+    expect(dependencyBlock(dropped, 'backlog', [dropped, advanced])).toBe(
       'Impossible de rouvrir : Dépendante en dépend et a déjà avancé.',
     )
     const waiting = { ...advanced, status: 'todo' as const }
-    expect(dependencyBlock(done, 'in_progress', [done, waiting])).toBeNull()
+    expect(dependencyBlock(dropped, 'backlog', [dropped, waiting])).toBeNull()
+  })
+
+  test('une tâche terminée n’a plus aucun passage possible', () => {
+    expect(TRANSITIONS.done).toEqual([])
   })
 
   test('une dépendance terminée ou abandonnée ne bloque plus', () => {
@@ -209,6 +217,15 @@ describe('raison du refus d’une dépendance', () => {
     const withLink = task({ id: 'c', status: 'in_progress', depends_on: ['l'] })
     expect(dependencyRefusal(withLink, 'l', [withLink, linked])).toMatch(/déjà/)
     expect(dependencyRefusal(current, 'gone', [current])).toMatch(/n’existe plus/)
+  })
+
+  test('une tâche terminée ne gagne plus de dépendance : aucun candidat, raison explicite', () => {
+    const closed = task({ id: 'c', status: 'done' })
+    const other = task({ id: 'o', status: 'done' })
+    expect(dependencyCandidates(closed, [closed, other])).toEqual([])
+    expect(dependencyRefusal(closed, 'o', [closed, other])).toBe(
+      'Cette tâche est terminée : ses dépendances ne changent plus.',
+    )
   })
 
   test('un candidat valide n’a pas de raison de refus', () => {

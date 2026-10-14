@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from nexus.actors import Actor, Human
 from nexus.auth.deps import Authenticated, authenticated_actor, get_session
 from nexus.clock import now
+from nexus.events.limits import EVIDENCE_REF_MAX
 from nexus.models import Task, TaskComment, TaskHistory
 from nexus.tasks import service
 from nexus.tasks.rules import RuleViolation
@@ -43,6 +44,13 @@ def parse_ref(task_ref: str) -> int:
 SessionDep = Annotated[Session, Depends(get_session)]
 ActorDep = Annotated[str, Depends(authenticated_actor)]
 EvidenceRef = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+# Same constraint as an event's evidence (events.api.Ref): stripped, non-empty, bounded.
+BoundedEvidenceRef = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=EVIDENCE_REF_MAX)
+]
+# « Suite de » reference: ASCII digits only, bounded. Leading zeros are accepted and read as a
+# number by the service (`nx-task-0007` is `nx-task-7`).
+FollowsRef = Annotated[str, StringConstraints(pattern=r"^nx-task-[0-9]{1,12}$")]
 # Un titre ou un objectif fait seulement d'espaces est vide.
 Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -83,6 +91,7 @@ class TaskCreate(InputModel):
     operation_role: Role | None = None
     origin: str | None = None
     context: list[str] = []
+    follows: FollowsRef | None = None
 
 
 NOT_NULLABLE = frozenset(
@@ -105,6 +114,7 @@ class TaskUpdate(InputModel):
     operation_role: Role | None = None
     origin: str | None = None
     context: list[str] | None = None
+    follows: FollowsRef | None = None
 
     @model_validator(mode="after")
     def _no_null_on_required(self) -> Self:
@@ -124,6 +134,12 @@ class StatusChange(InputModel):
     evidence: list[EvidenceRef] | None = None
     next_action: str | None = None
     role: Role | None = None
+
+
+class EvidenceIn(InputModel):
+    """Evidence to append to a task of any status (ADR-022)."""
+
+    evidence: list[BoundedEvidenceRef] = Field(min_length=1)
 
 
 class CommentIn(InputModel):
@@ -152,6 +168,7 @@ class TaskOut(BaseModel):
     origin: str | None
     context: list[str]
     depends_on: list[str]
+    follows: str | None
     created_by: str
     created_at: datetime
     updated_at: datetime
@@ -185,6 +202,7 @@ def to_out(session: Session, task: Task) -> TaskOut:
         id=task.ref,
         **{f: getattr(task, f) for f in TaskOut.model_fields if hasattr(Task, f) and f != "id"},
         depends_on=[f"nx-task-{i}" for i in service.dependencies_of(session, task)],
+        follows=None if task.follows_id is None else f"nx-task-{task.follows_id}",
         measured_at=now(),
     )
 
@@ -252,6 +270,16 @@ def change_status(
         session, task, body.status, actor,
         **body.model_dump(exclude={"status"}),
     )
+    commit(session)
+    return to_out(session, task)
+
+
+@router.post("/{task_ref}/evidence")
+def attach_evidence(
+    task_ref: str, body: EvidenceIn, session: SessionDep, actor: ActorDep
+) -> TaskOut:
+    task = service.get_task(session, parse_ref(task_ref))
+    service.attach_evidence(session, task, body.evidence, actor)
     commit(session)
     return to_out(session, task)
 

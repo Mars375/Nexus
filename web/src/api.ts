@@ -44,6 +44,8 @@ export type Task = {
   origin: string | null
   context: string[]
   depends_on: string[]
+  /** The closed task this one follows up (`nx-task-N`), or null (ADR-022). Never a dependency. */
+  follows: string | null
   created_by: Actor
   created_at: string
   updated_at: string
@@ -62,6 +64,8 @@ export type TaskDraft = {
   follow_up_at?: string | null
   expected_evidence?: string | null
   priority?: Priority
+  /** Only a task that follows a closed one sends it; the server stays the authority (404, 409). */
+  follows?: string
 }
 
 export type TaskChanges = Partial<
@@ -211,6 +215,9 @@ export const tasksApi = {
     request<void>(`/api/tasks/${id}/dependencies/${other}`, { method: 'PUT' }),
   unlink: (id: string, other: string) =>
     request<void>(`/api/tasks/${id}/dependencies/${other}`, { method: 'DELETE' }),
+  /** Append-only, on a task of any status; the actor is the token's (ADR-022). */
+  attachEvidence: (id: string, evidence: string[]) =>
+    request<Task>(`/api/tasks/${id}/evidence`, { method: 'POST', body: json({ evidence }) }),
 }
 
 export type AgentId = Exclude<Actor, 'loic'>

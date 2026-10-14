@@ -353,7 +353,7 @@ def test_expected_evidence_cannot_be_added_to_a_task_done_without_proof(client):
     move(client, ref, "done")
 
     res = client.patch(f"/api/tasks/{ref}", json={"expected_evidence": "commit"})
-    assert violation(res) == "evidence_missing_on_done"
+    assert violation(res) == "task_done"
     assert client.get(f"/api/tasks/{ref}").json()["expected_evidence"] is None
 
 
@@ -391,33 +391,36 @@ def test_dependencies_gate_progress_until_resolved(client):
 
 
 def test_advanced_task_cannot_depend_on_unresolved_task(client):
-    done = create(client, next_action="x")["id"]
-    move(client, done, "in_progress")
-    move(client, done, "done")
+    advanced = create(client, next_action="x")["id"]
+    move(client, advanced, "in_progress")
     pending = create(client)["id"]
     finished = create(client, next_action="y")["id"]
     move(client, finished, "in_progress")
     move(client, finished, "done")
 
-    res = client.put(f"/api/tasks/{done}/dependencies/{pending}")
+    res = client.put(f"/api/tasks/{advanced}/dependencies/{pending}")
     assert violation(res) == "dependency_on_advanced_task"
-    assert client.put(f"/api/tasks/{done}/dependencies/{finished}").status_code == 204
+    assert client.put(f"/api/tasks/{advanced}/dependencies/{finished}").status_code == 204
+    # A closed task takes no new link at all, resolved prerequisite or not.
+    move(client, advanced, "done")
+    res = client.put(f"/api/tasks/{advanced}/dependencies/{pending}")
+    assert violation(res) == "task_done"
 
 
 def test_prerequisite_cannot_be_reopened_under_an_advanced_dependent(client):
+    # A done prerequisite is final; only a dropped one can be taken back (dropped -> backlog).
     prereq = create(client, next_action="x")["id"]
     dependent = create(client, next_action="y")["id"]
     client.put(f"/api/tasks/{dependent}/dependencies/{prereq}")
-    move(client, prereq, "in_progress")
-    move(client, prereq, "done")
+    move(client, prereq, "dropped", reason="abandonné")
     move(client, dependent, "in_progress")
 
-    res = move(client, prereq, "in_progress")
+    res = move(client, prereq, "backlog")
     assert violation(res) == "reopen_with_advanced_dependents"
     assert dependent in res.json()["detail"]["message"]
 
-    move(client, dependent, "todo")  # la dépendante recule : réouverture permise
-    assert move(client, prereq, "in_progress").status_code == 200
+    move(client, dependent, "todo")  # la dépendante recule : reprise permise
+    assert move(client, prereq, "backlog").status_code == 200
 
 
 def test_dropped_dependency_counts_as_resolved(client):
@@ -544,7 +547,8 @@ def test_role_cannot_be_set_outside_preparation_or_progress(client, status):
         move(client, ref, status)
 
     res = client.patch(f"/api/tasks/{ref}", json={"operation_role": "main"})
-    assert violation(res) == "role_not_applicable"
+    # A done task is final before the role is even judged.
+    assert violation(res) == ("task_done" if status == "done" else "role_not_applicable")
     assert client.patch(f"/api/tasks/{ref}", json={"operation_role": None}).status_code == 200
 
 

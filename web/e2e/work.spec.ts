@@ -288,3 +288,122 @@ test('après une coupure, la reconnexion rattrape ce qui a changé', async ({ pa
     .toBe(true)
   await expect(card(page, 'Pendant la coupure')).toBeVisible()
 })
+
+// --- Tâche terminée en lecture seule et tâche de suite (#65, ADR-022) ---
+
+const RUN = Date.now() // titles are unique: the database is shared with the other tests
+
+/** A task closed through the API, as Loïc would have: todo → in_progress → done. */
+async function closedTask(page: Page, title: string, opts: { evidence?: string[] } = {}): Promise<string> {
+  const headers = auth()
+  const created = await page.request.post('/api/tasks', {
+    headers,
+    data: { title, objective: `Objectif de ${title}`, status: 'todo', next_action: 'Prévue avant la clôture' },
+  })
+  expect(created.ok(), await created.text()).toBeTruthy()
+  const id = (await created.json()).id as string
+  for (const status of ['in_progress', 'done']) {
+    const res = await page.request.post(`/api/tasks/${id}/status`, {
+      headers,
+      data: { status, ...(status === 'done' && opts.evidence && { evidence: opts.evidence }) },
+    })
+    expect(res.ok(), await res.text()).toBeTruthy()
+  }
+  return id
+}
+
+test('Loïc ouvre une tâche terminée par un vrai clic, y joint une preuve, puis ouvre une tâche de suite', async ({ page }) => {
+  const title = `Livraison ${RUN}`
+  const id = await closedTask(page, title)
+  await page.goto('/#/travail')
+
+  // La carte d'une tâche terminée n'est pas déplaçable : le clic ne doit pas attendre.
+  const closedCard = page.getByRole('button', { name: `${title} — ouvrir`, exact: true })
+  await expect(closedCard).toBeVisible()
+  expect(await closedCard.getAttribute('aria-disabled')).toBeNull()
+  expect(await closedCard.getAttribute('aria-roledescription')).toBeNull()
+  await expect(column(page, 'Terminé').getByText('Prévue avant la clôture')).toHaveCount(0)
+  await closedCard.click({ timeout: 3_000 })
+
+  const pane = page.getByRole('complementary', { name: `Détail de ${title}` })
+  await expect(pane.getByText(/Cette tâche ne se modifie plus/)).toBeVisible()
+  await expect(pane.getByRole('button', { name: 'Enregistrer' })).toHaveCount(0)
+  await expect(pane.getByLabel('Titre')).toHaveCount(0)
+
+  // Joindre une preuve : la tâche reste terminée, la preuve apparaît et l'historique la nomme.
+  await pane.getByLabel('Joindre une preuve').fill(`commit:e2e${RUN}`)
+  await pane.getByRole('button', { name: 'Joindre' }).click()
+  await expect(pane.getByText(`commit:e2e${RUN}`, { exact: true })).toBeVisible()
+  await expect(pane.getByText('Loïc a joint une preuve')).toBeVisible({ timeout: 3_000 })
+  const stored = await (await page.request.get(`/api/tasks/${id}`, { headers: auth() })).json()
+  expect(stored.status).toBe('done')
+  expect(stored.evidence).toEqual([`commit:e2e${RUN}`])
+
+  // Joindre deux fois la même preuve : le refus du serveur s'affiche, le texte reste.
+  await pane.getByLabel('Joindre une preuve').fill(`commit:e2e${RUN}`)
+  await pane.getByRole('button', { name: 'Joindre' }).click()
+  await expect(pane.getByRole('alert')).toContainText('déjà jointe')
+  await expect(pane.getByLabel('Joindre une preuve')).toHaveValue(`commit:e2e${RUN}`)
+
+  // Tâche de suite : la boîte porte la ligne « Suite de », la carte et le panneau aussi ensuite.
+  await pane.getByRole('button', { name: 'Ouvrir une tâche de suite' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Nouvelle tâche' })
+  await expect(dialog.getByText(`Suite de ${id} — ${title}`)).toBeVisible()
+  await dialog.getByLabel('Titre').fill(`Correctif ${RUN}`)
+  await dialog.getByLabel('Objectif').fill('Corriger ce qui a été livré')
+  await dialog.getByRole('button', { name: 'Créer la tâche' }).click()
+  await expect(dialog).toBeHidden()
+
+  const followUp = column(page, 'Plus tard').getByRole('button', { name: new RegExp(`^Correctif ${RUN} —`) })
+  await expect(followUp).toBeVisible()
+  await expect(followUp.getByText(`Suite de #${id.replace('nx-task-', '')}`)).toBeVisible()
+  await expect(pane.getByText('Suivie par :')).toBeVisible({ timeout: 5_000 })
+  await expect(pane.getByRole('button', { name: new RegExp(`^Correctif ${RUN}`) })).toBeVisible()
+
+  // Le lien « Suite de » mène à la tâche suivie, et « Suivie par » revient à la suite.
+  await followUp.click()
+  const followPane = page.getByRole('complementary', { name: `Détail de Correctif ${RUN}` })
+  await expect(followPane.getByRole('button', { name: `Suite de ${id} — ${title}` })).toBeVisible()
+  await followPane.getByRole('button', { name: `Suite de ${id} — ${title}` }).click()
+  await expect(page.getByRole('complementary', { name: `Détail de ${title}` })).toBeVisible()
+  await page.screenshot({ path: 'e2e/screenshots/tache-terminee.png' })
+})
+
+test('un agent clôt la tâche pendant que Loïc édite le panneau : le brouillon reste, l’envoi est refusé avec son motif', async ({ page }) => {
+  test.setTimeout(60_000)
+  const title = `Édition concurrente ${RUN}`
+  const headers = auth('helios')
+  const created = await page.request.post('/api/tasks', {
+    headers: auth(),
+    data: { title, objective: 'Clôturée par un agent', status: 'todo', next_action: 'Étape en cours' },
+  })
+  const id = (await created.json()).id as string
+  const at = new Date().toISOString()
+  const send = async (suffix: string, body: Record<string, unknown>) => {
+    const res = await page.request.post('/api/events', {
+      headers,
+      data: { id: `evt_done_${RUN}_${suffix}`, at, actor: 'helios', task: id, subject: suffix, ...body },
+    })
+    expect(res.ok(), await res.text()).toBeTruthy()
+  }
+  await send('claimed', { kind: 'claimed' })
+  await send('working', { kind: 'working', run: `run-${RUN}` })
+
+  await page.goto('/#/travail')
+  await card(page, title).click()
+  const pane = page.getByRole('complementary', { name: `Détail de ${title}` })
+  await pane.getByLabel('Titre').fill(`${title} (retouché)`)
+
+  await send('done', { kind: 'done', run: `run-${RUN}`, evidence: [`commit:agent${RUN}`] })
+
+  await expect(pane.getByText(/Cette tâche vient d’être terminée/)).toBeVisible({ timeout: 20_000 })
+  await expect(pane.getByLabel('Titre')).toHaveValue(`${title} (retouché)`)
+  await expect(pane.getByRole('button', { name: 'Enregistrer' })).toBeDisabled()
+  await expect(pane.getByText(`commit:agent${RUN}`)).toBeVisible()
+
+  await pane.getByRole('button', { name: 'Abandonner le brouillon' }).click()
+  await expect(pane.getByLabel('Titre')).toHaveCount(0)
+  await expect(pane.getByRole('button', { name: 'Ouvrir une tâche de suite' })).toBeVisible()
+  const stored = await (await page.request.get(`/api/tasks/${id}`, { headers: auth() })).json()
+  expect(stored.title).toBe(title)
+})

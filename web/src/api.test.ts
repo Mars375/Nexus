@@ -183,3 +183,15 @@ test("TanStack ne réessaie pas après un 401, mais garde ses trois essais aille
   expect(retryQuery(2, new Error('réseau'))).toBe(true)
   expect(retryQuery(3, new Error('réseau'))).toBe(false)
 })
+
+test('joindre une preuve envoie la liste à la route dédiée, sans acteur dans le corps', async () => {
+  const fetchMock = vi.fn(async () => Response.json({ id: 'nx-task-1' }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  await tasksApi.attachEvidence('nx-task-1', ['commit:abc'])
+
+  const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+  expect(url).toMatch(/\/api\/tasks\/nx-task-1\/evidence$/)
+  expect(init.method).toBe('POST')
+  expect(JSON.parse(init.body as string)).toEqual({ evidence: ['commit:abc'] })
+})

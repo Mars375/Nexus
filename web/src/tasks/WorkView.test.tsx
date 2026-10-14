@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { Task } from '@/api'
 import { WorkView } from './WorkView'
@@ -9,7 +9,7 @@ const TASK: Task = {
   human_owner: 'loic', lead_agent: null, collaborators: [], next_action: 'relever les tables',
   due_at: null, follow_up_at: null, block_cause: null, block_plan: null, drop_reason: null,
   expected_evidence: null, evidence: [], priority: 'normal', operation_role: null, origin: null,
-  context: [], depends_on: [], created_by: 'loic', created_at: '2026-09-28T10:00:00+02:00',
+  context: [], depends_on: [], follows: null, created_by: 'loic', created_at: '2026-09-28T10:00:00+02:00',
   updated_at: '2026-09-28T10:00:00+02:00', source: 'nexus.db', measured_at: '2026-09-28T10:00:00+02:00',
 }
 
@@ -34,4 +34,108 @@ test('ouvrir une carte dans Travail (prop inchangée) ouvre le volet', async () 
   view(null)
   fireEvent.click(await screen.findByRole('button', { name: /Pont lecture — ouvrir ou déplacer/ }))
   expect(await screen.findByRole('complementary', { name: /Détail de Pont lecture/ })).toBeInTheDocument()
+})
+
+const CLOSED: Task = { ...TASK, id: 'nx-task-2', title: 'Livraison', status: 'done', next_action: null }
+const FOLLOW_UP: Task = { ...TASK, id: 'nx-task-3', title: 'Correctif', follows: 'nx-task-2' }
+
+function viewWith(tasks: Task[]) {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) =>
+    Response.json(String(url).endsWith('/api/tasks') ? tasks : []),
+  ))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(<QueryClientProvider client={client}><WorkView /></QueryClientProvider>)
+}
+
+const paneOf = (title: string) => screen.findByRole('complementary', { name: `Détail de ${title}` })
+
+test('une carte terminée s’ouvre d’un clic, sans « déplacer » dans son nom', async () => {
+  viewWith([CLOSED])
+  fireEvent.click(await screen.findByRole('button', { name: 'Livraison — ouvrir' }))
+  expect(await paneOf('Livraison')).toBeInTheDocument()
+})
+
+test('« Ouvrir une tâche de suite » ouvre la création pour cette tâche ; « Nouvelle tâche » reste simple', async () => {
+  viewWith([CLOSED])
+  fireEvent.click(await screen.findByRole('button', { name: 'Livraison — ouvrir' }))
+  const pane = await paneOf('Livraison')
+  fireEvent.click(within(pane).getByRole('button', { name: 'Ouvrir une tâche de suite' }))
+
+  let dialog = await screen.findByRole('dialog', { name: 'Nouvelle tâche' })
+  expect(within(dialog).getByText('Suite de nx-task-2 — Livraison')).toBeInTheDocument()
+  fireEvent.change(within(dialog).getByLabelText('Titre'), { target: { value: 'Brouillon de suite' } })
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Annuler' }))
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+  fireEvent.click(screen.getAllByRole('button', { name: 'Nouvelle tâche' })[0])
+  dialog = await screen.findByRole('dialog', { name: 'Nouvelle tâche' })
+  expect(within(dialog).queryByText(/Suite de/)).not.toBeInTheDocument()
+  expect(within(dialog).getByLabelText('Titre')).toHaveValue('')
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Annuler' }))
+
+  fireEvent.click(within(pane).getByRole('button', { name: 'Ouvrir une tâche de suite' }))
+  dialog = await screen.findByRole('dialog', { name: 'Nouvelle tâche' })
+  expect(within(dialog).getByLabelText('Titre')).toHaveValue('Brouillon de suite')
+})
+
+test('suivre « Suite de » ou « Suivie par » quitte le panneau et son brouillon, comme un clic sur une carte', async () => {
+  viewWith([CLOSED, FOLLOW_UP])
+  fireEvent.click(await screen.findByRole('button', { name: /^Correctif — ouvrir/ }))
+  let pane = await paneOf('Correctif')
+  fireEvent.change(within(pane).getByLabelText('Titre'), { target: { value: 'Brouillon perdu' } })
+
+  fireEvent.click(within(pane).getByRole('button', { name: /Suite de nx-task-2 — Livraison/ }))
+  pane = await paneOf('Livraison')
+  fireEvent.click(within(pane).getByRole('button', { name: /Correctif/ }))
+
+  pane = await paneOf('Correctif')
+  expect(within(pane).getByLabelText('Titre')).toHaveValue('Correctif')
+})
+
+test('la réponse d’une suite envoyée puis annulée ne ferme pas la boîte « Nouvelle tâche » ouverte entre-temps', async () => {
+  let answer!: (res: Response) => void
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === 'POST' && String(url).endsWith('/api/tasks')) {
+      return new Promise<Response>((resolve) => (answer = resolve))
+    }
+    return Response.json(String(url).endsWith('/api/tasks') ? [CLOSED] : [])
+  }))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(<QueryClientProvider client={client}><WorkView /></QueryClientProvider>)
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Livraison — ouvrir' }))
+  const pane = await paneOf('Livraison')
+  fireEvent.click(within(pane).getByRole('button', { name: 'Ouvrir une tâche de suite' }))
+  let dialog = await screen.findByRole('dialog', { name: 'Nouvelle tâche' })
+  fireEvent.change(within(dialog).getByLabelText('Titre'), { target: { value: 'Correctif' } })
+  fireEvent.change(within(dialog).getByLabelText(/^Objectif/), { target: { value: 'Réparer' } })
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Créer la tâche' }))
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Annuler' }))
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+  fireEvent.click(screen.getAllByRole('button', { name: 'Nouvelle tâche' })[0])
+  dialog = await screen.findByRole('dialog', { name: 'Nouvelle tâche' })
+  fireEvent.change(within(dialog).getByLabelText('Titre'), { target: { value: 'Autre idée' } })
+
+  await act(async () => {
+    answer(Response.json({ ...FOLLOW_UP, id: 'nx-task-9', title: 'Correctif' }))
+    await new Promise((resolve) => setTimeout(resolve, 30))
+  })
+  dialog = screen.getByRole('dialog', { name: 'Nouvelle tâche' })
+  expect(within(dialog).getByLabelText('Titre')).toHaveValue('Autre idée')
+})
+
+test('la réponse d’une création ferme la boîte quand elle est encore ouverte sur la même cible', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) =>
+    init?.method === 'POST' ? Response.json({ ...TASK, id: 'nx-task-9' }) : Response.json(String(url).endsWith('/api/tasks') ? [CLOSED] : []),
+  ))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(<QueryClientProvider client={client}><WorkView /></QueryClientProvider>)
+  await screen.findByRole('button', { name: 'Livraison — ouvrir' })
+  fireEvent.click(screen.getAllByRole('button', { name: 'Nouvelle tâche' })[0])
+  const dialog = await screen.findByRole('dialog', { name: 'Nouvelle tâche' })
+  fireEvent.change(within(dialog).getByLabelText('Titre'), { target: { value: 'Idée' } })
+  fireEvent.change(within(dialog).getByLabelText(/^Objectif/), { target: { value: 'Faire' } })
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Créer la tâche' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
 })

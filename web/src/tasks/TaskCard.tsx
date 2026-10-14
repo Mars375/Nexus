@@ -36,7 +36,8 @@ export function TaskCardBody({ task, pendingDependencies, now, lifted }: CardPro
         <p className="mt-1 text-xs text-attention">Bloqué : {task.block_cause}</p>
       )}
       <p className="mt-1 line-clamp-2 text-xs text-muted">{task.objective}</p>
-      {task.next_action && (
+      {/* Une tâche close ou abandonnée n'a plus de suite prévue (ADR-022). */}
+      {task.next_action && task.status !== 'done' && task.status !== 'dropped' && (
         <p className="mt-1 line-clamp-2 text-xs">
           <span className="text-muted">Ensuite : </span>
           {task.next_action}
@@ -62,6 +63,7 @@ export function TaskCardBody({ task, pendingDependencies, now, lifted }: CardPro
             Attend {pendingDependencies.length === 1 ? '1 tâche' : `${pendingDependencies.length} tâches`}
           </span>
         )}
+        {task.follows && <span>Suite de {task.follows.replace('nx-task-', '#')}</span>}
         {task.expected_evidence && task.evidence.length === 0 && task.status !== 'done' && (
           <span>Preuve attendue</span>
         )}
@@ -77,10 +79,18 @@ export function TaskCard({
   now,
   onOpen,
 }: CardProps & { onOpen: (id: string) => void }) {
+  // Une tâche terminée est finale : elle s'ouvre, elle ne se déplace plus (ADR-022).
+  const closed = task.status === 'done'
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: task.id,
     data: { status: task.status satisfies Status },
+    disabled: closed,
   })
+  // `disabled` met `aria-disabled` dans `attributes` : étalés sur le bouton, ils le feraient
+  // annoncer désactivé alors qu'il ouvre la tâche. Une carte close n'étale rien.
+  const dragProps = closed ? {} : { ...attributes, ...listeners }
+  const lead = task.lead_agent ? ` (agent principal ${actorName(task.lead_agent)})` : ''
+  const followUp = task.follows ? ` (suite de ${task.follows})` : ''
   return (
     <li>
       <button
@@ -88,12 +98,12 @@ export function TaskCard({
         type="button"
         onClick={() => onOpen(task.id)}
         className={clsx(
-          'block w-full cursor-grab rounded-sm active:cursor-grabbing',
+          'block w-full rounded-sm',
+          !closed && 'cursor-grab active:cursor-grabbing',
           isDragging && 'opacity-30',
         )}
-        aria-label={`${task.title} — ouvrir ou déplacer${task.lead_agent ? ` (agent principal ${actorName(task.lead_agent)})` : ''}`}
-        {...attributes}
-        {...listeners}
+        aria-label={`${task.title} — ${closed ? 'ouvrir' : 'ouvrir ou déplacer'}${lead}${followUp}`}
+        {...dragProps}
       >
         <TaskCardBody task={task} pendingDependencies={pendingDependencies} now={now} />
       </button>

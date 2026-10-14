@@ -119,7 +119,7 @@ test('un 401 pendant une modification garde l’application montée : le brouill
     id: 'nx-task-1', title: 'Pont lecture', objective: 'Lire les runs', status: 'todo', human_owner: 'loic',
     lead_agent: null, collaborators: [], next_action: 'relever les tables', due_at: null, follow_up_at: null,
     block_cause: null, block_plan: null, drop_reason: null, expected_evidence: null, evidence: [],
-    priority: 'normal', operation_role: null, origin: null, context: [], depends_on: [], created_by: 'loic',
+    priority: 'normal', operation_role: null, origin: null, context: [], depends_on: [], follows: null, created_by: 'loic',
     created_at: '2026-09-28T10:00:00+02:00', updated_at: '2026-09-28T10:00:00+02:00',
     source: 'nexus.db', measured_at: '2026-09-28T10:00:00+02:00',
   }

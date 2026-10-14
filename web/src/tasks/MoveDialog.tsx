@@ -2,13 +2,13 @@ import { useState, type FormEvent } from 'react'
 import type { Status, StatusChange, Task } from '@/api'
 import { formatDateTime, localInputToIso } from '@/format'
 import { Button, Dialog, Field, inputClass } from '@/ui'
-import { moveNeeds } from './moves'
+import { canMove, moveNeeds } from './moves'
 import { useMoveTask } from './queries'
 import { STATUS_LABEL } from './vocabulary'
 
 /** Demande ce que la règle exige avant un déplacement (blocage, abandon, prochaine action…). */
 export function MoveDialog({
-  task,
+  task: opened,
   to,
   all,
   onClose,
@@ -18,7 +18,14 @@ export function MoveDialog({
   all: Task[]
   onClose: () => void
 }) {
+  // La tâche a pu changer depuis l'ouverture (agent, autre fenêtre) : on relit la version courante.
+  const task = all.find((t) => t.id === opened.id) ?? opened
   const needs = moveNeeds(task, to, all)
+  const stale = canMove(task.status, to)
+    ? null
+    : task.status === 'done'
+      ? 'Cette tâche vient d’être terminée : ce passage n’est plus possible.'
+      : 'Cette tâche a changé de statut : ce passage n’est plus possible.'
   const move = useMoveTask()
   const [nextAction, setNextAction] = useState('')
   const [cause, setCause] = useState('')
@@ -30,12 +37,14 @@ export function MoveDialog({
   // Le serveur reprend la relance déjà posée sur la tâche : pas besoin de la ressaisir.
   const blockReady = cause.trim() && (plan.trim() || followUp || task.follow_up_at)
   const ready =
+    !stale &&
     (!needs.nextAction || nextAction.trim()) &&
     (!needs.block || blockReady) &&
     (!needs.reason || reason.trim())
 
   function submit(event: FormEvent) {
     event.preventDefault()
+    if (!ready) return
     const change: StatusChange = { status: to }
     if (needs.mainTaken) change.role = 'auxiliary'
     if (needs.nextAction) change.next_action = nextAction.trim()
@@ -46,7 +55,7 @@ export function MoveDialog({
       if (iso) change.follow_up_at = iso
     }
     if (needs.reason) change.reason = reason.trim()
-    const refs = evidence.split(/[\n,]/).map((s) => s.trim()).filter(Boolean)
+    const refs = evidence.split('\n').map((s) => s.trim()).filter(Boolean)
     if (refs.length) change.evidence = refs
     move.mutate({ id: task.id, change })
     onClose()
@@ -66,6 +75,11 @@ export function MoveDialog({
       }
     >
       <form onSubmit={submit} className="grid gap-3">
+        {stale && (
+          <p role="alert" className="text-xs text-danger">
+            {stale}
+          </p>
+        )}
         {needs.nextAction && (
           <Field label="Prochaine action" hint="Une tâche active dit toujours ce qui vient ensuite.">
             <textarea

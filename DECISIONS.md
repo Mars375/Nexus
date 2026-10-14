@@ -183,6 +183,14 @@ Toute décision structurante s'ajoute ici.
   - la documentation OpenAPI reste ouverte (D5).
 - **Statut :** accepté.
 
+## ADR-022 — Une tâche terminée ne se modifie plus ; on corrige dans une tâche de suite
+
+- **Date :** 2026-10-13 (décidé par Loïc, issue #65 ; conception : `docs/superpowers/specs/2026-10-13-done-task-readonly-design.md`)
+- **Contexte :** `done → in_progress` permettait de rouvrir une tâche close, donc de réécrire ce qui a été livré et prouvé ; l'interface invitait à rouvrir pour joindre une preuve, et un agent qui ouvrait un run sur une tâche close la rouvrait.
+- **Décision :** `done` est final. Aucune transition n'en sort ; ni champ, ni dépendance de la tâche, ni agent principal, collaborateurs ou prochaine action ne change (409 `task_done`, contrôlé seulement si la requête change quelque chose). Restent possibles : commenter, et compléter les preuves (ajout seul, `POST /api/tasks/<ref>/evidence`, ou `done` d'un agent avec preuve). Un problème trouvé ensuite se règle dans une nouvelle tâche, qui peut porter le lien facultatif `follows` (« suite de nx-task-N ») vers une tâche `done` seulement ; ce lien n'est pas une dépendance. `dropped → backlog` reste permis. Les tâches déjà closes passent en lecture seule sans réécriture, et les dépendances sur elles restent résolues. Les événements d'agents sur une tâche close restent enregistrés ; leurs effets sont consignés non appliqués avec la raison.
+- **Conséquences :** migration `0006` (colonne `tasks.follows_id`, clé étrangère `ON DELETE SET NULL`, index ; ajoutée par `add_column(…, inline_references=True)` et réversible par `drop_column`, sans mode batch, qui, clés étrangères actives, viderait les tables liées ; le modèle déclare la clé sans `ondelete`, que SQLAlchemy ne relit pas sur une référence de colonne) ; `reopen_with_advanced_dependents` ne concerne plus que `dropped → backlog` ; une erreur sur une tâche close ne se corrige plus en place ; `demo_agent` relancé sur une tâche close sort avec le code 4 sans rien publier.
+- **Statut :** accepté.
+
 ---
 
 ## Décisions ouvertes
