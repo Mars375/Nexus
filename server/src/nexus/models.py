@@ -61,6 +61,11 @@ class Task(Base):
     operation_role: Mapped[str | None] = mapped_column(String(16))
     origin: Mapped[str | None] = mapped_column(Text)
     context: Mapped[list[str]] = mapped_column(JSON, default=list)
+    # « Suite de » (ADR-022): the done task this one corrects. ON DELETE SET NULL is set in the
+    # database by migration 0006 (inline REFERENCES); SQLAlchemy does not reflect ON DELETE on a
+    # column-level reference, so declaring it here would make compare_metadata report a
+    # remove_fk/add_fk pair.
+    follows_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id"), index=True)
     created_by: Mapped[str] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(AwareDateTime)
     updated_at: Mapped[datetime] = mapped_column(AwareDateTime)

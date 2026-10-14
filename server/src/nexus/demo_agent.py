@@ -15,7 +15,8 @@ Avec `--ask`, il demande plutôt une validation à Loïc et, avec `--wait`, reli
 Une tâche active doit avoir une prochaine action : si la tâche n'en a pas, l'agent en donne une
 (`--next-action`, par `PATCH /api/tasks/<ref>`) avant `working`. Il vérifie après chaque étape que
 l'effet attendu est appliqué (agent principal, en cours, terminée) et s'arrête sinon, avec le
-code 4. Sans `--evidence`, Nexus enregistre `done` comme `review`, à valider par Loïc : c'est
+code 4. Une tâche déjà terminée est définitive : il s'arrête aussitôt avec le code 4, sans rien
+publier. Sans `--evidence`, Nexus enregistre `done` comme `review`, à valider par Loïc : c'est
 alors l'effet attendu, et le code 0 ne veut pas dire « terminée ». Relancé sur une tâche qu'il
 mène déjà, il ne republie pas `claimed`.
 
@@ -45,7 +46,8 @@ EXIT_NO_ANSWER = 1  # --ask --wait: timeout, expired request, Nexus unreachable;
 # request (4xx, e.g. 409 noise or run_already_active), which stops the agent with its message
 EXIT_USAGE = 2  # invalid arguments: argparse exits with it
 EXIT_REJECTED = 3  # --ask --wait: Loïc refused
-EXIT_EFFECT_REFUSED = 4  # the story: an event was recorded but its expected effect was not applied
+EXIT_EFFECT_REFUSED = 4  # the story: an event was recorded but its expected effect was not
+# applied; also a task already done, which is final: nothing is published (ADR-022)
 # 0: the story was played (task done with --evidence, in review without); with --ask, approved or
 # answered (or, without --wait, asked and not waiting)
 
@@ -345,6 +347,12 @@ def play(base: str, actor: str, ref: str, evidence: str | None, next_action: str
         return EXIT_EFFECT_REFUSED
 
     task = call(base, "GET", f"/api/tasks/{ref}")
+    if task.get("status") == "done":
+        # A done task is final: `working` would be refused and the story would only leave
+        # events behind. Nothing is sent (no PATCH, no claimed, no run).
+        print(f"{ref}  tâche terminée : elle ne se modifie plus ; rien n'est publié "
+              "(ouvre une tâche de suite)")
+        return EXIT_EFFECT_REFUSED
     if _blank(task.get("next_action")):
         # An active task needs a next action: without one, `working` is refused (and so `done`).
         stored = call(base, "PATCH", f"/api/tasks/{ref}", {"next_action": next_action})

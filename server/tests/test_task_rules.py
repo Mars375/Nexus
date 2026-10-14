@@ -14,7 +14,6 @@ ALLOWED = {
     ("in_progress", "done"), ("in_progress", "dropped"),
     ("blocked", "todo"), ("blocked", "in_progress"), ("blocked", "dropped"),
     ("review", "in_progress"), ("review", "done"), ("review", "dropped"),
-    ("done", "in_progress"),
     ("dropped", "backlog"),
 }
 

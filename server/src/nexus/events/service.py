@@ -11,9 +11,8 @@ import json
 import logging
 import re
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any
+from typing import Any
 
-from pydantic import StringConstraints, TypeAdapter
 from sqlalchemy import select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -35,9 +34,12 @@ from nexus.models import Approval, Event, Task
 from nexus.permissions import Forbidden
 from nexus.tasks import service as tasks
 from nexus.tasks.rules import RuleViolation
-from nexus.validation import has_unencodable
+from nexus.validation import API_STRIP, has_unencodable
 
 log = logging.getLogger("nexus.events")
+
+# Returned by an effect that finds nothing left to do (it wrote nothing).
+ALREADY = object()
 
 RUN_OPEN_ATTEMPTS = 3
 EFFECT_ATTEMPTS = 3
@@ -99,11 +101,6 @@ def _check_scalars(envelope: Envelope, actor_event_id: object) -> None:
             raise RuleViolation(code, message)
     if not isinstance(actor_event_id, str):
         raise RuleViolation("invalid_event_id", "id doit être un texte")
-
-
-# The API strips evidence items with Pydantic before measuring them: reuse that exact stripping
-# (it differs from `str.strip()`, which also removes U+001C to U+001F).
-API_STRIP = TypeAdapter(Annotated[str, StringConstraints(strip_whitespace=True)])
 
 
 def _check_lengths(envelope: Envelope, actor_event_id: str) -> None:
@@ -484,20 +481,28 @@ def _apply_effects(session: Session, event: Event, e: Envelope, task: Task) -> l
     """Traduit l'événement en mutations de la tâche, chacune tentée dans un point de sauvegarde."""
     effects: list[dict] = []
 
-    def attempt(action: str, fn, watched: tuple[str, ...] = (), unchanged: str = "") -> None:
+    def attempt(
+        action: str, fn, watched: tuple[str, ...] = (), unchanged: str = ""
+    ) -> str:
+        """Try `fn` in a savepoint, retrying on a version conflict. Returns what happened:
+        "applied", "refused" (the reason is consigned), "gave_up", or "already" when `fn`
+        reports that nothing was left to do (it wrote nothing)."""
         # Un conflit de version (la tâche a changé depuis sa lecture) n'est pas un refus : on
         # relit la tâche et on retente, les règles jugeant alors son état à jour.
         for _ in range(EFFECT_ATTEMPTS):
             savepoint = session.begin_nested()
             try:
                 before = [getattr(task, f) for f in watched]
-                fn()
+                outcome = fn()
+                if outcome is ALREADY:
+                    savepoint.rollback()
+                    return "already"
                 if watched and before == [getattr(task, f) for f in watched]:
                     # update_task writes nothing when nothing differs: not an applied effect.
                     raise RuleViolation("effect_unchanged", unchanged)
                 savepoint.commit()
                 effects.append({"action": action, "applied": True})
-                return
+                return "applied"
             except StaleDataError:
                 savepoint.rollback()
                 session.refresh(task)
@@ -510,33 +515,39 @@ def _apply_effects(session: Session, event: Event, e: Envelope, task: Task) -> l
                     "conflit en base"
                 )
                 effects.append({"action": action, "applied": False, "reason": message})
-                return
+                return "refused"
         effects.append({"action": action, "applied": False,
                         "reason": "conflit en base : trop d'écritures concurrentes"})
+        return "gave_up"
 
     def move(target: str, **kwargs: Any) -> None:
         stale = _stale_run(session, event, task)
         if stale:
             effects.append({"action": f"status:{target}", "applied": False, "reason": stale})
             return
-        # La tâche a pu changer depuis sa lecture (avant l'insertion de l'événement) : on juge
-        # « déjà dans ce statut » sur son état courant, pas sur la copie en mémoire.
-        session.refresh(task)
-        if task.status == target:
-            if target == "review" and kwargs.get("evidence"):
-                # Déjà en review (mise par Loïc, sans preuve) : la preuve jointe compte quand même.
-                attempt("evidence", lambda: tasks.attach_evidence(
-                    session, task, kwargs["evidence"], event.actor
-                ))
-                return
+        evidence = kwargs.get("evidence")
+
+        def change() -> object:
+            # Judged on every attempt, on the task as just read: after a version conflict the
+            # task may already be in the target status (a defence: see the design, §2).
+            session.refresh(task)
+            if task.status == target:
+                return ALREADY
+            tasks.change_status(session, task, target, event.actor, **kwargs)
+            return None
+
+        # Review: an already-reviewed task still takes the evidence, and says nothing else.
+        if attempt(f"status:{target}", change) != "already":
+            return
+        if not (target == "review" and evidence):
             effects.append(
                 {"action": f"status:{target}", "applied": False, "reason": f"déjà en {target}"}
             )
-            return
-        attempt(
-            f"status:{target}",
-            lambda: tasks.change_status(session, task, target, event.actor, **kwargs),
-        )
+        if evidence and target in ("review", "done"):
+            # Its own attempt: a refusal of the evidence is its own effect, never the status's.
+            attempt("evidence", lambda: tasks.attach_evidence(
+                session, task, evidence, event.actor
+            ))
 
     match event.kind:
         case "claimed":

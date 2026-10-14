@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
@@ -11,9 +12,11 @@ from sqlalchemy.orm import Session
 
 from nexus import permissions, secrets
 from nexus.clock import now
+from nexus.events.limits import EVIDENCE_REF_MAX
 from nexus.models import Task, TaskComment, TaskDependency, TaskHistory
 from nexus.tasks import rules
 from nexus.tasks.rules import RuleViolation
+from nexus.validation import API_STRIP, has_unencodable
 
 log = logging.getLogger("nexus.tasks")
 
@@ -27,7 +30,7 @@ class TaskNotFound(Exception):
 UPDATABLE = frozenset({
     "title", "objective", "human_owner", "lead_agent", "collaborators", "next_action",
     "due_at", "follow_up_at", "expected_evidence", "priority", "operation_role", "origin",
-    "context",
+    "context", "follows",
 })
 
 
@@ -40,6 +43,38 @@ def _drop_blank_expectation(values: dict[str, Any]) -> dict[str, Any]:
     if "expected_evidence" in values and secrets.is_blank(values["expected_evidence"]):
         values = values | {"expected_evidence": None}
     return values
+
+
+_FOLLOWS = re.compile(r"nx-task-[0-9]{1,12}")
+
+
+def parse_follows(value: Any) -> int | None:
+    """The task id behind a `follows` reference, or None for no link.
+
+    ASCII digits only, read as a number once: `nx-task-0007` is task 7, and everything after
+    (comparison, lookup, history) works on that integer, never on the received text.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str) or not _FOLLOWS.fullmatch(value):
+        raise RuleViolation("invalid_follows", "follows : référence de tâche invalide")
+    return int(value.removeprefix("nx-task-"))
+
+
+def _follows_ref(task_id: int | None) -> str | None:
+    return None if task_id is None else f"nx-task-{task_id}"
+
+
+def _follows_target(session: Session, task_id: int) -> Task:
+    """The task a follow-up links to: it must exist (404) and be done (409)."""
+    target = get_task(session, task_id)
+    if target.status != "done":
+        raise RuleViolation(
+            "follows_not_done",
+            f"follows : {target.ref} n'est pas terminée ; une tâche de suite ne suit qu'une "
+            "tâche terminée",
+        )
+    return target
 
 
 def get_task(session: Session, task_id: int) -> Task:
@@ -81,6 +116,8 @@ def create_task(session: Session, data: dict[str, Any], actor: str) -> Task:
         actor, lead_agent=data.get("lead_agent"), collaborators=data.get("collaborators") or []
     )
     redacted: dict[str, list[str]] = {}
+    data = dict(data)
+    raw_follows = data.pop("follows", None)  # not a column of Task
     data = _drop_blank_expectation(secrets.redact_fields(data, redacted.__setitem__))
     status = data.pop("status", "backlog")
     if status not in rules.INITIAL_STATUSES:
@@ -89,9 +126,13 @@ def create_task(session: Session, data: dict[str, Any], actor: str) -> Task:
         )
     rules.check_identity(data.get("title"), data.get("objective"))
     rules.check_next_action(status, data.get("next_action"))
+    follows_id = parse_follows(raw_follows)
+    if follows_id is not None:
+        _follows_target(session, follows_id)
     ts = now()
     task = Task(
         **data,
+        follows_id=follows_id,
         status=status,
         evidence=[],
         created_by=actor,
@@ -102,7 +143,9 @@ def create_task(session: Session, data: dict[str, Any], actor: str) -> Task:
     session.flush()
     _record(session, task, actor, "created", {
         k: [None, v] for k, v in data.items() if v not in (None, [], "")
-    } | {"status": [None, status]})
+    } | {"status": [None, status]} | (
+        {"follows": [None, _follows_ref(follows_id)]} if follows_id is not None else {}
+    ))
     _record_redactions(session, task, actor, redacted)
     return task
 
@@ -119,29 +162,34 @@ def update_task(session: Session, task: Task, changes: dict[str, Any], actor: st
         collaborators_after=changes.get("collaborators", task.collaborators),
     )
     redacted: dict[str, list[str]] = {}
+    changes = dict(changes)
+    has_follows = "follows" in changes
+    raw_follows = changes.pop("follows", None)  # not an attribute of Task
     changes = _drop_blank_expectation(secrets.redact_fields(changes, redacted.__setitem__))
     role_before = task.operation_role
-    diff = {}
-    for field, value in changes.items():
-        old = getattr(task, field)
-        if old != value:
-            diff[field] = [old, value]
-            setattr(task, field, value)
+    # The diff is computed before anything is written: a refusal then leaves the task untouched.
+    diff = {field: [getattr(task, field), value] for field, value in changes.items()
+            if getattr(task, field) != value}
+    follows_id = parse_follows(raw_follows) if has_follows else None
+    if has_follows and follows_id != task.follows_id:
+        diff["follows"] = [_follows_ref(task.follows_id), _follows_ref(follows_id)]
     # Tracé même si rien ne change : un secret recollé dans un champ déjà masqué reste une
     # exposition à signaler.
     _record_redactions(session, task, actor, redacted)
     if not diff:
         return task
+    rules.check_not_done(task.status)  # before looking up a follows target: state first
+    if "follows" in diff and follows_id is not None:
+        _follows_target(session, follows_id)
+    for field in changes:
+        if field in diff:
+            setattr(task, field, changes[field])
+    if "follows" in diff:
+        task.follows_id = follows_id
     rules.check_identity(task.title, task.objective)
     rules.check_next_action(task.status, task.next_action)
     if task.status == "blocked":
         rules.check_block(task.block_cause, task.block_plan, task.follow_up_at)
-    proven = rules.resolve_done(task.expected_evidence, task.evidence) == "done"
-    if task.status == "done" and not proven:
-        raise RuleViolation(
-            "evidence_missing_on_done",
-            "cette tâche est terminée sans preuve : rouvre-la pour joindre la preuve attendue",
-        )
     if "operation_role" in diff and task.operation_role and task.status not in ROLE_STATUSES:
         raise RuleViolation(
             "role_not_applicable",
@@ -191,7 +239,8 @@ def change_status(
     rules.check_transition(current, target)
     rules.check_dependencies(target, _pending_dependencies(session, task))
     if current in rules.DEPENDENCY_RESOLVED and target not in rules.DEPENDENCY_RESOLVED:
-        # Rouvrir un prérequis laisserait ses dépendantes avancées sans prérequis traité.
+        # Only dropped -> backlog gets here (done is final): taking back a prerequisite would
+        # leave its advanced dependents without a resolved prerequisite.
         advanced = _advanced_dependents(session, task)
         if advanced:
             raise RuleViolation(
@@ -227,7 +276,8 @@ def change_status(
         # reste une référence lisible (« commit:abc token=[REDACTED] ») compte. Même règle
         # que les événements (secrets.is_blank_reference : il doit rester un identifiant).
         # Jointe à une mise en review, elle reste sur la tâche : Loïc peut ensuite la clore.
-        refs = [e.strip() for e in evidence or [] if not secrets.is_blank_reference(e)]
+        refs = [e for e in (API_STRIP.validate_python(i) for i in evidence or [])
+                if not secrets.is_blank_reference(e)]
         if refs:
             task.evidence = list(dict.fromkeys([*task.evidence, *refs]))
     if target == "done":
@@ -298,6 +348,7 @@ def add_dependency(session: Session, task: Task, other: Task, actor: str) -> Non
         raise RuleViolation("self_dependency", "une tâche ne peut pas dépendre d'elle-même")
     if session.get(TaskDependency, (task.id, other.id)) is not None:
         return
+    rules.check_not_done(task.status)
     if _depends_on(session, other.id, task.id):
         raise RuleViolation(
             "dependency_cycle", f"{other.ref} dépend déjà de {task.ref} : cycle refusé"
@@ -316,8 +367,26 @@ def add_dependency(session: Session, task: Task, other: Task, actor: str) -> Non
 
 
 def attach_evidence(session: Session, task: Task, evidence: list[str], actor: str) -> None:
-    """Joint des preuves sans changer de statut (ex. review déjà en cours, sans preuve)."""
-    refs = [e.strip() for e in evidence if not secrets.is_blank_reference(e)]
+    """Appends evidence to a task of any status, without changing its status (ADR-022).
+
+    Safe for a direct caller: the same checks as the API (texts only, encodable, stripped as
+    Pydantic strips, measured after stripping), then secrets are masked and traced.
+    """
+    if not isinstance(evidence, list | tuple) or not all(isinstance(e, str) for e in evidence):
+        raise RuleViolation("invalid_evidence", "evidence : liste de textes attendue")
+    if has_unencodable(list(evidence)):
+        raise RuleViolation(
+            "invalid_value", "valeur non encodable : demi-paire UTF-16, NaN ou Infinity"
+        )
+    stripped = [API_STRIP.validate_python(e) for e in evidence]
+    if any(len(e) > EVIDENCE_REF_MAX for e in stripped):
+        raise RuleViolation(
+            "too_long_evidence",
+            f"evidence : {EVIDENCE_REF_MAX} caractères au plus par élément",
+        )
+    redacted: dict[str, list[str]] = {}
+    clean = secrets.redact_fields({"evidence": stripped}, redacted.__setitem__)["evidence"]
+    refs = [e for e in clean if not secrets.is_blank_reference(e)]
     merged = list(dict.fromkeys([*task.evidence, *refs]))
     if not refs:
         raise RuleViolation("evidence_required", "evidence : aucune preuve lisible")
@@ -326,12 +395,14 @@ def attach_evidence(session: Session, task: Task, evidence: list[str], actor: st
     before, task.evidence = task.evidence, merged
     task.updated_at = now()
     _record(session, task, actor, "updated", {"evidence": [before, merged]})
+    _record_redactions(session, task, actor, redacted)
 
 
 def remove_dependency(session: Session, task: Task, other: Task, actor: str) -> None:
     link = session.get(TaskDependency, (task.id, other.id))
     if link is None:
         raise TaskNotFound(f"dépendance {task.ref} → {other.ref}")
+    rules.check_not_done(task.status)
     session.delete(link)
     task.updated_at = now()
     _record(session, task, actor, "unlinked", {"depends_on": [other.ref, None]})

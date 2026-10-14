@@ -67,6 +67,7 @@ L'unité de travail durable. Vit dans **`nexus.db`** (ADR-012).
 | `priority` | — | `low`, `normal`, `high`, `critical` |
 | `operation_role` | — | `main` ou `auxiliary` (politique une op principale) |
 | `origin` | — | d'où vient la tâche (message, mail, décision…) |
+| `follows` | — | « suite de nx-task-N » (colonne `follows_id`, ADR-022) : la tâche qui corrige une tâche `done`, jamais une autre ; facultatif, posé à la création ou par `PATCH` tant que la tâche n'est pas close ; ce n'est pas une dépendance (aucun blocage) |
 
 ### 2.5 Run — native (miroir d'un travail externe)
 
@@ -194,7 +195,8 @@ backlog → todo → in_progress → review → done
 - `in_progress` : au plus **une opération principale** par humain (garanti par un index unique). Le rôle `main`/`auxiliary` n'a de sens qu'en cours : il est effacé quand la tâche en sort.
 - `blocked` : une cause, **et** une relance prévue ou ce qui débloquerait. Un blocage sans relance reste permis s'il a un plan ; la vue « À ne pas oublier » le signale après 48 h (VIEWS §8).
 - `review` : terminé déclaré mais preuve manquante ou validation requise.
-- `dropped` : abandon explicite et motivé (jamais silencieux).
+- `dropped` : abandon explicite et motivé (jamais silencieux). Seule reprise permise : `dropped → backlog`.
+- `done` : **final** (ADR-022). Aucune transition n'en sort ; ni champ, ni dépendance de la tâche ne change (409 `task_done`, seulement si la requête change quelque chose). Restent possibles : commenter et compléter les preuves (`POST /api/tasks/<ref>/evidence`, ajout seul). Un problème trouvé ensuite se règle dans une tâche de suite (`follows`). Les dépendances **sur** une tâche close restent résolues.
 - **Dépendances** : une tâche n'entre en `in_progress`, `review` ou `done` que si toutes ses dépendances sont `done` ou `dropped`.
 - Transitions autorisées : `server/src/nexus/tasks/rules.py` (`TRANSITIONS`).
 - Une tâche Nexus n'est jamais `unknown` : Nexus en est la source. `unknown` s'applique aux runs, nœuds et données externes non vérifiés.
@@ -208,6 +210,7 @@ Human 1─* Task (human_owner)
 Task 1─* Run 1─* Artifact
 Task 1─* Event
 Task *─* Task (depends_on)
+Task *─0..1 Task (follows)
 Conversation 1─* Message *─0..1 Task
 Approval 1─1 Event (demande) ; Approval 0..1─1 Event (réponse) ; Approval *─0..1 Task, via l'événement de demande
 Decision *─* Task

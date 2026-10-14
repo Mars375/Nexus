@@ -176,10 +176,14 @@ def test_a_rerun_on_a_task_it_already_leads_does_not_trip_the_noise_rule(http, t
 
 def test_two_full_runs_on_the_same_task_within_the_noise_window_both_succeed(http, task):
     """The second run's progress names its own run: it is a new fact, not noise."""
-    assert run(task, "--evidence", "commit:a1b2c3d") == 0
+    # The first run has no evidence: its `done` is recorded as `review` and the task waits for
+    # Loïc (a closed task would be final, so a second run could not start on it).
+    assert run(task) == 0
+    assert http.get(f"/api/tasks/{task}").json()["status"] == "review"
     assert run(task, "--evidence", "commit:d4e5f6a") == 0
     kinds = [e["kind"] for e in http.get("/api/events").json()][::-1]
-    assert kinds == ["claimed", "working", "progress", "done", "working", "progress", "done"]
+    assert kinds == ["claimed", "working", "progress", "review", "working", "progress", "done"]
+    assert http.get(f"/api/tasks/{task}").json()["status"] == "done"
 
 
 def test_after_a_refused_working_the_run_is_closed_so_a_rerun_works(http, task, capsys):
@@ -784,3 +788,65 @@ def test_a_403_actor_mismatch_says_which_actor_to_pass_without_echoing_the_token
     message = str(exc.value)
     assert "refusé (403)" in message and "--actor <acteur du jeton>" in message
     assert TOKEN not in message
+
+
+# --- A done task is final (ADR-022) ---------------------------------------------------------
+
+
+@pytest.fixture
+def calls(monkeypatch):
+    seen = []
+    real = demo_agent.call
+
+    def recording(base, method, path, body=None):
+        seen.append((method, path))
+        return real(base, method, path, body)
+
+    monkeypatch.setattr(demo_agent, "call", recording)
+    return seen
+
+
+def test_a_rerun_on_a_done_task_stops_with_exit_4_and_publishes_nothing(
+    http, task, calls, capsys
+):
+    # (A closed task always keeps a next action: an active task cannot be without one.)
+    http.patch(f"/api/tasks/{task}", json={"next_action": "Garder celle-ci"})
+    http.post(f"/api/tasks/{task}/status", json={"status": "in_progress"})
+    http.post(f"/api/tasks/{task}/status", json={"status": "done", "evidence": ["commit:abc"]})
+    before = http.get(f"/api/tasks/{task}").json() | {"measured_at": None}
+    calls.clear()
+
+    code = run(task, "--evidence", "commit:def")
+
+    assert code == demo_agent.EXIT_EFFECT_REFUSED == 4
+    out = capsys.readouterr().out
+    assert "tâche terminée : elle ne se modifie plus" in out and "rien n'est publié" in out
+    assert calls == [("GET", f"/api/tasks/{task}")]  # no PATCH, no event
+    assert http.get("/api/events").json() == []
+    assert http.get(f"/api/tasks/{task}").json() | {"measured_at": None} == before
+
+
+@pytest.mark.parametrize(("closing", "stored"), [
+    ("commit:a1b2c3d", ["commit:a1b2c3d"]),
+    ("commit:other", ["commit:other", "commit:a1b2c3d"]),
+])
+def test_a_done_after_loic_closed_the_task_is_exit_0_whatever_the_evidence(
+    http, task, monkeypatch, closing, stored
+):
+    """Two effects, never one: `status:done` « déjà en done », then `evidence` on its own."""
+    real = demo_agent.publish
+
+    def publish(base, actor, ref, kind, subject, **fields):
+        if kind == "done":  # Loïc closes the task just before the agent's done
+            http.post(f"/api/tasks/{ref}/status", json={"status": "done", "evidence": [closing]})
+        return real(base, actor, ref, kind, subject, **fields)
+
+    monkeypatch.setattr(demo_agent, "publish", publish)
+
+    assert run(task, "--evidence", "commit:a1b2c3d") == 0
+
+    done = http.get("/api/events", params={"kind": "done"}).json()[0]
+    assert [e["action"] for e in done["effects"]] == ["status:done", "evidence"]
+    assert done["effects"][0]["reason"] == "déjà en done"
+    assert done["effects"][1]["applied"] is (closing != "commit:a1b2c3d")
+    assert http.get(f"/api/tasks/{task}").json()["evidence"] == stored

@@ -100,7 +100,7 @@ Chaque item = une **règle** visible, pas un jugement vague.
 | 7 | **Décision** non tranchée (question/needs_human en attente) | > 48 h |
 | 8 | **Mail** en attente de réponse (selon règles à définir) | à définir |
 | 9 | **Job cron** non vérifié / dernier run en échec | au prochain passage |
-| 10 | **Terminé sans preuve** (done sans evidence) | immédiat |
+| 10 | **Terminé sans preuve** (done sans evidence) ; action proposée : joindre une preuve ou ouvrir une tâche de suite, jamais « rouvrir » (`done` est final, ADR-022) | immédiat |
 | 11 | **Tâche d'agent sans propriétaire humain** | immédiat |
 | 12 | **Nœud injoignable** avec tâches dépendantes | > 24 h |
 

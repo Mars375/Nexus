@@ -21,7 +21,7 @@ TRANSITIONS: dict[str, frozenset[str]] = {
     "in_progress": frozenset({"todo", "blocked", "review", "done", "dropped"}),
     "blocked": frozenset({"todo", "in_progress", "dropped"}),
     "review": frozenset({"in_progress", "done", "dropped"}),
-    "done": frozenset({"in_progress"}),  # réouverture
+    "done": frozenset(),  # final (ADR-022): a mistake is fixed in a follow-up task
     "dropped": frozenset({"backlog"}),  # reprise explicite
 }
 
@@ -32,6 +32,14 @@ GATED_BY_DEPENDENCIES = frozenset({"in_progress", "review", "done"})
 DEPENDENCY_RESOLVED = frozenset({"done", "dropped"})
 PRIORITIES = ("low", "normal", "high", "critical")
 ROLES = ("main", "auxiliary")
+
+
+# One message for every mutation refused on a done task. It carries no received value and is not
+# one of the « already there » wordings that `demo_agent.landed` reads as a success.
+DONE_IS_FINAL = (
+    "tâche terminée : elle ne se modifie plus ; commente-la, joins-lui une preuve ou ouvre "
+    "une tâche de suite"
+)
 
 
 @dataclass
@@ -50,10 +58,18 @@ def check_transition(current: str, target: str) -> None:
         raise RuleViolation("unknown_status", "status : statut inconnu")
     if target == current:
         raise RuleViolation("same_status", f"la tâche est déjà en {target}")
+    if current == "done":
+        check_not_done(current)
     if target not in TRANSITIONS[current]:
         raise RuleViolation(
             "transition_refused", f"passage de {current} à {target} non autorisé"
         )
+
+
+def check_not_done(status: str) -> None:
+    """A done task is final (ADR-022): only comments and evidence can still be added to it."""
+    if status == "done":
+        raise RuleViolation("task_done", DONE_IS_FINAL)
 
 
 def check_identity(title: str | None, objective: str | None) -> None:

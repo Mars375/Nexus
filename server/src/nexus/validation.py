@@ -8,11 +8,16 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, StringConstraints, TypeAdapter, model_validator
 
 from nexus import secrets
+
+# The API strips evidence items with Pydantic before measuring them: every path that stores
+# evidence reuses that exact stripping (it differs from `str.strip()`, which also removes U+001C
+# to U+001F).
+API_STRIP = TypeAdapter(Annotated[str, StringConstraints(strip_whitespace=True)])
 
 # Moitié de paire UTF-16 isolée (« \ud800 » en JSON) : le décodeur l'accepte, mais elle ne
 # s'encode pas en UTF-8 — stockée, elle ferait échouer chaque réponse qui la relit.
