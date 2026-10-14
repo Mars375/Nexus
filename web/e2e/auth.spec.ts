@@ -161,19 +161,23 @@ test('un jeton révoqué pendant que l’interface est ouverte la verrouille et 
   await expect(page.getByText('Temps réel : connecté')).toBeVisible()
   expect(closed).toBe(false)
 
-  // Only the request that still carried the revoked token: a periodic REST call may get its own 401 first,
-  // clear the token and lock the UI, and the next ticket request would then leave without any token.
-  const refused = page.waitForResponse(
+  // Two responses are certain to come, in either order: the first 401 for the revoked token (the next
+  // REST refresh or the ticket request, whichever leaves first), then a refused ticket request. If a REST
+  // 401 comes first, it clears the token and locks the UI, and the ticket request leaves without a token.
+  const revokedRefused = page.waitForResponse(
     (r) =>
-      new URL(r.url()).pathname === '/api/ws-ticket' &&
-      r.request().method() === 'POST' &&
-      r.request().headers()['authorization'] !== undefined &&
-      r.status() === 401,
+      new URL(r.url()).pathname.startsWith('/api/') &&
+      r.status() === 401 &&
+      r.request().headers()['authorization'] === `Bearer ${live}`,
+  )
+  const ticketRefused = page.waitForResponse(
+    (r) => new URL(r.url()).pathname === '/api/ws-ticket' && r.request().method() === 'POST' && r.status() === 401,
   )
   nexusToken('revoke', /nx-tok-[0-9]+/.exec(issued.stderr)![0])
 
   await expect.poll(() => closed).toBe(true) // the server closed the socket (4401)
-  expect((await (await refused).json()).detail.code).toBe('invalid_token') // the next ticket request is refused
+  expect((await (await revokedRefused).json()).detail.code).toBe('invalid_token')
+  await ticketRefused // the next ticket request is refused too (invalid_token, or auth_required once locked)
   await expect(lockTitle(page)).toBeVisible()
   expect(await stored(page)).toBeNull()
 })
