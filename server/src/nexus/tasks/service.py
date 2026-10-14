@@ -226,10 +226,10 @@ def change_status(
     role: str | None = None,
 ) -> Task:
     permissions.check_status(actor, target)
-    if evidence is not None and not all(API_STRIP.validate_python(e) for e in evidence):
-        # Same refusal as attach_evidence and publish(): a direct caller gets no silent drop.
+    if evidence is not None:
+        # Same checks as attach_evidence and publish(): a direct caller gets no silent drop.
         # Judged on the raw items, before masking (an item reduced to a secret is filtered later).
-        raise RuleViolation("invalid_evidence", "evidence : éléments non vides requis")
+        _checked_evidence(evidence)
     redacted: dict[str, list[str]] = {}
     texts = secrets.redact_fields(
         {"reason": reason, "block_cause": block_cause, "block_plan": block_plan,
@@ -370,11 +370,11 @@ def add_dependency(session: Session, task: Task, other: Task, actor: str) -> Non
     _record(session, task, actor, "linked", {"depends_on": [None, other.ref]})
 
 
-def attach_evidence(session: Session, task: Task, evidence: list[str], actor: str) -> None:
-    """Appends evidence to a task of any status, without changing its status (ADR-022).
+def _checked_evidence(evidence: list[str]) -> list[str]:
+    """Checks evidence from a direct caller as the API does and returns the stripped items.
 
-    Safe for a direct caller: the same checks as the API (texts only, encodable, stripped as
-    Pydantic strips, measured after stripping), then secrets are masked and traced.
+    Texts only, encodable, stripped as Pydantic strips, none blank. The API refuses a blank
+    item (422) and publish() answers invalid_evidence: a direct caller gets no silent drop.
     """
     if not isinstance(evidence, list | tuple) or not all(isinstance(e, str) for e in evidence):
         raise RuleViolation("invalid_evidence", "evidence : liste de textes attendue")
@@ -384,9 +384,17 @@ def attach_evidence(session: Session, task: Task, evidence: list[str], actor: st
         )
     stripped = [API_STRIP.validate_python(e) for e in evidence]
     if not all(stripped):
-        # The API refuses a blank item (422) and publish() answers invalid_evidence: a direct
-        # caller must not get a silent drop. Only an item blank after masking is filtered below.
         raise RuleViolation("invalid_evidence", "evidence : éléments non vides requis")
+    return stripped
+
+
+def attach_evidence(session: Session, task: Task, evidence: list[str], actor: str) -> None:
+    """Appends evidence to a task of any status, without changing its status (ADR-022).
+
+    Safe for a direct caller: the same checks as the API (texts only, encodable, stripped as
+    Pydantic strips, measured after stripping), then secrets are masked and traced.
+    """
+    stripped = _checked_evidence(evidence)
     if any(len(e) > EVIDENCE_REF_MAX for e in stripped):
         raise RuleViolation(
             "too_long_evidence",

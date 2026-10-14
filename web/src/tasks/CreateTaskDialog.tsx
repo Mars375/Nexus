@@ -135,7 +135,13 @@ export function CreateTaskDialog({
         <Field label="Preuve attendue" hint="Facultatif. Si renseignée, la tâche ne se clôt pas sans preuve.">
           <input className={inputClass} value={form.expected_evidence} readOnly={create.isPending} onChange={(e) => set('expected_evidence', e.target.value)} />
         </Field>
-        <div className="mt-1 flex justify-end gap-2">
+        <div className="mt-1 flex items-center justify-end gap-2">
+          {create.isPending && (
+            // Explains the frozen form, also on a target for which nothing was sent.
+            <span role="status" className="mr-auto text-xs text-muted">
+              Envoi en cours…
+            </span>
+          )}
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Annuler
           </Button>

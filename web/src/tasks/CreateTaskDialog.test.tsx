@@ -248,10 +248,13 @@ test('annuler puis rouvrir la même cible pendant l’envoi : tout reste figé, 
   rerender(view(true, 'nx-task-9'))
   expect(title()).toHaveAttribute('readonly')
   expect(posts).toHaveLength(1)
+  // Le gel dit pourquoi, même sur une cible pour laquelle rien n'a été envoyé.
+  expect(screen.getByRole('status')).toHaveTextContent('Envoi en cours…')
 
   rerender(view(true, 'nx-task-7'))
   await act(async () => { release() })
   await waitFor(() => expect(closes).toContain(false))
   expect(title().value).toBe('')
   expect(title()).not.toHaveAttribute('readonly')
+  expect(screen.queryByText('Envoi en cours…')).toBeNull()
 })
