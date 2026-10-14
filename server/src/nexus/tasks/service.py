@@ -370,7 +370,7 @@ def add_dependency(session: Session, task: Task, other: Task, actor: str) -> Non
     _record(session, task, actor, "linked", {"depends_on": [None, other.ref]})
 
 
-def _checked_evidence(evidence: list[str]) -> list[str]:
+def _checked_evidence(evidence: object) -> list[str]:
     """Checks evidence from a direct caller as the API does and returns the stripped items.
 
     Texts only, encodable, stripped as Pydantic strips, none blank. The API refuses a blank

@@ -198,6 +198,8 @@ test('pendant l’envoi, les champs sont figés : le serveur reçoit le texte d�
     return Response.json([])
   }))
   render(ui(null))
+  // The live region is mounted empty first, so its later text is announced.
+  expect(screen.getByRole('status')).toHaveTextContent(/^$/)
   fill('Original')
   fireEvent.change(screen.getByLabelText(/^Objectif/), { target: { value: 'Faire' } })
   fireEvent.click(screen.getByRole('button', { name: 'Créer la tâche' }))
@@ -211,6 +213,7 @@ test('pendant l’envoi, les champs sont figés : le serveur reçoit le texte d�
   expect(screen.getByLabelText('Agent principal')).toBeDisabled()
   expect(screen.getByLabelText('Échéance')).toHaveAttribute('readonly')
   expect(posts[0]).toMatchObject({ title: 'Original' })
+  expect(screen.getByRole('status')).toHaveTextContent('Envoi en cours…')
   await act(async () => { release() })
 })
 
