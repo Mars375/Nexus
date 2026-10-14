@@ -43,7 +43,7 @@
 
 | Action | Humain | Agent de nœud | Exécutant | Refus |
 |---|---|---|---|---|
-| Lire (tous les `GET /api/…` sauf health et la documentation OpenAPI), commenter, joindre une preuve (`POST …/evidence`, sur tout statut : ajout seul), lier ou délier une dépendance, changer de statut sauf `dropped` | ✓ | ✓ | ✓ | 401 seulement (droits ; la règle d'état, 409 `task_done` pour lier, délier ou changer le statut d'une tâche `done`, relève d'ADR-022 et de DATA-MODEL §3) |
+| Lire (tous les `GET /api/…` sauf health et la documentation OpenAPI), commenter, joindre une preuve (`POST …/evidence`, sur tout statut : ajout seul), lier ou délier une dépendance, changer de statut sauf `dropped` | ✓ | ✓ | ✓ | aucun refus de droit : 401 seulement, sans jeton valide (la règle d'état, 409 `task_done` pour lier, délier ou changer le statut d'une tâche `done`, relève d'ADR-022 et de DATA-MODEL §3) |
 | `POST /api/tasks` : `lead_agent`, `collaborators` | libres | libres | `lead_agent` ∈ {soi, vide}, `collaborators` ⊆ {soi} | 403 `assign_forbidden` |
 | `PATCH /api/tasks/<ref>` : `lead_agent`, `collaborators` | libres | libres | seulement ce qui **change** : vers soi, vers un humain ou à personne (`lead_agent`) ; ajouter soi ou un humain (`collaborators`) | 403 `assign_forbidden` |
 | `POST …/status` vers `dropped` | ✓ | ✗ | ✗ | 403 `human_only` |
