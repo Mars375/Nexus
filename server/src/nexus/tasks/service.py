@@ -226,6 +226,10 @@ def change_status(
     role: str | None = None,
 ) -> Task:
     permissions.check_status(actor, target)
+    if evidence is not None and not all(API_STRIP.validate_python(e) for e in evidence):
+        # Same refusal as attach_evidence and publish(): a direct caller gets no silent drop.
+        # Judged on the raw items, before masking (an item reduced to a secret is filtered later).
+        raise RuleViolation("invalid_evidence", "evidence : éléments non vides requis")
     redacted: dict[str, list[str]] = {}
     texts = secrets.redact_fields(
         {"reason": reason, "block_cause": block_cause, "block_plan": block_plan,

@@ -185,3 +185,73 @@ test('une tâche suivie absente de la liste garde la référence, sans titre inv
   )
   expect(screen.getByText('Suite de nx-task-99')).toBeInTheDocument()
 })
+
+test('pendant l’envoi, les champs sont figés : le serveur reçoit le texte d’origine', async () => {
+  let release: () => void = () => {}
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+    if (init?.method === 'POST') {
+      posts.push(JSON.parse(String(init.body)))
+      await gate
+      return Response.json({ ...BASE, id: 'nx-task-20', title: 'créée' })
+    }
+    return Response.json([])
+  }))
+  render(ui(null))
+  fill('Original')
+  fireEvent.change(screen.getByLabelText(/^Objectif/), { target: { value: 'Faire' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Créer la tâche' }))
+  await waitFor(() => expect(posts).toHaveLength(1))
+  await waitFor(() => expect(title()).toHaveAttribute('readonly'))
+  expect(screen.getByLabelText(/^Objectif/)).toHaveAttribute('readonly')
+  expect(screen.getByLabelText(/^Prochaine action/)).toHaveAttribute('readonly')
+  expect(screen.getByLabelText(/^Preuve attendue/)).toHaveAttribute('readonly')
+  expect(screen.getByLabelText('Colonne')).toBeDisabled()
+  expect(screen.getByLabelText('Priorité')).toBeDisabled()
+  expect(screen.getByLabelText('Agent principal')).toBeDisabled()
+  expect(screen.getByLabelText('Échéance')).toHaveAttribute('readonly')
+  expect(posts[0]).toMatchObject({ title: 'Original' })
+  await act(async () => { release() })
+})
+
+test('annuler puis rouvrir la même cible pendant l’envoi : tout reste figé, la réponse vide le brouillon sans perdre de saisie', async () => {
+  let release: () => void = () => {}
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+    if (init?.method === 'POST') {
+      posts.push(JSON.parse(String(init.body)))
+      await gate
+      return Response.json({ ...BASE, id: 'nx-task-20', title: 'créée' })
+    }
+    return Response.json([])
+  }))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const closes: boolean[] = []
+  const view = (open: boolean, f: string | null) => (
+    <QueryClientProvider client={client}>
+      <CreateTaskDialog open={open} follows={f} tasks={TASKS} onOpenChange={(o) => closes.push(o)} />
+    </QueryClientProvider>
+  )
+  const { rerender } = render(view(true, 'nx-task-7'))
+  fill('Premier')
+  fireEvent.change(screen.getByLabelText(/^Objectif/), { target: { value: 'Faire' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Créer la tâche' }))
+  await waitFor(() => expect(posts).toHaveLength(1))
+
+  rerender(view(false, 'nx-task-7'))
+  rerender(view(true, 'nx-task-7'))
+  // Rouverte sur la même cible : figée, aucune saisie possible avant la réponse.
+  expect(title()).toHaveAttribute('readonly')
+  expect(screen.getByLabelText(/^Objectif/)).toHaveAttribute('readonly')
+  expect(screen.getByRole('button', { name: 'Créer la tâche' })).toBeDisabled()
+  // Changer de cible pendant l'envoi : le formulaire de l'autre cible est figé aussi.
+  rerender(view(true, 'nx-task-9'))
+  expect(title()).toHaveAttribute('readonly')
+  expect(posts).toHaveLength(1)
+
+  rerender(view(true, 'nx-task-7'))
+  await act(async () => { release() })
+  await waitFor(() => expect(closes).toContain(false))
+  expect(title().value).toBe('')
+  expect(title()).not.toHaveAttribute('readonly')
+})

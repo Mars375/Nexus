@@ -95,27 +95,27 @@ export function CreateTaskDialog({
           </p>
         )}
         <Field label="Titre">
-          <input className={inputClass} maxLength={200} value={form.title} onChange={(e) => set('title', e.target.value)} autoFocus />
+          <input className={inputClass} maxLength={200} value={form.title} readOnly={create.isPending} onChange={(e) => set('title', e.target.value)} autoFocus />
         </Field>
         <Field label="Objectif" hint="En une phrase : à quoi on reconnaît que c'est fait.">
-          <textarea className={inputClass} rows={2} value={form.objective} onChange={(e) => set('objective', e.target.value)} />
+          <textarea className={inputClass} rows={2} value={form.objective} readOnly={create.isPending} onChange={(e) => set('objective', e.target.value)} />
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Colonne">
-            <select className={inputClass} value={form.status} onChange={(e) => set('status', e.target.value as 'backlog' | 'todo')}>
+            <select className={inputClass} value={form.status} disabled={create.isPending} onChange={(e) => set('status', e.target.value as 'backlog' | 'todo')}>
               <option value="backlog">Plus tard</option>
               <option value="todo">À faire</option>
             </select>
           </Field>
           <Field label="Priorité">
-            <select className={inputClass} value={form.priority} onChange={(e) => set('priority', e.target.value as Priority)}>
+            <select className={inputClass} value={form.priority} disabled={create.isPending} onChange={(e) => set('priority', e.target.value as Priority)}>
               {(Object.keys(PRIORITY_LABEL) as Priority[]).map((p) => (
                 <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>
               ))}
             </select>
           </Field>
           <Field label="Agent principal">
-            <select className={inputClass} value={form.lead_agent} onChange={(e) => set('lead_agent', e.target.value)}>
+            <select className={inputClass} value={form.lead_agent} disabled={create.isPending} onChange={(e) => set('lead_agent', e.target.value)}>
               <option value="">Personne</option>
               {ACTORS.map((a) => (
                 <option key={a} value={a}>{ACTOR_NAME[a]}</option>
@@ -123,17 +123,17 @@ export function CreateTaskDialog({
             </select>
           </Field>
           <Field label="Échéance">
-            <input type="datetime-local" className={inputClass} value={form.due_at} onChange={(e) => set('due_at', e.target.value)} />
+            <input type="datetime-local" className={inputClass} value={form.due_at} readOnly={create.isPending} onChange={(e) => set('due_at', e.target.value)} />
           </Field>
         </div>
         <Field
           label="Prochaine action"
           hint={form.status === 'todo' ? 'Obligatoire pour une tâche à faire.' : undefined}
         >
-          <textarea className={inputClass} rows={2} value={form.next_action} onChange={(e) => set('next_action', e.target.value)} />
+          <textarea className={inputClass} rows={2} value={form.next_action} readOnly={create.isPending} onChange={(e) => set('next_action', e.target.value)} />
         </Field>
         <Field label="Preuve attendue" hint="Facultatif. Si renseignée, la tâche ne se clôt pas sans preuve.">
-          <input className={inputClass} value={form.expected_evidence} onChange={(e) => set('expected_evidence', e.target.value)} />
+          <input className={inputClass} value={form.expected_evidence} readOnly={create.isPending} onChange={(e) => set('expected_evidence', e.target.value)} />
         </Field>
         <div className="mt-1 flex justify-end gap-2">
           <Button variant="ghost" onClick={() => onOpenChange(false)}>

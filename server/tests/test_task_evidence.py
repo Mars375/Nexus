@@ -221,6 +221,21 @@ def test_every_path_strips_like_the_api(client, raw):
     assert client.get(f"/api/tasks/{by_status}").json()["evidence"] == [expected]
 
 
+@pytest.mark.parametrize("target", ["review", "done"])
+def test_a_blank_item_in_a_direct_status_change_is_refused_not_dropped(client, target):
+    ref = made(client)
+    move(client, ref, "in_progress")
+    session, task = direct(client, ref)
+    with session:
+        with pytest.raises(RuleViolation) as exc:
+            service.change_status(session, task, target, "loic", evidence=["   ", "commit:a"])
+        assert exc.value.code == "invalid_evidence"
+        assert exc.value.message == "evidence : éléments non vides requis"
+        session.rollback()
+    got = client.get(f"/api/tasks/{ref}").json()
+    assert got["status"] == "in_progress" and got["evidence"] == []
+
+
 def test_the_same_evidence_through_status_then_the_route_is_stored_once(client):
     ref = made(client)
     move(client, ref, "in_progress")
@@ -313,6 +328,16 @@ def test_the_secret_alert_fires_even_when_the_request_is_refused(client, caplog,
     secret_lines = [h for h in client.get(f"/api/tasks/{ref}/history").json()
                     if h["action"] == "secret_redacted"]
     assert len(secret_lines) == 1
+
+
+def test_a_successful_secret_logs_exactly_one_alert(client, caplog):
+    ref = closed(client)
+    with caplog.at_level("WARNING", logger="nexus.tasks"):
+        res = post(client, ref, ["commit:abc2 token=" + SECRET])
+    assert res.status_code == 200
+    alerts = [r for r in caplog.records if "secret masqué" in r.getMessage()]
+    assert len(alerts) == 1
+    assert SECRET not in caplog.text and SECRET not in res.text
 
 
 def test_a_lone_surrogate_in_a_direct_call_stores_nothing_and_the_task_still_reads(client):
