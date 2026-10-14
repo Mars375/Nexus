@@ -3,7 +3,7 @@ import clsx from 'clsx'
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import { useAuth } from '@/auth'
 import type { Actor } from '@/api'
-import { ACTOR_NAME } from '@/tasks/vocabulary'
+import { actorName } from '@/tasks/vocabulary'
 
 const controlClass =
   'rounded-sm border border-line-strong bg-sunken text-ink ' +
@@ -95,22 +95,23 @@ export function Dialog({
   )
 }
 
-/** Marque d'identité d'un acteur : initiale sur sa couleur, nom complet au survol. */
+/** Identity mark of an actor: initial on their colour, full name on hover (or written out with `withName`). */
 export function AgentMark({ actor, withName = false }: { actor: Actor; withName?: boolean }) {
   const color = `var(--agent-${actor})`
+  const name = actorName(actor)
   return (
-    <span className="inline-flex items-center gap-1.5" title={ACTOR_NAME[actor]}>
+    <span className="inline-flex max-w-full min-w-0 items-center gap-1.5" title={name}>
       <span
         aria-hidden
-        className="grid size-5 place-items-center rounded-full border text-2xs font-semibold"
+        className="grid size-5 shrink-0 place-items-center rounded-full border text-2xs font-semibold"
         style={{ color, borderColor: color }}
       >
-        {ACTOR_NAME[actor][0]}
+        {name[0]}
       </span>
       {withName ? (
-        <span className="text-xs">{ACTOR_NAME[actor]}</span>
+        <span className="truncate text-xs">{name}</span>
       ) : (
-        <span className="sr-only">{ACTOR_NAME[actor]}</span>
+        <span className="sr-only">{name}</span>
       )}
     </span>
   )

@@ -3,7 +3,7 @@ import clsx from 'clsx'
 import type { Status, Task } from '@/api'
 import { formatShortDate, isOverdue } from '@/format'
 import { AgentMark } from '@/ui'
-import { PRIORITY_LABEL } from './vocabulary'
+import { PRIORITY_LABEL, actorName } from './vocabulary'
 
 type CardProps = {
   task: Task
@@ -43,7 +43,7 @@ export function TaskCardBody({ task, pendingDependencies, now, lifted }: CardPro
         </p>
       )}
       <footer className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-2xs text-muted">
-        {task.lead_agent && <AgentMark actor={task.lead_agent} />}
+        {task.lead_agent && <AgentMark actor={task.lead_agent} withName />}
         {task.collaborators.map((actor) => (
           <AgentMark key={actor} actor={actor} />
         ))}
@@ -91,7 +91,7 @@ export function TaskCard({
           'block w-full cursor-grab rounded-sm active:cursor-grabbing',
           isDragging && 'opacity-30',
         )}
-        aria-label={`${task.title} — ouvrir ou déplacer`}
+        aria-label={`${task.title} — ouvrir ou déplacer${task.lead_agent ? ` (agent principal ${actorName(task.lead_agent)})` : ''}`}
         {...attributes}
         {...listeners}
       >

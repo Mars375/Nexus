@@ -49,6 +49,11 @@ export const ACTOR_NAME: Record<Actor, string> = {
   hermes: 'Hermes',
 }
 
+/** Display name of an actor; a name the UI does not know (newer server, odd data) never crashes it. */
+export function actorName(actor: string | null | undefined): string {
+  return (actor != null && Object.hasOwn(ACTOR_NAME, actor) ? ACTOR_NAME[actor as Actor] : null) ?? 'Agent inconnu'
+}
+
 const PRIORITY_RANK: Record<Priority, number> = { critical: 0, high: 1, normal: 2, low: 3 }
 
 /** Ordre dans une colonne : opération principale, puis priorité, échéance, fraîcheur. */
