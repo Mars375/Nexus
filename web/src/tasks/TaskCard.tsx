@@ -90,6 +90,7 @@ export function TaskCard({
   // annoncer désactivé alors qu'il ouvre la tâche. Une carte close n'étale rien.
   const dragProps = closed ? {} : { ...attributes, ...listeners }
   const lead = task.lead_agent ? ` (agent principal ${actorName(task.lead_agent)})` : ''
+  const followUp = task.follows ? ` (suite de ${task.follows})` : ''
   return (
     <li>
       <button
@@ -101,7 +102,7 @@ export function TaskCard({
           !closed && 'cursor-grab active:cursor-grabbing',
           isDragging && 'opacity-30',
         )}
-        aria-label={`${task.title} — ${closed ? 'ouvrir' : 'ouvrir ou déplacer'}${lead}`}
+        aria-label={`${task.title} — ${closed ? 'ouvrir' : 'ouvrir ou déplacer'}${lead}${followUp}`}
         {...dragProps}
       >
         <TaskCardBody task={task} pendingDependencies={pendingDependencies} now={now} />

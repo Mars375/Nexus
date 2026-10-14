@@ -1,7 +1,8 @@
 import clsx from 'clsx'
 import { toast } from 'sonner'
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { ApiError, type Actor, type Priority, type Status, type Task, type TaskChanges } from '@/api'
+import { useAuth } from '@/auth'
 import { formatDateTime, isoToLocalInput, localInputToIso } from '@/format'
 import { listProvenance, type Provenanced } from '@/freshness'
 import { Provenance } from '@/Provenance'
@@ -189,9 +190,19 @@ const EVIDENCE_MAX = 512
 function EvidenceSection({ task }: { task: Task }) {
   const attach = useAttachEvidence(task.id)
   const [text, setText] = useState('')
+  // Un refus 401 n'a plus lieu d'être une fois le jeton saisi : on l'efface au déverrouillage.
+  const { locked } = useAuth()
+  const refusedAuth = attach.isError && attach.error instanceof ApiError && attach.error.status === 401
+  const unlockable = useRef(false)
+  unlockable.current = refusedAuth
+  useEffect(() => {
+    if (!locked && unlockable.current) attach.reset()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- seul le passage verrouillé -> déverrouillé compte
+  }, [locked])
   // Une preuve par ligne : une virgule appartient à la preuve (un lien peut en contenir).
   const refs = text.split('\n').map((line) => line.trim()).filter(Boolean)
-  const tooLong = refs.some((ref) => ref.length > EVIDENCE_MAX)
+  // Le serveur compte des points de code, pas des unités UTF-16 : un émoji vaut un caractère.
+  const tooLong = refs.some((ref) => [...ref].length > EVIDENCE_MAX)
 
   function submit(event: FormEvent) {
     event.preventDefault()
@@ -213,9 +224,12 @@ function EvidenceSection({ task }: { task: Task }) {
           className={inputClass}
           rows={2}
           value={text}
+          // Figé pendant l'envoi : `reset()` détacherait la requête en vol (refus perdu, texte gardé
+          // après un succès), et un succès viderait une retouche faite entre-temps.
+          readOnly={attach.isPending}
           onChange={(e) => {
             setText(e.target.value)
-            attach.reset()
+            if (!attach.isPending) attach.reset()
           }}
           placeholder="Une preuve par ligne, par exemple commit:a1b2c3d"
           aria-label="Joindre une preuve"

@@ -57,6 +57,15 @@ test('le nom accessible du bouton de la carte inclut l’agent principal', () =>
   expect(screen.getByRole('button', { name: /agent principal Helios/ })).toBeInTheDocument()
 })
 
+test('le nom accessible d’une tâche de suite dit de quelle tâche, après le préfixe « Titre — »', () => {
+  render(
+    <TaskCard task={task({ follows: 'nx-task-7', lead_agent: 'helios' })} pendingDependencies={[]} now={0} onOpen={() => {}} />,
+    { wrapper: ({ children }) => <DndContext>{children}</DndContext> },
+  )
+  const button = screen.getByRole('button', { name: /^Pont lecture — / })
+  expect(button).toHaveAccessibleName(/\(agent principal Helios\) \(suite de nx-task-7\)$/)
+})
+
 const dnd = { wrapper: ({ children }: { children: React.ReactNode }) => <DndContext>{children}</DndContext> }
 
 test('« Ensuite : » est masqué sur une tâche terminée ou abandonnée, malgré sa prochaine action', () => {

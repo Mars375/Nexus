@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import type { Actor, Priority, Task } from '@/api'
 import { localInputToIso } from '@/format'
 import { Button, Dialog, Field, inputClass } from '@/ui'
@@ -36,6 +36,12 @@ export function CreateTaskDialog({
 }) {
   const create = useCreateTask()
   const key = follows ?? ''
+  // Ce que la boîte montre maintenant : la réponse d'un envoi ne ferme que la boîte encore ouverte
+  // sur sa cible (Loïc a pu annuler, puis ouvrir une autre création, avant la réponse).
+  const shown = useRef({ open, key })
+  useEffect(() => {
+    shown.current = { open, key }
+  })
   const [drafts, setDrafts] = useState<Record<string, Form>>({})
   const form = drafts[key] ?? EMPTY
   const set = <K extends keyof Form>(field: K, value: Form[K]) =>
@@ -68,7 +74,7 @@ export function CreateTaskDialog({
             delete next[sentKey]
             return next
           })
-          onOpenChange(false)
+          if (shown.current.open && shown.current.key === sentKey) onOpenChange(false)
         },
       },
     )

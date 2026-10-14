@@ -55,7 +55,7 @@ export function MoveDialog({
       if (iso) change.follow_up_at = iso
     }
     if (needs.reason) change.reason = reason.trim()
-    const refs = evidence.split(/[\n,]/).map((s) => s.trim()).filter(Boolean)
+    const refs = evidence.split('\n').map((s) => s.trim()).filter(Boolean)
     if (refs.length) change.evidence = refs
     move.mutate({ id: task.id, change })
     onClose()

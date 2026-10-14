@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { Task } from '@/api'
 import { MoveDialog } from './MoveDialog'
@@ -30,7 +30,10 @@ test('le passage reste possible tant que la tâche courante le permet', () => {
   expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 })
 
-test('la tâche est terminée pendant que la boîte est ouverte : message, envoi désactivé, rien n’est envoyé', () => {
+/** `useMoveTask` attend `cancelQueries` avant `fetch` : on laisse passer ce délai avant de conclure « rien envoyé ». */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 30))
+
+test('la tâche est terminée pendant que la boîte est ouverte : message, envoi désactivé, rien n’est envoyé', async () => {
   const fetchMock = vi.fn(async () => Response.json({}))
   vi.stubGlobal('fetch', fetchMock)
   // La boîte garde la copie reçue à l'ouverture (glisser) ; `all` porte la tâche à jour.
@@ -43,7 +46,20 @@ test('la tâche est terminée pendant que la boîte est ouverte : message, envoi
   const send = screen.getByRole('button', { name: 'Déplacer en bloqué' })
   expect(send).toBeDisabled()
   fireEvent.submit(container.ownerDocument.querySelector('form')!)
+  await settle()
   expect(fetchMock).not.toHaveBeenCalled()
+})
+
+test('les preuves se séparent par ligne : une virgule appartient à la preuve', async () => {
+  const fetchMock = vi.fn(async () => Response.json(TASK))
+  vi.stubGlobal('fetch', fetchMock)
+  render(dialog(TASK, 'done', [TASK]))
+  fireEvent.change(screen.getByPlaceholderText('commit:a1b2c3d'), { target: { value: 'commit:a1\nhttps://example.test/a,b\n\n' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Déplacer en terminé' }))
+  await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+  const calls = fetchMock.mock.calls as unknown as [string, RequestInit][]
+  const move = calls.find(([, init]) => init?.body)!
+  expect(JSON.parse(String(move[1].body)).evidence).toEqual(['commit:a1', 'https://example.test/a,b'])
 })
 
 test('la boîte se met à jour avec la tâche : terminée pendant la saisie, elle se désactive', () => {

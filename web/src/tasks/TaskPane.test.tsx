@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { Task } from '@/api'
+import { markUnlocked } from '@/auth'
 import { TaskPane } from './TaskPane'
 
 const TASK: Task = {
@@ -42,7 +43,10 @@ function renderPane(client = new QueryClient({ defaultOptions: { queries: { retr
   return client
 }
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  markUnlocked()
+})
 
 test('un premier chargement raté des détails le dit, au lieu d’une section vide', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response('boom', { status: 500 })))
@@ -341,6 +345,71 @@ test('une preuve refusée (déjà jointe par un agent) s’affiche sous le formu
   // Retoucher le texte efface le message périmé.
   fireEvent.change(field, { target: { value: 'commit:abcd' } })
   expect(screen.queryByText('evidence : déjà jointe à la tâche')).not.toBeInTheDocument()
+})
+
+test('retoucher le texte pendant l’envoi ne cache pas le refus du serveur', async () => {
+  let answer!: (res: Response) => void
+  stubApi((_url, init) =>
+    init?.method === 'POST' ? new Promise<Response>((resolve) => (answer = resolve)) : Response.json([]),
+  )
+  render(paneFor(DONE, [DONE], newClient()))
+  const field = screen.getByLabelText('Joindre une preuve')
+  const button = screen.getByRole('button', { name: 'Joindre' })
+  fireEvent.change(field, { target: { value: 'commit:abc' } })
+  fireEvent.click(button)
+  await waitFor(() => expect(button).toBeDisabled())
+
+  // Le texte est figé pendant l'envoi ; une retouche ne détache pas la requête en vol.
+  expect(field).toHaveAttribute('readonly')
+  fireEvent.change(field, { target: { value: 'commit:abcd' } })
+  expect(button).toBeDisabled()
+
+  answer(new Response(JSON.stringify({ detail: { code: 'evidence_unchanged', message: 'evidence : déjà jointe à la tâche' } }), { status: 409 }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('evidence : déjà jointe à la tâche')
+  expect(button).toBeEnabled()
+})
+
+test('la longueur d’une preuve compte des caractères, pas des unités UTF-16', () => {
+  stubApi()
+  render(paneFor(DONE, [DONE], newClient()))
+  const field = screen.getByLabelText('Joindre une preuve')
+  const button = screen.getByRole('button', { name: 'Joindre' })
+  // 512 émojis = 1024 unités UTF-16, mais 512 caractères pour le serveur.
+  fireEvent.change(field, { target: { value: '😀'.repeat(512) } })
+  expect(button).toBeEnabled()
+  fireEvent.change(field, { target: { value: '😀'.repeat(513) } })
+  expect(button).toBeDisabled()
+  expect(screen.getByText(/512 caractères/)).toBeInTheDocument()
+})
+
+test('un agent joint une preuve pendant que Loïc tape la sienne : son texte reste', () => {
+  stubApi()
+  const client = newClient()
+  const { rerender } = render(paneFor(DONE, [DONE], client))
+  const field = screen.getByLabelText('Joindre une preuve')
+  fireEvent.change(field, { target: { value: 'commit:def' } })
+
+  const richer = { ...DONE, evidence: ['commit:abc', 'pr:12'], updated_at: '2026-09-28T11:00:00+02:00' }
+  rerender(paneFor(richer, [richer], client))
+  expect(screen.getByText('pr:12')).toBeInTheDocument()
+  expect(screen.getByLabelText('Joindre une preuve')).toHaveValue('commit:def')
+})
+
+test('le refus 401 de « Joindre » disparaît au déverrouillage, texte gardé', async () => {
+  stubApi((_url, init) =>
+    init?.method === 'POST'
+      ? new Response(JSON.stringify({ detail: { code: 'auth_required', message: 'Jeton requis.' } }), { status: 401 })
+      : Response.json([]),
+  )
+  render(paneFor(DONE, [DONE], newClient()))
+  const field = screen.getByLabelText('Joindre une preuve')
+  fireEvent.change(field, { target: { value: 'commit:abc' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Joindre' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('Jeton requis.')
+
+  act(() => markUnlocked())
+  await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+  expect(field).toHaveValue('commit:abc')
 })
 
 test('une tâche terminée n’a ni « Retirer » ni sélecteur de dépendance', () => {

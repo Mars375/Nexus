@@ -58,7 +58,9 @@ export function Board({ tasks, allTasks, statuses, onOpen }: Props) {
   }
 
   function onDragEnd(event: DragEndEvent) {
-    const task = dragged
+    // La copie prise au début du glisser a pu vieillir (agent, autre fenêtre) : on relit la tâche
+    // courante, comme MoveDialog, et on abandonne si elle a disparu.
+    const task = allTasks.find((t) => t.id === dragged?.id)
     setDragged(null)
     const to = event.over?.id as Status | undefined
     if (!task || !to || to === task.status) return
