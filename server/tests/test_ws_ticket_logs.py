@@ -84,7 +84,10 @@ def test_no_ticket_or_cursor_reaches_debug_or_trace_logs(settings, isolated_logg
         assert bad.startswith("HTTP/1.1 400"), bad.splitlines()[:1]
         # Documented exception to ADR-006 (spec 3.6): the 400 body echoes the header to its
         # sender. If websockets stops doing so, the note must be reviewed.
-        assert fresh in bad
+        assert fresh in bad, (
+            "websockets no longer echoes the header in its 400 body: re-evaluate this expectation "
+            "and update the ADR-006 exception note in DECISIONS.md"
+        )
         # That refusal did not spend the ticket.
         good = raw_handshake(port, f"localhost:{port}", f"{LIVE_PROTOCOL}, {fresh}")
         assert good.startswith("HTTP/1.1 101"), good.splitlines()[:1]
