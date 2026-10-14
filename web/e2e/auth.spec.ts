@@ -161,8 +161,14 @@ test('un jeton révoqué pendant que l’interface est ouverte la verrouille et 
   await expect(page.getByText('Temps réel : connecté')).toBeVisible()
   expect(closed).toBe(false)
 
+  // Only the request that still carried the revoked token: a periodic REST call may get its own 401 first,
+  // clear the token and lock the UI, and the next ticket request would then leave without any token.
   const refused = page.waitForResponse(
-    (r) => new URL(r.url()).pathname === '/api/ws-ticket' && r.request().method() === 'POST' && r.status() === 401,
+    (r) =>
+      new URL(r.url()).pathname === '/api/ws-ticket' &&
+      r.request().method() === 'POST' &&
+      r.request().headers()['authorization'] !== undefined &&
+      r.status() === 401,
   )
   nexusToken('revoke', /nx-tok-[0-9]+/.exec(issued.stderr)![0])
 
