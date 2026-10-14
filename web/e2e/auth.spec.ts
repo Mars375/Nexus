@@ -156,7 +156,10 @@ test('un jeton révoqué pendant que l’interface est ouverte la verrouille et 
   const live = issued.stdout.trim()
   await page.addInitScript(([key, token]) => localStorage.setItem(key, token), [TOKEN_KEY, live])
   let closed = false
-  page.on('websocket', (ws) => ws.on('close', () => (closed = true)))
+  // Only the Nexus socket: Vite's dev server keeps its own HMR WebSocket on the page.
+  page.on('websocket', (ws) => {
+    if (new URL(ws.url()).pathname === '/api/ws') ws.on('close', () => (closed = true))
+  })
   await page.goto('/#/travail')
   await expect(page.getByText('Temps réel : connecté')).toBeVisible()
   expect(closed).toBe(false)

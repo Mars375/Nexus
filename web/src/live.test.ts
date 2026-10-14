@@ -624,7 +624,8 @@ describe('ticket WebSocket (#57)', () => {
     await h.unlock()
     expect(h.signals).toHaveLength(1)
     expect(h.sockets).toHaveLength(1)
-    // attempt was reset: the next fallback wait is the first one (500 ms with neutral random)
+    // the first fallback wait after the unlock is 500 ms with neutral random (the reset of attempt itself
+    // is proven by the test above, where attempt is 1 before the unlock)
     h.drop()
     await vi.advanceTimersByTimeAsync(499)
     expect(h.sockets).toHaveLength(1)

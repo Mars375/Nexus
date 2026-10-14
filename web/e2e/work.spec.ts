@@ -244,7 +244,10 @@ test('après une coupure, la reconnexion rattrape ce qui a changé', async ({ pa
   let blocked = false
   const live: { current: { page: WebSocketRoute; server: WebSocketRoute } | null } = { current: null }
   const urls: string[] = []
-  page.on('websocket', (ws) => urls.push(ws.url()))
+  // Only the Nexus socket: Vite's dev server keeps its own HMR WebSocket on the page.
+  page.on('websocket', (ws) => {
+    if (new URL(ws.url()).pathname === '/api/ws') urls.push(ws.url())
+  })
   await page.routeWebSocket(/\/api\/ws/, (ws) => {
     if (blocked) {
       void ws.close({ code: 1011, reason: 'coupure simulée' })
