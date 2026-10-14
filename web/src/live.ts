@@ -156,6 +156,12 @@ export function connectLive(options: {
   }
 
   const connect = async () => {
+    if (options.isLocked()) {
+      // Locked (the server refused our token): a ticket request would only repeat the 401.
+      // Wait for the unlock.
+      waitingUnlock = true
+      return
+    }
     // A handshake that never completes (ticket request included) is treated as silence (45 s),
     // then retried.
     armSilence()

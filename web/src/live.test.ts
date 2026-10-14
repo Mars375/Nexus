@@ -16,6 +16,8 @@ type Fake = LiveSocket & { url: string; protocols: string[]; closed: boolean }
 type HarnessOptions = {
   ticket?: (signal: AbortSignal) => Promise<string>
   locked?: boolean
+  /** The app becomes locked while the first ticket request is in flight (a REST 401 elsewhere). */
+  lockOnTicket?: boolean
 }
 
 /** A fresh, distinct ticket per call, built at runtime. */
@@ -35,6 +37,7 @@ async function harness(options: HarnessOptions = {}) {
   const stop = connectLive({
     ticket: (signal) => {
       signals.push(signal)
+      if (options.lockOnTicket) lock.locked = true
       return issue(signal)
     },
     isLocked: () => lock.locked,
@@ -563,9 +566,18 @@ describe('ticket WebSocket (#57)', () => {
     }
   })
 
-  test("un 401 alors que l'application est verrouillée : aucune socket, aucune nouvelle demande", async () => {
+  test("application déjà verrouillée : aucune demande de ticket, aucune socket, même longtemps après", async () => {
+    const h = await harness({ locked: true })
+    expect(h.signals).toHaveLength(0)
+    expect(h.sockets).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(h.signals).toHaveLength(0)
+    expect(h.sockets).toHaveLength(0)
+  })
+
+  test("verrouillée pendant la demande (401) : aucune socket, aucune nouvelle demande", async () => {
     const h = await harness({
-      locked: true,
+      lockOnTicket: true,
       ticket: () => Promise.reject(refused401()),
     })
     expect(h.sockets).toHaveLength(0)
@@ -574,18 +586,25 @@ describe('ticket WebSocket (#57)', () => {
     expect(h.signals).toHaveLength(1)
   })
 
-  test('au déverrouillage, une demande immédiate et les essais repartent de zéro', async () => {
-    let calls = 0
-    const h = await harness({
-      locked: true,
-      ticket: (signal) => {
-        calls += 1
-        return calls <= 1 ? Promise.reject(refused401()) : numberedTickets()(signal)
-      },
-    })
-    expect(h.sockets).toHaveLength(0)
+  test("une perte de connexion alors que l'application est verrouillée : aucune demande avant le déverrouillage", async () => {
+    const h = await harness()
+    h.up()
+    h.lock.locked = true // a REST call got its 401 and locked the app
+    h.drop()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(h.signals).toHaveLength(1) // only the first connection's request
+    expect(h.sockets).toHaveLength(1)
     await h.unlock()
     expect(h.signals).toHaveLength(2)
+    expect(h.sockets).toHaveLength(2)
+  })
+
+  test('au déverrouillage, une demande immédiate et les essais repartent de zéro', async () => {
+    const h = await harness({ locked: true })
+    expect(h.signals).toHaveLength(0)
+    expect(h.sockets).toHaveLength(0)
+    await h.unlock()
+    expect(h.signals).toHaveLength(1)
     expect(h.sockets).toHaveLength(1)
     // attempt was reset: the next fallback wait is the first one (500 ms with neutral random)
     h.drop()

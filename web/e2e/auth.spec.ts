@@ -161,23 +161,19 @@ test('un jeton révoqué pendant que l’interface est ouverte la verrouille et 
   await expect(page.getByText('Temps réel : connecté')).toBeVisible()
   expect(closed).toBe(false)
 
-  // Two responses are certain to come, in either order: the first 401 for the revoked token (the next
-  // REST refresh or the ticket request, whichever leaves first), then a refused ticket request. If a REST
-  // 401 comes first, it clears the token and locks the UI, and the ticket request leaves without a token.
+  // The first 401 on the revoked token comes either from the next REST refresh or from the ticket request,
+  // whichever leaves first. A REST 401 clears the token and locks the UI, and a locked UI sends no ticket
+  // request at all: so this is the only response the test can wait for in both orders.
   const revokedRefused = page.waitForResponse(
     (r) =>
       new URL(r.url()).pathname.startsWith('/api/') &&
       r.status() === 401 &&
       r.request().headers()['authorization'] === `Bearer ${live}`,
   )
-  const ticketRefused = page.waitForResponse(
-    (r) => new URL(r.url()).pathname === '/api/ws-ticket' && r.request().method() === 'POST' && r.status() === 401,
-  )
   nexusToken('revoke', /nx-tok-[0-9]+/.exec(issued.stderr)![0])
 
   await expect.poll(() => closed).toBe(true) // the server closed the socket (4401)
   expect((await (await revokedRefused).json()).detail.code).toBe('invalid_token')
-  await ticketRefused // the next ticket request is refused too (invalid_token, or auth_required once locked)
   await expect(lockTitle(page)).toBeVisible()
   expect(await stored(page)).toBeNull()
 })
