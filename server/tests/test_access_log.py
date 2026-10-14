@@ -9,7 +9,12 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from nexus import logs
-from nexus.logs import AccessLogMiddleware, WebSocketPathFilter, uvicorn_log_config
+from nexus.logs import (
+    AccessLogMiddleware,
+    WebSocketPathFilter,
+    WebSocketSecretFilter,
+    uvicorn_log_config,
+)
 
 SECRET = "ghp_" + "A" * 36  # fabriqué à l'exécution : jamais un vrai secret dans le dépôt
 
@@ -271,7 +276,12 @@ def test_log_config_protects_every_handler_and_preserves_existing_filters(monkey
     assert config["filters"]["existing"] == {"()": logging.Filter}
     for configured_handler in config["handlers"].values():
         assert configured_handler["filters"].count("websocket_path") == 1
-    assert config["handlers"]["extra"]["filters"] == ["existing", "websocket_path"]
+    assert config["filters"]["websocket_secrets"]["()"] is WebSocketSecretFilter
+    for configured_handler in config["handlers"].values():
+        assert configured_handler["filters"].count("websocket_secrets") == 1
+    assert config["handlers"]["extra"]["filters"] == [
+        "existing", "websocket_path", "websocket_secrets",
+    ]
     assert config["loggers"]["nexus"] == {
         "handlers": ["default"], "level": "INFO", "propagate": False,
     }
@@ -318,3 +328,98 @@ def test_an_unknown_http_method_is_never_copied_into_the_log(method, http_scope,
     (line,) = access_lines(caplog)
     assert line.startswith(f"{logs.UNKNOWN_METHOD} ")
     assert SECRET not in line
+
+
+# --- WebSocket secrets in DEBUG and TRACE records (#57) ---
+
+
+def _record(msg, *args, name="uvicorn.error", exc_info=None, level=logging.DEBUG):
+    return logging.LogRecord(name, level, __file__, 0, msg, args or None, exc_info)
+
+
+def _ticket():
+    return "nxw_" + "A" * 43  # built at runtime
+
+
+@pytest.mark.parametrize(("fmt", "args"), [
+    ("< %s %s %s", ("GET", "/api/ws?history_after=987654321098", "HTTP/1.1")),
+    ("< %s: %s", ("Sec-WebSocket-Protocol", "nexus.live.v1, TICKET")),
+    ("> %s: %s", ("Sec-WebSocket-Protocol", "TICKET")),
+    ("< %s", ("Frame(opcode=TEXT, data=TICKET)",)),
+    ("> %s", ("Frame(opcode=TEXT, data=TICKET)",)),
+])
+def test_websocket_headers_request_line_and_frames_are_masked(fmt, args):
+    ticket = _ticket()
+    args = tuple(a.replace("TICKET", ticket) for a in args)
+    record = _record(fmt, *args)
+    assert WebSocketSecretFilter().filter(record) is True
+    assert record.args == ("<masqué>",) * len(args)
+    message = record.getMessage()
+    assert ticket not in message and "987654321098" not in message
+
+
+@pytest.mark.parametrize(("fmt", "args"), [
+    ("> HTTP/1.1 %d %s", (403, "Forbidden")),
+    ("> [body] (%d bytes)", (12,)),
+])
+def test_status_and_body_length_stay_readable(fmt, args):
+    record = _record(fmt, *args)
+    assert WebSocketSecretFilter().filter(record) is True
+    assert record.args == args
+
+
+@pytest.mark.parametrize("message", [
+    "! invalid handshake", "! invalid origin", "! header fields too large",
+    "! no valid HTTP request", "! request line too long", "opening handshake failed",
+])
+def test_handshake_refusals_lose_their_traceback(message):
+    ticket = _ticket()
+    try:
+        raise ValueError(f"invalid Sec-WebSocket-Protocol: nexus.live.v1 {ticket}")
+    except ValueError:
+        import sys
+
+        record = _record(message, exc_info=sys.exc_info())
+    record.exc_text = f"Traceback ... {ticket}"
+    record.stack_info = f"stack {ticket}"
+    flt = WebSocketSecretFilter()
+    assert flt.filter(record) is True
+    assert flt.filter(record) is True  # idempotent
+    assert record.exc_info is None and record.exc_text is None and record.stack_info is None
+    assert record.getMessage() == message + " (détail masqué)"
+    formatted = logging.Formatter("%(message)s").format(record)
+    assert "Traceback" not in formatted and ticket not in formatted
+
+
+def test_uvicorn_scope_and_asgi_messages_are_reduced():
+    ticket = _ticket()
+    scope = {"type": "websocket", "subprotocols": ["nexus.live.v1", ticket],
+             "query_string": b"history_after=987654321098"}
+    started = _record("%s [%d] Started scope=%s", "ws", 3, scope, name="uvicorn.asgi")
+    WebSocketSecretFilter().filter(started)
+    assert started.getMessage() == "ws [3] Started scope=<scope masqué>"
+    for fmt in ("%s [%d] Receive %s", "%s [%d] Send %s"):
+        message = {"type": "websocket.connect", "subprotocol": ticket, "text": "<9 chars>"}
+        record = _record(fmt, "ws", 3, message, name="uvicorn.asgi")
+        WebSocketSecretFilter().filter(record)
+        assert record.args[2] == {"type": "websocket.connect"}
+        assert ticket not in record.getMessage()
+
+
+def test_the_asgi_family_is_only_recognised_on_the_asgi_logger():
+    message = {"type": "x", "text": "keep"}
+    record = _record("%s [%d] Receive %s", "ws", 3, message, name="uvicorn.error")
+    WebSocketSecretFilter().filter(record)
+    assert record.args == ("ws", 3, message)
+
+
+@pytest.mark.parametrize(("fmt", "args"), [
+    ("Serving directory %s", ("/srv/nexus",)),
+    ("connection open", ()),
+    ("= connection is %s", ("OPEN",)),
+])
+def test_unrelated_records_are_not_touched_by_the_secret_filter(fmt, args):
+    record = _record(fmt, *args)
+    msg, kept = record.msg, record.args
+    assert WebSocketSecretFilter().filter(record) is True
+    assert record.msg is msg and record.args == kept

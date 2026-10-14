@@ -1,12 +1,22 @@
 """Contrôle de l'en-tête Host contre le DNS rebinding (#16, ADR-020, D6)."""
 
 import pytest
-from conftest import ActorClient, tailscale_json
+from conftest import (
+    ActorClient,
+    issue_ticket_http,
+    issue_token,
+    raw_handshake,
+    serve_real,
+    stop_real,
+    tailscale_json,
+    ws_connect,
+)
 from starlette.websockets import WebSocketDisconnect
 
 from nexus.app import create_app
 from nexus.config import Settings
 from nexus.hosts import host_allowed
+from nexus.live import LIVE_PROTOCOL
 
 EVIL = "evil.example"
 
@@ -72,12 +82,12 @@ def test_testserver_is_refused(settings):
 
 def test_websocket_refuses_a_foreign_host(client):
     with pytest.raises(WebSocketDisconnect):
-        with client.websocket_connect("/api/ws", headers={"host": EVIL}):
+        with ws_connect(client, headers={"host": EVIL}):
             pass
 
 
 def test_websocket_admits_loopback_hosts(client):
-    with client.websocket_connect("/api/ws", headers={"host": "[::1]:8765"}) as ws:
+    with ws_connect(client, headers={"host": "[::1]:8765"}) as ws:
         assert ws.receive_json()["type"] == "hello"
 
 
@@ -152,58 +162,16 @@ def test_two_host_headers_in_different_cases_are_refused():
     assert not reached and sent[0]["status"] == 400
 
 
-def _serve(app):
-    """Runs a real uvicorn server on a free loopback port; returns (server, thread, port)."""
-    import threading
-    import time
-
-    import uvicorn
-
-    # log_config=None keeps the session's logging untouched (no dictConfig of uvicorn loggers).
-    config = uvicorn.Config(app, host="127.0.0.1", port=0, log_config=None, access_log=False)
-    server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    deadline = time.monotonic() + 10
-    while not server.started:
-        if not thread.is_alive() or time.monotonic() > deadline:
-            _stop(server, thread)
-            raise AssertionError("uvicorn did not start")
-        time.sleep(0.02)
-    return server, thread, server.servers[0].sockets[0].getsockname()[1]
-
-
-def _stop(server, thread):
-    server.should_exit = True
-    thread.join(timeout=10)
-    assert not thread.is_alive(), "uvicorn did not stop"
-
-
-def _handshake(port, host):
-    import base64
-    import os
-    import socket
-
-    key = base64.b64encode(os.urandom(16)).decode()  # a fresh nonce, as a real client sends
-    request = (
-        "GET /api/ws HTTP/1.1\r\n"
-        f"Host: {host}\r\n"
-        "Upgrade: websocket\r\nConnection: Upgrade\r\n"
-        f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n"
-        "Origin: http://localhost:5173\r\n\r\n"
-    )
-    with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
-        sock.sendall(request.encode("latin-1"))
-        return sock.recv(4096).decode("latin-1")
-
-
 def test_a_real_server_answers_403_to_a_websocket_with_a_foreign_host(settings):
     """The middleware closes with 1008 before accept: the client sees HTTP 403 (SECURITY §3)."""
-    server, thread, port = _serve(create_app(settings, nodes_runner=tailscale_json))
+    app = create_app(settings, nodes_runner=tailscale_json)
+    server, thread, port = serve_real(app)
     try:
-        refused = _handshake(port, EVIL)
-        admitted = _handshake(port, f"localhost:{port}")
+        token = issue_token(app)
+        protocols = f"{LIVE_PROTOCOL}, {issue_ticket_http(port, token)}"
+        refused = raw_handshake(port, EVIL, protocols)
+        admitted = raw_handshake(port, f"localhost:{port}", protocols)
     finally:
-        _stop(server, thread)
+        stop_real(server, thread)
     assert refused.startswith("HTTP/1.1 403"), refused.splitlines()[:1]
     assert admitted.startswith("HTTP/1.1 101"), admitted.splitlines()[:1]

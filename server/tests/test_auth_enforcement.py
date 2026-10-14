@@ -1,17 +1,20 @@
 """Jeton exigé partout (#16, ADR-020, D5/D7/D8/D9) et invariant de couverture des routes."""
 
+import pytest
 from conftest import tailscale_json
 from fastapi import APIRouter, FastAPI
 from fastapi.routing import APIRoute, APIWebSocketRoute
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from nexus import actors
 from nexus.app import create_app
 
 AT = "2026-09-28T09:05:00+02:00"
-# Les seules routes sans jeton : l'état du serveur, le WebSocket (Origin et Host seulement, D5)
-# et la documentation OpenAPI servie par FastAPI (aucune donnée de Nexus).
+# Les seules routes sans jeton : l'état du serveur et la documentation OpenAPI servie par
+# FastAPI (aucune donnée de Nexus). Le WebSocket exige un ticket à usage unique (#57) : sans
+# ticket, la connexion est refusée avant l'acceptation.
 OPEN_REST = {("GET", "/api/health")}
-OPEN_WEBSOCKETS = {"/api/ws"}
+OPEN_WEBSOCKETS: set[str] = set()
 OPEN_STATIC = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
 
 
@@ -45,6 +48,17 @@ def fill(path):
     return path
 
 
+def websocket_refused(client, path) -> bool:
+    """True when a connection without any ticket is closed with 1008 before being accepted."""
+    try:
+        with client.websocket_connect(fill(path)):
+            return False  # accepted: the route is open
+    except WebSocketDisconnect as closed:
+        return closed.code == 1008
+    except Exception:
+        return False
+
+
 def unauthenticated_routes(app: FastAPI, client) -> list[str]:
     """Routes qui répondent sans jeton, hors liste blanche (vide si tout est verrouillé)."""
     offenders = []
@@ -58,7 +72,7 @@ def unauthenticated_routes(app: FastAPI, client) -> list[str]:
                 if not ok:
                     offenders.append(f"{method} {path} → {res.status_code}")
         elif isinstance(route, APIWebSocketRoute):
-            if path not in OPEN_WEBSOCKETS:
+            if path not in OPEN_WEBSOCKETS and not websocket_refused(client, path):
                 offenders.append(f"WS {path}")
         elif path not in OPEN_STATIC:
             offenders.append(f"{type(route).__name__} {path}")
@@ -75,7 +89,7 @@ def test_the_walker_sees_every_router(anonymous):
     for expected in [
         ("GET", "/api/health"), ("GET", "/api/nodes"), ("GET", "/api/now"),
         ("POST", "/api/tasks"), ("POST", "/api/events"),
-        ("POST", "/api/approvals/{approval_ref}/answer"),
+        ("POST", "/api/approvals/{approval_ref}/answer"), ("POST", "/api/ws-ticket"),
     ]:
         assert expected in seen, expected
     assert any(isinstance(r, APIWebSocketRoute) for _, r in flat_routes(anonymous.app.routes))
@@ -91,7 +105,8 @@ def test_a_route_added_without_a_token_fails_the_invariant(settings, tmp_path):
         return {}
 
     @app.websocket("/api/oops-ws")
-    async def oops_ws(websocket) -> None: ...
+    async def oops_ws(websocket: WebSocket) -> None:
+        await websocket.accept()  # an open route: accepted without any ticket
 
     app.mount("/static-oops", FastAPI())
     v2 = APIRouter()
@@ -162,6 +177,8 @@ def test_nothing_is_written_by_a_refused_tokenless_request(anonymous, client):
     assert client.get("/api/tasks").json() == []
 
 
-def test_the_websocket_keeps_origin_and_host_checks_only(anonymous):
-    with anonymous.websocket_connect("/api/ws") as ws:
-        assert ws.receive_json()["type"] == "hello"
+def test_the_websocket_requires_a_ticket(anonymous):
+    with pytest.raises(WebSocketDisconnect) as closed:
+        with anonymous.websocket_connect("/api/ws"):
+            pass
+    assert closed.value.code == 1008 and closed.value.reason == ""

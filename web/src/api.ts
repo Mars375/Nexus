@@ -311,6 +311,35 @@ export const nowApi = {
   get: (signal?: AbortSignal) => request<NowSnapshot>('/api/now', { signal }),
 }
 
+/** WebSocket subprotocol offered next to the ticket (server/src/nexus/live.py). */
+export const LIVE_PROTOCOL = 'nexus.live.v1'
+
+/** `nxw_` followed by 43 base64url characters, as `nexus.auth.tickets` issues them (#57). */
+const TICKET_FORMAT = /^nxw_[A-Za-z0-9_-]{43}$/
+
+export const liveApi = {
+  /**
+   * A single-use ticket for the next WebSocket connection (30 s, bound to the token that asked).
+   * The answer is validated before use; nothing of a malformed one is copied into the error.
+   */
+  ticket: async (signal: AbortSignal): Promise<string> => {
+    const body = await request<unknown>('/api/ws-ticket', { method: 'POST', signal })
+    if (
+      typeof body === 'object' &&
+      body !== null &&
+      !Array.isArray(body) &&
+      'ticket' in body &&
+      typeof body.ticket === 'string' &&
+      TICKET_FORMAT.test(body.ticket) &&
+      'protocol' in body &&
+      body.protocol === LIVE_PROTOCOL
+    ) {
+      return body.ticket
+    }
+    throw new Error('réponse de ticket inattendue')
+  },
+}
+
 export const nodesApi = {
   list: (signal?: AbortSignal) => request<NodeState[]>('/api/nodes', { signal }),
 }

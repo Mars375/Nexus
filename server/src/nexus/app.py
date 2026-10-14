@@ -21,6 +21,7 @@ from nexus import now as now_view
 from nexus.approvals import api as approvals_api
 from nexus.approvals.service import ApprovalNotFound
 from nexus.auth.deps import Authenticated
+from nexus.auth.tickets import TicketStore
 from nexus.clock import now
 from nexus.config import Settings
 from nexus.db import make_engine
@@ -99,6 +100,8 @@ def create_app(
         # Random per process, derived from nothing: a cursor from another run (restart, restored
         # base) is never trusted by the live endpoint (#25).
         app.state.live_instance = token_hex(8)
+        # Same lifetime as the instance: a ticket from a previous run is refused (#57).
+        app.state.ws_tickets = TicketStore()
         app.state.engine = make_engine(settings.db_url)
         app.state.sessionmaker = sessionmaker(app.state.engine, expire_on_commit=False)
         if not before_migration:
@@ -132,7 +135,8 @@ def create_app(
     app.include_router(events_api.router)
     app.include_router(approvals_api.router)
     app.include_router(now_view.router)
-    app.include_router(live.router)  # sans jeton : Origin et Host seulement (ADR-020, D5)
+    # WebSocket: single-use ticket (#57); POST /api/ws-ticket itself requires a token.
+    app.include_router(live.router)
 
     @app.exception_handler(RequestValidationError)
     def _invalid(_request: Request, exc: RequestValidationError) -> JSONResponse:

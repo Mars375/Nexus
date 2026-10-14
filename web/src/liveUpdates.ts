@@ -1,5 +1,7 @@
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
+import { liveApi } from './api'
+import { getAuthState, subscribe } from './auth'
 import { connectLive, type LiveMessage, type LiveState } from './live'
 import { tasksKey } from './tasks/queries'
 import { nowKey } from './now/queries'
@@ -117,7 +119,14 @@ export function useLiveUpdates(): LiveState {
   useEffect(() => {
     const batcher = createLiveBatcher(client) // per effect run: remounts start fresh
     const stop = connectLive({
-      open: (url) => new WebSocket(url),
+      open: (url, protocols) => new WebSocket(url, protocols),
+      ticket: liveApi.ticket,
+      isLocked: () => getAuthState().locked,
+      // Any unlock goes through `markUnlocked()`, another tab's included.
+      onUnlock: (listener) =>
+        subscribe(() => {
+          if (!getAuthState().locked) listener()
+        }),
       onMessage: batcher.push,
       onState: setState,
     })

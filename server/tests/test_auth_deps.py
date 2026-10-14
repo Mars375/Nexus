@@ -1,8 +1,10 @@
 """Authentification par jeton porteur (#16, ADR-020) : lecture du jeton, 401 et 403 d'identité."""
 
 import logging
+from typing import Annotated
 
 import pytest
+from fastapi import Depends
 from sqlalchemy import select
 
 from nexus.auth import tokens
@@ -195,3 +197,45 @@ def test_a_token_pasted_in_an_event_is_redacted(client):
     assert SECRET_FREE_TOKEN not in res.text
     assert res.status_code == 201
     assert "actor_token" in res.json()["redacted"]
+
+
+def _identity_client(client):
+    from fastapi import APIRouter
+
+    from nexus.auth.deps import TokenIdentity, authenticated_token
+
+    router = APIRouter()
+
+    @router.get("/api/_identity")
+    def identity(who: Annotated[TokenIdentity, Depends(authenticated_token)]) -> dict:
+        return {"token_id": who.token_id, "actor": who.actor}
+
+    client.app.include_router(router)
+    return client
+
+
+def test_authenticated_token_gives_token_id_and_actor(client):
+    _identity_client(client)
+    token, token_id = issue(client, "codex")
+    res = client.get("/api/_identity", headers=bearer(token))
+    assert res.status_code == 200
+    assert res.json() == {"token_id": token_id, "actor": "codex"}
+
+
+def test_authenticated_token_refuses_like_authenticated_actor(client):
+    _identity_client(client)
+    token, token_id = issue(client, "codex")
+    res = client.get("/api/_identity", headers={"Authorization": "Bearer"})
+    assert res.status_code == 401 and res.json()["detail"]["code"] == "auth_required"
+    unknown = "nxt_" + "B" * 43
+    res = client.get("/api/_identity", headers=bearer(unknown))
+    assert res.status_code == 401 and res.json()["detail"]["code"] == "invalid_token"
+    assert unknown not in res.text
+    res = client.get("/api/_identity", headers=bearer(token) | {"X-Nexus-Actor": "loic"})
+    assert res.status_code == 403 and res.json()["detail"]["code"] == "actor_mismatch"
+    with client.app.state.sessionmaker() as s:
+        s.get(tokens.ActorToken, token_id).revoked_at = now()
+        s.commit()
+    res = client.get("/api/_identity", headers=bearer(token))
+    assert res.status_code == 401 and res.json()["detail"]["code"] == "invalid_token"
+    assert token not in res.text

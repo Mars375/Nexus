@@ -151,6 +151,27 @@ test('un jeton stocké puis révoqué : 401 invalid_token, jeton oublié, écran
   expect(await stored(page)).toBeNull()
 })
 
+test('un jeton révoqué pendant que l’interface est ouverte la verrouille et ferme le temps réel', async ({ page }) => {
+  const issued = nexusToken('issue', 'loic', '--label', 'revoque-en-direct')
+  const live = issued.stdout.trim()
+  await page.addInitScript(([key, token]) => localStorage.setItem(key, token), [TOKEN_KEY, live])
+  let closed = false
+  page.on('websocket', (ws) => ws.on('close', () => (closed = true)))
+  await page.goto('/#/travail')
+  await expect(page.getByText('Temps réel : connecté')).toBeVisible()
+  expect(closed).toBe(false)
+
+  const refused = page.waitForResponse(
+    (r) => new URL(r.url()).pathname === '/api/ws-ticket' && r.request().method() === 'POST' && r.status() === 401,
+  )
+  nexusToken('revoke', /nx-tok-[0-9]+/.exec(issued.stderr)![0])
+
+  await expect.poll(() => closed).toBe(true) // the server closed the socket (4401)
+  expect((await (await refused).json()).detail.code).toBe('invalid_token') // the next ticket request is refused
+  await expect(lockTitle(page)).toBeVisible()
+  expect(await stored(page)).toBeNull()
+})
+
 test('« Oublier le jeton » efface le jeton stocké', async ({ page }) => {
   await page.goto('/#/travail')
   const forget = page.getByRole('button', { name: 'Oublier le jeton' })

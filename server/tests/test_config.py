@@ -58,7 +58,8 @@ def test_accepts_loopback_bind(tmp_path, host):
 def test_refuses_a_non_loopback_bind_without_echo(tmp_path, host):
     with pytest.raises(ValueError, match="NEXUS_HOST") as error:
         Settings(data_dir=tmp_path, host=host)
-    assert "ticket WebSocket" in str(error.value)
+    assert "#57" in str(error.value)
+    assert "ticket" not in str(error.value)
     if host:
         assert host not in str(error.value)
 
