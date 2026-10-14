@@ -26,6 +26,8 @@
 ## Le travail
 
 - **Task / Carte** — unité de travail durable ; vit dans Nexus (`nexus.db`) ; porte propriétaire, prochaine action, échéance, preuves. Ne s'exécute jamais toute seule.
+- **Tâche terminée** — une tâche `done` est en lecture seule et finale (ADR-022) : aucune transition n'en sort ; on peut encore la commenter et lui joindre des preuves (ajout seul).
+- **Tâche de suite** — nouvelle tâche qui corrige ou prolonge une tâche terminée, avec le lien facultatif « suite de nx-task-N » (`follows`) vers elle ; ce n'est pas une dépendance et rien n'est bloqué. La tâche close affiche « Suivie par » (lecture inverse, calculée par l'interface). Une tâche de suite ne suit qu'une tâche `done`.
 - **Run** — une exécution concrète d'une tâche par un agent, chez un exécutant (session, durée, résultat, statut natif).
 - **Conversation / Message** — un fil de discussion, natif Nexus ou lu depuis Telegram, Hermes, Claude, Codex.
 - **Événement** — fait daté publié par un acteur (claimed, progress, blocked, handoff, done…), immuable.

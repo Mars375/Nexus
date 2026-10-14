@@ -43,6 +43,9 @@ Le tableau de tâches de Nexus, lisible par Loïc **et** par les agents.
 - Cartes enrichies : objectif, propriétaire humain, agent principal, collaborateurs, prochaine action, échéance, blocages, dépendances, preuves attendues, run en cours ;
 - Filtres : agent, statut, échéance, priorité, rôle (`main`/`auxiliary`) ;
 - Historique d'une carte : événements, commentaires, runs, preuves, messages liés.
+- **Une tâche terminée est en lecture seule** (ADR-022). Sa carte s'ouvre mais ne se déplace plus, et n'affiche pas « Ensuite : … » (ni celle d'une tâche abandonnée) ; une tâche de suite porte « Suite de #N ». Son panneau montre ses détails en lecture (sans champ ni « Enregistrer »), ses preuves avec « Joindre une preuve » (ajout seul), ses dépendances sans « Retirer » ni ajout, ses commentaires et son historique, et une section « Terminée » avec **« Ouvrir une tâche de suite »** et « Suivie par » (les tâches de suite, calculées sur la liste complète). Une tâche de suite affiche « Suite de nx-task-N — titre » sous son en-tête. Le lien « Suite de » n'est posé par l'interface qu'à la création.
+- **Les liens « Suite de » et « Suivie par » quittent le panneau**, brouillons compris, comme un clic sur une autre carte : brouillon de détails, choix de dépendance, preuve ou commentaire en cours sont perdus sans avertissement. La boîte « Nouvelle tâche » garde un brouillon par cible (tâche simple, ou suite de nx-task-N).
+- Données qui changent : une tâche close pendant qu'un brouillon est ouvert garde ce brouillon (envoi désactivé avec son motif, bouton « Abandonner le brouillon ») ; la boîte de déplacement relit la tâche courante et refuse un passage devenu impossible.
 
 **Actions :** créer, déplacer, commenter, assigner — **sans jamais déclencher un agent**. Bouton explicite **« Confier à… »** (Phase 2) : choisir l'agent/exécutant, confirmer, suivre le run sur la carte.
 

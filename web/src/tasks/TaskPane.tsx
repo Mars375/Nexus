@@ -1,7 +1,7 @@
 import clsx from 'clsx'
 import { toast } from 'sonner'
 import { useState, type FormEvent, type ReactNode } from 'react'
-import type { Actor, Priority, Status, Task, TaskChanges } from '@/api'
+import { ApiError, type Actor, type Priority, type Status, type Task, type TaskChanges } from '@/api'
 import { formatDateTime, isoToLocalInput, localInputToIso } from '@/format'
 import { listProvenance, type Provenanced } from '@/freshness'
 import { Provenance } from '@/Provenance'
@@ -18,6 +18,7 @@ import {
 } from './moves'
 import {
   useAddComment,
+  useAttachEvidence,
   useComments,
   useHistory,
   useLink,
@@ -27,9 +28,17 @@ import {
 import { describeHistory } from './history'
 import { ACTOR_NAME, ACTORS, actorName, PRIORITY_LABEL, ROLE_LABEL, STATUS_LABEL } from './vocabulary'
 
-type Props = { task: Task; tasks: Task[]; onClose: () => void }
+type Props = {
+  task: Task
+  tasks: Task[]
+  onClose: () => void
+  /** Ouvre une autre tâche : quitte ce panneau, brouillons compris, comme un clic sur une carte. */
+  onOpen: (id: string) => void
+  /** Ouvre la création d'une tâche de suite de `id` (une tâche terminée). */
+  onFollowUp: (id: string) => void
+}
 
-export function TaskPane({ task, tasks, onClose }: Props) {
+export function TaskPane({ task, tasks, onClose, onOpen, onFollowUp }: Props) {
   const [moving, setMoving] = useState<Status | null>(null)
   const move = useMoveTask()
 
@@ -68,36 +77,42 @@ export function TaskPane({ task, tasks, onClose }: Props) {
       </header>
 
       <div className="flex-1 overflow-y-auto">
-        <Section title="Avancer">
-          <div className="flex flex-wrap gap-2">
-            {TRANSITIONS[task.status].map((to) => (
-              <Button key={to} onClick={() => requestMove(to)}>
-                {STATUS_LABEL[to]}
-              </Button>
-            ))}
-          </div>
-          {task.status === 'blocked' && (
-            <p className="mt-3 text-xs text-attention">
-              Bloqué : {task.block_cause}
-              {task.block_plan && <> — se débloque si : {task.block_plan}</>}
-              {task.follow_up_at && <> — relance le {formatDateTime(task.follow_up_at)}</>}
-            </p>
-          )}
-          {task.status === 'dropped' && task.drop_reason && (
-            <p className="mt-3 text-xs text-muted">Abandonnée : {task.drop_reason}</p>
-          )}
-        </Section>
+        {task.follows && <FollowsLine follows={task.follows} tasks={tasks} onOpen={onOpen} />}
+
+        {task.status === 'done' ? (
+          <ClosedSection task={task} tasks={tasks} onOpen={onOpen} onFollowUp={onFollowUp} />
+        ) : (
+          <Section title="Avancer">
+            <div className="flex flex-wrap gap-2">
+              {TRANSITIONS[task.status].map((to) => (
+                <Button key={to} onClick={() => requestMove(to)}>
+                  {STATUS_LABEL[to]}
+                </Button>
+              ))}
+            </div>
+            {task.status === 'blocked' && (
+              <p className="mt-3 text-xs text-attention">
+                Bloqué : {task.block_cause}
+                {task.block_plan && <> — se débloque si : {task.block_plan}</>}
+                {task.follow_up_at && <> — relance le {formatDateTime(task.follow_up_at)}</>}
+              </p>
+            )}
+            {task.status === 'dropped' && task.drop_reason && (
+              <p className="mt-3 text-xs text-muted">Abandonnée : {task.drop_reason}</p>
+            )}
+          </Section>
+        )}
 
         <EditForm key={task.id} task={task} />
 
-        {task.evidence.length > 0 && (
-          <Section title="Preuves">
-            <ul className="grid gap-1 text-xs">
-              {task.evidence.map((ref) => (
-                <li key={ref} className="break-all">{ref}</li>
-              ))}
-            </ul>
-          </Section>
+        {task.status === 'done' ? (
+          <EvidenceSection task={task} />
+        ) : (
+          task.evidence.length > 0 && (
+            <Section title="Preuves">
+              <EvidenceList evidence={task.evidence} />
+            </Section>
+          )
         )}
 
         <Dependencies task={task} tasks={tasks} />
@@ -107,6 +122,117 @@ export function TaskPane({ task, tasks, onClose }: Props) {
 
       {moving && <MoveDialog task={task} to={moving} all={tasks} onClose={() => setMoving(null)} />}
     </aside>
+  )
+}
+
+/** « Suite de nx-task-N — titre » : mène à la tâche que celle-ci prolonge. */
+function FollowsLine({ follows, tasks, onOpen }: { follows: string; tasks: Task[]; onOpen: (id: string) => void }) {
+  const followed = tasks.find((t) => t.id === follows)
+  return (
+    <p className="border-b border-line px-5 py-2 text-xs">
+      <button type="button" className="text-left underline decoration-line-strong underline-offset-2 hover:text-accent" onClick={() => onOpen(follows)}>
+        Suite de {follows}
+        {followed && ` — ${followed.title}`}
+      </button>
+    </p>
+  )
+}
+
+/** Tâche terminée : plus d'avancement ; on ouvre une suite (ADR-022). */
+function ClosedSection({ task, tasks, onOpen, onFollowUp }: {
+  task: Task
+  tasks: Task[]
+  onOpen: (id: string) => void
+  onFollowUp: (id: string) => void
+}) {
+  // Calculé sur la liste complète : le serveur ne renvoie que le lien de la tâche qui suit.
+  const followedBy = tasks.filter((t) => t.follows === task.id)
+  return (
+    <Section title="Terminée">
+      <p className="text-xs">Cette tâche ne se modifie plus. Un problème trouvé ensuite se règle dans une tâche de suite.</p>
+      <Button className="mt-3" onClick={() => onFollowUp(task.id)}>
+        Ouvrir une tâche de suite
+      </Button>
+      {followedBy.length > 0 && (
+        <div className="mt-3">
+          <p className="text-xs text-muted">Suivie par :</p>
+          <ul className="mt-1 grid gap-1">
+            {followedBy.map((t) => (
+              <li key={t.id}>
+                <button type="button" className="text-left text-xs underline decoration-line-strong underline-offset-2 hover:text-accent" onClick={() => onOpen(t.id)}>
+                  {t.title}
+                  <span className="text-muted"> — {STATUS_LABEL[t.status]}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Section>
+  )
+}
+
+function EvidenceList({ evidence }: { evidence: string[] }) {
+  return (
+    <ul className="grid gap-1 text-xs">
+      {evidence.map((ref) => (
+        <li key={ref} className="break-all">{ref}</li>
+      ))}
+    </ul>
+  )
+}
+
+/** Longueur maximale d'une preuve (EVIDENCE_REF_MAX côté serveur), mesurée après dépouillement. */
+const EVIDENCE_MAX = 512
+
+/** Preuves d'une tâche terminée, toujours affichées, et « Joindre une preuve » (ajout seul). */
+function EvidenceSection({ task }: { task: Task }) {
+  const attach = useAttachEvidence(task.id)
+  const [text, setText] = useState('')
+  // Une preuve par ligne : une virgule appartient à la preuve (un lien peut en contenir).
+  const refs = text.split('\n').map((line) => line.trim()).filter(Boolean)
+  const tooLong = refs.some((ref) => ref.length > EVIDENCE_MAX)
+
+  function submit(event: FormEvent) {
+    event.preventDefault()
+    if (refs.length === 0 || tooLong || attach.isPending) return
+    attach.mutate(refs, { onSuccess: () => setText('') })
+  }
+
+  return (
+    <Section title="Preuves">
+      {task.evidence.length > 0 ? (
+        <EvidenceList evidence={task.evidence} />
+      ) : (
+        <p className="text-xs text-muted">
+          {task.expected_evidence ? `Preuve attendue : ${task.expected_evidence} — aucune preuve jointe` : 'Aucune preuve jointe.'}
+        </p>
+      )}
+      <form onSubmit={submit} className="mt-3 grid gap-2">
+        <textarea
+          className={inputClass}
+          rows={2}
+          value={text}
+          onChange={(e) => {
+            setText(e.target.value)
+            attach.reset()
+          }}
+          placeholder="Une preuve par ligne, par exemple commit:a1b2c3d"
+          aria-label="Joindre une preuve"
+        />
+        <div className="flex items-center justify-end gap-3">
+          {tooLong && <p className="text-xs text-danger">Une preuve ne dépasse pas {EVIDENCE_MAX} caractères.</p>}
+          <Button type="submit" disabled={refs.length === 0 || tooLong || attach.isPending}>
+            Joindre
+          </Button>
+        </div>
+        {attach.isError && (
+          <p role="alert" className="text-xs text-danger">
+            {attach.error instanceof ApiError ? attach.error.message : 'Le serveur Nexus ne répond pas.'}
+          </p>
+        )}
+      </form>
+    </Section>
   )
 }
 
@@ -163,6 +289,47 @@ function toChange(key: keyof Draft, form: Draft): TaskChanges {
   }
 }
 
+/** La ligne de #70, partagée par le formulaire et le résumé : elle n'apparaît qu'une fois. */
+function LeadLine({ task }: { task: Task }) {
+  return (
+    <p className="text-sm">
+      {task.lead_agent ? `Agent principal : ${actorName(task.lead_agent)}` : 'Aucun agent principal'}
+    </p>
+  )
+}
+
+/** Résumé en lecture d'une tâche terminée : pas de champ, donc rien où le clavier s'arrête. */
+function ClosedDetails({ task }: { task: Task }) {
+  const rows: [string, ReactNode][] = [
+    ['Titre', task.title],
+    ['Objectif', task.objective],
+    ['Collaborateurs', task.collaborators.length ? task.collaborators.map(actorName).join(', ') : 'Aucun'],
+    ['Priorité', PRIORITY_LABEL[task.priority]],
+    ['Échéance', task.due_at ? formatDateTime(task.due_at) : 'Aucune'],
+    ['Relance', task.follow_up_at ? formatDateTime(task.follow_up_at) : 'Aucune'],
+    ['Preuve attendue', task.expected_evidence || 'Aucune'],
+  ]
+  return (
+    <Section title="Détails">
+      <div className="grid gap-3">
+        <LeadLine task={task} />
+        <dl className="grid gap-2 text-xs">
+          {rows.map(([label, value]) => (
+            <div key={label}>
+              <dt className="font-orbital-display text-2xs font-semibold uppercase tracking-[0.14em] text-muted">{label}</dt>
+              <dd className="mt-0.5 whitespace-pre-wrap">{value}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="text-2xs text-muted">
+          Propriétaire : {ACTOR_NAME[task.human_owner]}. Créée par {ACTOR_NAME[task.created_by]} le{' '}
+          {formatDateTime(task.created_at)}.
+        </p>
+      </div>
+    </Section>
+  )
+}
+
 function EditForm({ task }: { task: Task }) {
   const update = useUpdateTask()
   // `base` : la version de la tâche sur laquelle le brouillon a été commencé. On n'envoie que
@@ -206,20 +373,25 @@ function EditForm({ task }: { task: Task }) {
   const latest = draftFrom(task)
   const after = <K extends keyof Draft>(key: K): Draft[K] =>
     edited.includes(key) ? form[key] : latest[key]
-  const problem = !after('title').trim()
-    ? 'Le titre ne peut pas être vide.'
-    : !after('objective').trim()
-      ? "L'objectif ne peut pas être vide."
-      : ACTIVE_STATUSES.includes(task.status) && !after('next_action').trim()
-        ? 'Une tâche active doit garder une prochaine action.'
-        : task.status === 'blocked' && !after('follow_up_at') && !task.block_plan?.trim()
-          ? 'Un blocage garde une relance ou ce qui le débloquerait.'
-          : task.status === 'done' &&
-            task.evidence.length === 0 &&
-            edited.includes('expected_evidence') &&
-            form.expected_evidence.trim()
-          ? 'Cette tâche est terminée sans preuve : rouvre-la pour exiger une preuve.'
-          : null
+  const closed = task.status === 'done'
+  const problem = closed
+    ? 'Cette tâche vient d’être terminée : tes modifications ne peuvent plus être enregistrées. Copie-les dans un commentaire ou une tâche de suite.'
+    : !after('title').trim()
+      ? 'Le titre ne peut pas être vide.'
+      : !after('objective').trim()
+        ? "L'objectif ne peut pas être vide."
+        : ACTIVE_STATUSES.includes(task.status) && !after('next_action').trim()
+          ? 'Une tâche active doit garder une prochaine action.'
+          : task.status === 'blocked' && !after('follow_up_at') && !task.block_plan?.trim()
+            ? 'Un blocage garde une relance ou ce qui le débloquerait.'
+            : null
+
+  function abandon() {
+    const next = draftFrom(task)
+    setBase(next)
+    setForm(next)
+    setChangedElsewhere(false)
+  }
 
   function save(event: FormEvent) {
     event.preventDefault()
@@ -236,13 +408,14 @@ function EditForm({ task }: { task: Task }) {
     )
   }
 
+  // Une tâche terminée sans brouillon se lit ; avec un brouillon, il reste affiché (jamais jeté).
+  if (closed && !dirty) return <ClosedDetails task={task} />
+
   return (
     <form onSubmit={save}>
       <Section title="Détails">
         <div className="grid gap-3">
-          <p className="text-sm">
-            {task.lead_agent ? `Agent principal : ${actorName(task.lead_agent)}` : 'Aucun agent principal'}
-          </p>
+          <LeadLine task={task} />
           <Field label="Titre">
             <input className={inputClass} maxLength={200} value={form.title} onChange={(e) => set('title', e.target.value)} />
           </Field>
@@ -314,6 +487,11 @@ function EditForm({ task }: { task: Task }) {
                 enregistrés.
               </p>
             )}
+            {closed && (
+              <Button variant="ghost" onClick={abandon}>
+                Abandonner le brouillon
+              </Button>
+            )}
             <Button type="submit" variant="primary" disabled={!dirty || !!problem || update.isPending}>
               Enregistrer
             </Button>
@@ -332,6 +510,8 @@ function Dependencies({ task, tasks }: { task: Task; tasks: Task[] }) {
   // La liste peut changer pendant qu'un choix est en attente (statut modifié par un agent) :
   // le choix fait partie du brouillon, il reste affiché avec la raison et bloque l'ajout.
   const refusal = choice ? dependencyRefusal(task, choice, tasks) : null
+  // Une tâche terminée ne change plus ses dépendances (ADR-022) : ni « Retirer », ni ajout.
+  const closed = task.status === 'done'
 
   return (
     <Section title="Dépend de">
@@ -347,9 +527,11 @@ function Dependencies({ task, tasks }: { task: Task; tasks: Task[] }) {
                   {dep ? dep.title : id}
                   <span className="text-muted"> — {dep ? STATUS_LABEL[dep.status] : 'inconnue'}</span>
                 </span>
-                <Button variant="ghost" className="px-2 py-0.5 text-xs" onClick={() => link.mutate({ other: id, remove: true })}>
-                  Retirer
-                </Button>
+                {!closed && (
+                  <Button variant="ghost" className="px-2 py-0.5 text-xs" onClick={() => link.mutate({ other: id, remove: true })}>
+                    Retirer
+                  </Button>
+                )}
               </li>
             )
           })}
@@ -365,7 +547,8 @@ function Dependencies({ task, tasks }: { task: Task; tasks: Task[] }) {
               aria-label="Tâche dont celle-ci dépend"
               aria-invalid={refusal ? true : undefined}
             >
-              <option value="">Ajouter une dépendance…</option>
+              {/* Sur une tâche terminée, l'option vide sert à abandonner le choix, pas à en faire un. */}
+              <option value="">{closed ? 'Abandonner ce choix' : 'Ajouter une dépendance…'}</option>
               {refusal && (
                 <option value={choice}>{byId.get(choice)?.title ?? 'Tâche disparue'} — choix invalide</option>
               )}

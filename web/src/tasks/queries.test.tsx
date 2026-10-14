@@ -4,7 +4,7 @@ import type { ReactNode } from 'react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { clearToken, getAuthState, markUnlocked, setToken } from '@/auth'
-import { useAddComment, useCreateTask, useLink, useMoveTask, useUpdateTask } from './queries'
+import { useAddComment, useAttachEvidence, useCreateTask, useLink, useMoveTask, useUpdateTask } from './queries'
 
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() } }))
 
@@ -34,6 +34,7 @@ test.each([
   ['déplacement', () => useMoveTask(), (m: ReturnType<typeof useMoveTask>) => m.mutate({ id: 'nx-task-1', change: { status: 'todo' } })],
   ['commentaire', () => useAddComment('nx-task-1'), (m: ReturnType<typeof useAddComment>) => m.mutate('salut')],
   ['lien', () => useLink('nx-task-1'), (m: ReturnType<typeof useLink>) => m.mutate({ other: 'nx-task-2' })],
+  ['preuve', () => useAttachEvidence('nx-task-1'), (m: ReturnType<typeof useAttachEvidence>) => m.mutate(['commit:abc'])],
 ] as const)('%s : un 401 n’affiche pas de toast (l’écran verrouillé parle)', async (_name, hook, run) => {
   answer(401, 'invalid_token')
   const { result } = renderHook(hook as () => never, { wrapper })

@@ -138,3 +138,18 @@ export function useLink(id: string) {
     ...local,
   })
 }
+
+/**
+ * « Joindre une preuve » : ajout seul, sur une tâche de tout statut. L'erreur reste dans la
+ * mutation : le panneau l'affiche sous le formulaire, sans toast, pour garder le texte saisi.
+ * `tasksKey` couvre aussi l'historique de la tâche (même préfixe).
+ */
+export function useAttachEvidence(id: string) {
+  const refresh = useRefresh()
+  return useMutation({
+    mutationFn: (evidence: string[]) => tasksApi.attachEvidence(id, evidence),
+    onSuccess: () => toast.success('Preuve jointe'),
+    onSettled: refresh,
+    ...local,
+  })
+}

@@ -10,7 +10,8 @@ export const TRANSITIONS: Record<Status, Status[]> = {
   in_progress: ['todo', 'blocked', 'review', 'done', 'dropped'],
   blocked: ['todo', 'in_progress', 'dropped'],
   review: ['in_progress', 'done', 'dropped'],
-  done: ['in_progress'],
+  // Final (ADR-022): a mistake found afterwards goes into a follow-up task.
+  done: [],
   dropped: ['backlog'],
 }
 
@@ -22,8 +23,8 @@ const DEPENDENCY_RESOLVED: Status[] = ['done', 'dropped']
 
 /** Si des dépendances non traitées interdisent ce passage, la raison ; sinon null. */
 export function dependencyBlock(task: Task, to: Status, all: Task[]): string | null {
-  // Rouvrir un prérequis traité laisserait ses dépendantes avancées sans prérequis (serveur :
-  // reopen_with_advanced_dependents).
+  // Reprendre un prérequis abandonné (dropped → backlog) laisserait ses dépendantes avancées sans
+  // prérequis (serveur : reopen_with_advanced_dependents). Une tâche terminée ne se rouvre plus.
   if (DEPENDENCY_RESOLVED.includes(task.status) && !DEPENDENCY_RESOLVED.includes(to)) {
     const advanced = all.filter(
       (t) => t.depends_on.includes(task.id) && GATED_BY_DEPENDENCIES.includes(t.status),
@@ -56,6 +57,8 @@ export function dependencyCandidates(task: Task, all: Task[]): Task[] {
   return all.filter((t) => refusalWith(task, t.id, context) === null)
 }
 
+export const DONE_DEPENDENCIES = 'Cette tâche est terminée : ses dépendances ne changent plus.'
+
 type DependencyContext = { byId: Map<string, Task>; reachesTask: Set<string> }
 
 /** Index des tâches, et tâches qui dépendent déjà (transitivement) de `task`. */
@@ -84,6 +87,8 @@ function dependencyContext(task: Task, all: Task[]): DependencyContext {
 }
 
 function refusalWith(task: Task, otherId: string, { byId, reachesTask }: DependencyContext): string | null {
+  // Les dépendances d'une tâche terminée ne changent plus (serveur : task_done).
+  if (task.status === 'done') return DONE_DEPENDENCIES
   const other = byId.get(otherId)
   if (!other) return 'Cette tâche n’existe plus.'
   if (other.id === task.id) return 'Une tâche ne peut pas dépendre d’elle-même.'

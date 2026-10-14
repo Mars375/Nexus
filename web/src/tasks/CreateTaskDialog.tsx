@@ -1,31 +1,54 @@
 import { useState, type FormEvent } from 'react'
-import type { Actor, Priority } from '@/api'
+import type { Actor, Priority, Task } from '@/api'
 import { localInputToIso } from '@/format'
 import { Button, Dialog, Field, inputClass } from '@/ui'
 import { useCreateTask } from './queries'
 import { ACTOR_NAME, ACTORS, PRIORITY_LABEL } from './vocabulary'
 
-export function CreateTaskDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+const EMPTY = {
+  title: '',
+  objective: '',
+  next_action: '',
+  status: 'backlog' as 'backlog' | 'todo',
+  lead_agent: '',
+  priority: 'normal' as Priority,
+  due_at: '',
+  expected_evidence: '',
+}
+type Form = typeof EMPTY
+
+/**
+ * Création d'une tâche. `follows` est la tâche terminée dont celle-ci sera la suite (ou null).
+ * Un brouillon par cible (`''` pour une tâche simple, `nx-task-N` pour une suite de N) : ouvrir
+ * une suite ne prend ni ne jette le brouillon d'une tâche simple, et inversement. La clé du
+ * brouillon est la seule source du `follows` envoyé.
+ */
+export function CreateTaskDialog({
+  open,
+  follows = null,
+  tasks = [],
+  onOpenChange,
+}: {
+  open: boolean
+  follows?: string | null
+  tasks?: Task[]
+  onOpenChange: (open: boolean) => void
+}) {
   const create = useCreateTask()
-  const empty = {
-    title: '',
-    objective: '',
-    next_action: '',
-    status: 'backlog' as 'backlog' | 'todo',
-    lead_agent: '',
-    priority: 'normal' as Priority,
-    due_at: '',
-    expected_evidence: '',
-  }
-  const [form, setForm] = useState(empty)
-  const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) =>
-    setForm((f) => ({ ...f, [key]: value }))
+  const key = follows ?? ''
+  const [drafts, setDrafts] = useState<Record<string, Form>>({})
+  const form = drafts[key] ?? EMPTY
+  const set = <K extends keyof Form>(field: K, value: Form[K]) =>
+    setDrafts((all) => ({ ...all, [key]: { ...(all[key] ?? EMPTY), [field]: value } }))
+  const followed = follows ? tasks.find((t) => t.id === follows) : undefined
 
   const ready =
     form.title.trim() && form.objective.trim() && (form.status === 'backlog' || form.next_action.trim())
 
   function submit(event: FormEvent) {
     event.preventDefault()
+    // La cible est figée à l'envoi : la réponse ne vide que le brouillon de cette cible.
+    const sentKey = key
     create.mutate(
       {
         title: form.title.trim(),
@@ -36,10 +59,15 @@ export function CreateTaskDialog({ open, onOpenChange }: { open: boolean; onOpen
         priority: form.priority,
         due_at: localInputToIso(form.due_at),
         expected_evidence: form.expected_evidence.trim() || null,
+        ...(sentKey && { follows: sentKey }),
       },
       {
         onSuccess: () => {
-          setForm(empty)
+          setDrafts((all) => {
+            const next = { ...all }
+            delete next[sentKey]
+            return next
+          })
           onOpenChange(false)
         },
       },
@@ -54,6 +82,12 @@ export function CreateTaskDialog({ open, onOpenChange }: { open: boolean; onOpen
       description="Créer une tâche ne lance aucun agent."
     >
       <form onSubmit={submit} className="grid gap-3">
+        {follows && (
+          <p className="text-xs text-muted">
+            Suite de {follows}
+            {followed && ` — ${followed.title}`}
+          </p>
+        )}
         <Field label="Titre">
           <input className={inputClass} maxLength={200} value={form.title} onChange={(e) => set('title', e.target.value)} autoFocus />
         </Field>
