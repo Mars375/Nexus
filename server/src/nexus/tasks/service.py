@@ -379,6 +379,10 @@ def attach_evidence(session: Session, task: Task, evidence: list[str], actor: st
             "invalid_value", "valeur non encodable : demi-paire UTF-16, NaN ou Infinity"
         )
     stripped = [API_STRIP.validate_python(e) for e in evidence]
+    if not all(stripped):
+        # The API refuses a blank item (422) and publish() answers invalid_evidence: a direct
+        # caller must not get a silent drop. Only an item blank after masking is filtered below.
+        raise RuleViolation("invalid_evidence", "evidence : éléments non vides requis")
     if any(len(e) > EVIDENCE_REF_MAX for e in stripped):
         raise RuleViolation(
             "too_long_evidence",
@@ -386,6 +390,10 @@ def attach_evidence(session: Session, task: Task, evidence: list[str], actor: st
         )
     redacted: dict[str, list[str]] = {}
     clean = secrets.redact_fields({"evidence": stripped}, redacted.__setitem__)["evidence"]
+    # The alert fires as soon as a secret is seen, even if a refusal follows (as update_task
+    # does). The `secret_redacted` history line is written only on success: a refusal rolls
+    # the transaction back, so a line written before it would vanish anyway.
+    _alert_redactions(task, redacted)
     refs = [e for e in clean if not secrets.is_blank_reference(e)]
     merged = list(dict.fromkeys([*task.evidence, *refs]))
     if not refs:
@@ -395,7 +403,7 @@ def attach_evidence(session: Session, task: Task, evidence: list[str], actor: st
     before, task.evidence = task.evidence, merged
     task.updated_at = now()
     _record(session, task, actor, "updated", {"evidence": [before, merged]})
-    _record_redactions(session, task, actor, redacted)
+    _record_redactions(session, task, actor, redacted, alert=False)
 
 
 def remove_dependency(session: Session, task: Task, other: Task, actor: str) -> None:
@@ -470,14 +478,24 @@ def _record(session: Session, task: Task, actor: str, action: str, changes: dict
     ))
 
 
+def _alert_redactions(task: Task, redacted: dict[str, list[str]]) -> None:
+    """Log (never the value) that a secret was masked."""
+    if redacted:
+        kinds = sorted({k for ks in redacted.values() for k in ks})
+        log.warning(
+            "secret masqué sur %s (champs %s, types %s)", task.ref, sorted(redacted), kinds
+        )
+
+
 def _record_redactions(
-    session: Session, task: Task, actor: str, redacted: dict[str, list[str]]
+    session: Session, task: Task, actor: str, redacted: dict[str, list[str]], *, alert: bool = True
 ) -> None:
     """Trace (sans la valeur) qu'un secret a été masqué, et alerte dans les logs."""
     if not redacted:
         return
+    if alert:
+        _alert_redactions(task, redacted)
     kinds = sorted({k for ks in redacted.values() for k in ks})
-    log.warning("secret masqué sur %s (champs %s, types %s)", task.ref, sorted(redacted), kinds)
     _record(session, task, actor, "secret_redacted", {"fields": sorted(redacted), "kinds": kinds})
 
 

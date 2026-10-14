@@ -274,3 +274,24 @@ def test_a_review_that_loses_the_race_against_a_review_only_joins_its_evidence(
     assert task(client, ref)["evidence"] == ["commit:new"]
     with client.app.state.sessionmaker() as session:
         assert session.scalar(select(Task.status).where(Task.id == int(ref[8:]))) == "review"
+
+
+@pytest.mark.parametrize("kind", ["failed", "needs_human", "unknown"])
+def test_failed_needs_human_and_unknown_are_recorded_without_touching_a_done_task(
+    client, ref, kind
+):
+    before = task(client, ref)
+    fields = {
+        "needs_human": {"needs": ["loic"],
+                        "payload": {"options": ["oui", "non"], "consequence": "x"}},
+        "unknown": {"payload": {"last_check_at": AT}},
+    }.get(kind, {})
+    event = publish(client, kind, task=ref, body="x", **fields)
+    assert event["kind"] == kind and event["task"] == ref
+    effects = event["effects"]
+    if kind == "needs_human":  # addressed to a human: it still opens its approval, nothing else
+        assert [e["action"] for e in effects] == ["approval"] and effects[0]["applied"] is True
+    else:
+        assert effects == []
+    unchanged(client, ref, before)
+    assert client.get("/api/events").json()[0]["id"] == event["id"]

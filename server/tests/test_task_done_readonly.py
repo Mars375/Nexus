@@ -304,3 +304,29 @@ def test_an_unlink_racing_the_closing_loses_then_gets_task_done(client, monkeypa
 
     undo()
     assert code(client.delete(f"/api/tasks/{ref}/dependencies/{other}")) == "task_done"
+
+
+# --- Review follow-ups ---------------------------------------------------------------------
+
+
+def test_a_refused_direct_update_task_leaves_the_done_task_untouched_even_after_a_commit(client):
+    # The diff is computed before any setattr: a refusal must not leave a dirty task behind,
+    # or the caller's next commit would write it.
+    ref = close(client)
+    before = state(client, ref)
+    with client.app.state.sessionmaker() as session:
+        task = session.get(Task, int(ref[8:]))
+        with pytest.raises(RuleViolation) as exc:
+            service.update_task(session, task, {"title": "Autre", "next_action": "ailleurs"},
+                                "loic")
+        assert exc.value.code == "task_done"
+        session.commit()
+    assert state(client, ref) == before
+
+
+def test_a_done_task_takes_no_dependency_on_a_done_target_either(client):
+    done = close(client)
+    other_done = close(client)
+    before = state(client, done)
+    assert code(client.put(f"/api/tasks/{done}/dependencies/{other_done}")) == "task_done"
+    assert state(client, done) == before

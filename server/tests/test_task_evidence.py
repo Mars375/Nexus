@@ -267,3 +267,62 @@ def test_two_concurrent_posts_do_not_lose_evidence(client, monkeypatch):
     assert client.get(f"/api/tasks/{ref}").json()["evidence"] == [
         "commit:abc", "commit:first", "commit:second"
     ]
+
+
+# --- Review follow-ups ---------------------------------------------------------------------
+
+
+def test_a_direct_call_refuses_a_blank_item_like_the_api(client):
+    ref = closed(client)
+    assert post(client, ref, ["   ", "commit:a"]).status_code == 422
+    session, task = direct(client, ref)
+    with session:
+        for bad in (["   ", "commit:a"], [""], ["\n\t"]):
+            with pytest.raises(RuleViolation) as exc:
+                service.attach_evidence(session, task, bad, "loic")
+            assert exc.value.code == "invalid_evidence"  # as publish() answers
+        session.rollback()
+    assert client.get(f"/api/tasks/{ref}").json()["evidence"] == ["commit:abc"]
+
+
+def test_an_item_blank_only_after_masking_is_dropped_and_the_others_kept(client):
+    # Spec §3: masking comes first, then the readable-reference filter (as for an event).
+    ref = closed(client)
+    session, task = direct(client, ref)
+    with session:
+        service.attach_evidence(session, task, [f"commit: {SECRET}", "commit:a"], "loic")
+        session.commit()
+    assert client.get(f"/api/tasks/{ref}").json()["evidence"] == ["commit:abc", "commit:a"]
+
+
+@pytest.mark.parametrize("raw", [
+    "commit:abc token=" + SECRET,  # masked form is already attached below
+    "commit: " + SECRET,  # reduced to a label: evidence_required
+])
+def test_the_secret_alert_fires_even_when_the_request_is_refused(client, caplog, raw):
+    ref = closed(client)
+    assert post(client, ref, ["commit:abc token=" + SECRET]).status_code == 200
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="nexus.tasks"):
+        res = post(client, ref, [raw])
+    assert res.status_code == 409
+    alerts = [r for r in caplog.records if "secret masqué" in r.getMessage()]
+    assert len(alerts) == 1
+    assert SECRET not in caplog.text and SECRET not in res.text
+    # The history line stays success-only: the 409 rolled the transaction back.
+    secret_lines = [h for h in client.get(f"/api/tasks/{ref}/history").json()
+                    if h["action"] == "secret_redacted"]
+    assert len(secret_lines) == 1
+
+
+def test_a_lone_surrogate_in_a_direct_call_stores_nothing_and_the_task_still_reads(client):
+    ref = closed(client)
+    session, task = direct(client, ref)
+    with session:
+        with pytest.raises(RuleViolation) as exc:
+            service.attach_evidence(session, task, ["commit:a\ud800"], "loic")
+        assert exc.value.code == "invalid_value"
+        session.commit()
+    res = client.get(f"/api/tasks/{ref}")
+    assert res.status_code == 200 and res.json()["evidence"] == ["commit:abc"]
+    assert client.get(f"/api/tasks/{ref}/history").status_code == 200

@@ -809,7 +809,7 @@ def calls(monkeypatch):
 def test_a_rerun_on_a_done_task_stops_with_exit_4_and_publishes_nothing(
     http, task, calls, capsys
 ):
-    # (A closed task always keeps a next action: an active task cannot be without one.)
+    # (This one keeps a next action; the empty case is the next test.)
     http.patch(f"/api/tasks/{task}", json={"next_action": "Garder celle-ci"})
     http.post(f"/api/tasks/{task}/status", json={"status": "in_progress"})
     http.post(f"/api/tasks/{task}/status", json={"status": "done", "evidence": ["commit:abc"]})
@@ -850,3 +850,24 @@ def test_a_done_after_loic_closed_the_task_is_exit_0_whatever_the_evidence(
     assert done["effects"][0]["reason"] == "déjà en done"
     assert done["effects"][1]["applied"] is (closing != "commit:a1b2c3d")
     assert http.get(f"/api/tasks/{task}").json()["evidence"] == stored
+
+
+def test_a_done_task_may_have_an_empty_next_action_and_the_agent_still_publishes_nothing(
+    http, task, calls, capsys
+):
+    # Reachable: only an active status requires a next action, and `done` is not one, so
+    # `POST …/status` can clear it while closing.
+    http.post(f"/api/tasks/{task}/status", json={"status": "in_progress", "next_action": "x"})
+    res = http.post(f"/api/tasks/{task}/status",
+                    json={"status": "done", "evidence": ["commit:abc"], "next_action": ""})
+    assert res.status_code == 200 and res.json()["next_action"] == "", res.text
+    before = http.get(f"/api/tasks/{task}").json() | {"measured_at": None}
+    calls.clear()
+
+    code = run(task, "--evidence", "commit:def")
+
+    assert code == demo_agent.EXIT_EFFECT_REFUSED == 4  # not 1: no PATCH next_action is sent
+    assert "rien n'est publié" in capsys.readouterr().out
+    assert calls == [("GET", f"/api/tasks/{task}")]
+    assert http.get("/api/events").json() == []
+    assert http.get(f"/api/tasks/{task}").json() | {"measured_at": None} == before
