@@ -89,15 +89,19 @@ def run_tailscale(binary: str = "tailscale") -> str:
 def run_tailscale_self(binary: str = "tailscale") -> str:
     """`tailscale status --json --peers=false`: this node only, without the peer list (ADR-021)."""
     flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-    result = subprocess.run(
-        [binary, "status", "--json", "--peers=false"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        timeout=TIMEOUT_SECONDS,
-        check=True,
-        creationflags=flags,
-    )
+    try:
+        result = subprocess.run(
+            [binary, "status", "--json", "--peers=false"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=TIMEOUT_SECONDS,
+            check=True,
+            creationflags=flags,
+        )
+    except subprocess.CalledProcessError:
+        # A CLI that refuses the flag: same reading without it (docs/SECURITY.md §3).
+        return run_tailscale(binary)
     return result.stdout
 
 

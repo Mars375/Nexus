@@ -202,6 +202,43 @@ def test_run_tailscale_self_asks_for_this_node_only(monkeypatch):
     assert kwargs["creationflags"] == status_kwargs["creationflags"]
 
 
+def test_run_tailscale_self_falls_back_when_the_cli_refuses_peers_flag(monkeypatch):
+    argvs = []
+
+    def fake(argv, **kwargs):
+        argvs.append(argv)
+        if "--peers=false" in argv:
+            raise subprocess.CalledProcessError(2, argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake)
+    assert nodes.run_tailscale_self("ts-bin") == "{}"
+    assert argvs == [
+        ["ts-bin", "status", "--json", "--peers=false"],
+        ["ts-bin", "status", "--json"],
+    ]
+
+
+def test_run_tailscale_self_fallback_failure_and_timeout_propagate(monkeypatch):
+    def refuse_all(argv, **kwargs):
+        raise subprocess.CalledProcessError(2, argv)
+
+    monkeypatch.setattr(subprocess, "run", refuse_all)
+    with pytest.raises(subprocess.CalledProcessError):
+        nodes.run_tailscale_self("ts-bin")
+
+    calls = []
+
+    def slow(argv, **kwargs):
+        calls.append(argv)
+        raise subprocess.TimeoutExpired(argv, 5)
+
+    monkeypatch.setattr(subprocess, "run", slow)
+    with pytest.raises(subprocess.TimeoutExpired):
+        nodes.run_tailscale_self("ts-bin")
+    assert len(calls) == 1
+
+
 ADDRESS = ipaddress.ip_address("100.101.102.103")
 ADDRESS6 = ipaddress.ip_address("fd7a:115c:a1e0::1")
 
