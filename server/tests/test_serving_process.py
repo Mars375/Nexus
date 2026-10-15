@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import queue
+import re
 import signal
 import socket
 import subprocess
@@ -36,7 +37,7 @@ class Child:
     def __init__(self, argv, env):
         self.proc = subprocess.Popen(
             argv, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
-            encoding="utf-8",
+            encoding="utf-8", errors="replace",
         )
         self.lines: list[str] = []
         self._new: queue.Queue = queue.Queue()
@@ -78,8 +79,10 @@ def child(tmp_path):
     started: list[Child] = []
 
     def start(argv, **env):
+        # UTF-8 and no colour: a Windows console would otherwise write cp1252 and ANSI codes.
         full = {**os.environ, "NEXUS_DATA_DIR": str(tmp_path / "data"),
-                "NEXUS_TAILSCALE_BIN": str(tmp_path / "no-such-tailscale"), **env}
+                "NEXUS_TAILSCALE_BIN": str(tmp_path / "no-such-tailscale"),
+                "PYTHONUTF8": "1", "NO_COLOR": "1", **env}
         started.append(Child(argv, full))
         return started[-1]
 
@@ -99,7 +102,8 @@ def test_main_exits_3_when_the_loopback_port_is_taken(child):
         process = child(MAIN, NEXUS_PORT=str(port))
         code, stderr = process.finish()
     assert code == 3
-    assert any(line.startswith("ERROR") for line in stderr.splitlines())
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", stderr)  # a colouring log formatter must not matter
+    assert any(line.startswith("ERROR") for line in plain.splitlines())
     assert "Traceback" not in stderr
 
 

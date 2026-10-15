@@ -877,7 +877,7 @@ def test_repeated_resume_failures_warn_once_per_state(launch, records, which):
     assert "perdue" in first[0][1]
     assert (taken in first[1][1]) == (which == "loopback")
     if which == "tailnet":
-        assert "bind en échec (OSError, errno 98)" in first[1][1]
+        assert f"bind en échec (OSError, errno {errno.EADDRINUSE})" in first[1][1]
     assert [lvl for lvl, _ in advance()] == [logging.DEBUG]
     assert [lvl for lvl, _ in advance()] == [logging.DEBUG]
     changed = advance()
