@@ -25,6 +25,8 @@ _FULL: list[tuple[str, re.Pattern[str]]] = [
     # Deliberately unanchored (no `\b`): ADR-006 prefers over-redaction, so a token glued to
     # other text is still masked.
     ("actor_token", re.compile(r"nxt_[A-Za-z0-9_-]{43,}")),
+    # Nexus WebSocket ticket (#57): `nxw_` + 43 base64url characters, unanchored as above.
+    ("ws_ticket", re.compile(r"nxw_[A-Za-z0-9_-]{43,}")),
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")),
     ("bearer_token", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{20,}")),
 ]

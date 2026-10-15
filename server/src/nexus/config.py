@@ -45,9 +45,8 @@ class Settings:
             # Jamais la valeur reçue dans le message (ADR-006).
             raise ValueError(
                 "NEXUS_HOST doit être une adresse de la boucle locale (127.0.0.1, localhost "
-                "ou l'adresse IPv6 de bouclage) : le WebSocket n'a pas encore de ticket "
-                "(ADR-020, D5), donc Nexus ne peut pas écouter sur le réseau tant que ce "
-                "ticket WebSocket (#57) n'existe pas"
+                "ou l'adresse IPv6 de bouclage) : l'écoute hors de la boucle locale arrive "
+                "avec la PR B de #57"
             )
         for name in self.allowed_hosts:
             if normalize_host(name) is None:

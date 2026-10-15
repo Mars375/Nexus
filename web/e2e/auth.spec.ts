@@ -151,6 +151,36 @@ test('un jeton stocké puis révoqué : 401 invalid_token, jeton oublié, écran
   expect(await stored(page)).toBeNull()
 })
 
+test('un jeton révoqué pendant que l’interface est ouverte la verrouille et ferme le temps réel', async ({ page }) => {
+  const issued = nexusToken('issue', 'loic', '--label', 'revoque-en-direct')
+  const live = issued.stdout.trim()
+  await page.addInitScript(([key, token]) => localStorage.setItem(key, token), [TOKEN_KEY, live])
+  let closed = false
+  // Only the Nexus socket: Vite's dev server keeps its own HMR WebSocket on the page.
+  page.on('websocket', (ws) => {
+    if (new URL(ws.url()).pathname === '/api/ws') ws.on('close', () => (closed = true))
+  })
+  await page.goto('/#/travail')
+  await expect(page.getByText('Temps réel : connecté')).toBeVisible()
+  expect(closed).toBe(false)
+
+  // The first 401 on the revoked token comes either from the next REST refresh or from the ticket request,
+  // whichever leaves first. A REST 401 clears the token and locks the UI, and a locked UI sends no ticket
+  // request at all: so this is the only response the test can wait for in both orders.
+  const revokedRefused = page.waitForResponse(
+    (r) =>
+      new URL(r.url()).pathname.startsWith('/api/') &&
+      r.status() === 401 &&
+      r.request().headers()['authorization'] === `Bearer ${live}`,
+  )
+  nexusToken('revoke', /nx-tok-[0-9]+/.exec(issued.stderr)![0])
+
+  await expect.poll(() => closed).toBe(true) // the server closed the socket (4401)
+  expect((await (await revokedRefused).json()).detail.code).toBe('invalid_token')
+  await expect(lockTitle(page)).toBeVisible()
+  expect(await stored(page)).toBeNull()
+})
+
 test('« Oublier le jeton » efface le jeton stocké', async ({ page }) => {
   await page.goto('/#/travail')
   const forget = page.getByRole('button', { name: 'Oublier le jeton' })

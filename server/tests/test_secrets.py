@@ -246,3 +246,15 @@ def test_actor_token_is_redacted_whatever_its_surroundings():
         assert "nxt_" not in cleaned, text
         assert "actor_token" in found or "credential" in found
     assert redact("nxt_court")[0] == "nxt_court"
+
+
+def test_ws_ticket_is_redacted_whatever_its_surroundings():
+    ticket = "nxw_" + "A" * 43  # built at runtime
+    header = "Sec-WebSocket-Protocol: nexus.live.v1, " + ticket
+    for text in (ticket, f" {ticket} ", "x" + ticket, header, ticket + "B" * 5):
+        cleaned, found = redact(text)
+        assert "nxw_" not in cleaned, text
+        assert "ws_ticket" in found or "credential" in found
+    cleaned, _ = redact(ticket + "B" * 5)
+    assert "B" not in cleaned  # a longer run is masked whole
+    assert redact("nxw_court")[0] == "nxw_court"

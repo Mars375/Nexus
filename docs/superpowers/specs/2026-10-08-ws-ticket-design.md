@@ -181,7 +181,7 @@ Ordre, chaque refus étant une fermeture 1008 avant `accept`, sans raison qui re
   - **pas verrouillée** : `request()` n'oublie le jeton et ne verrouille que si le jeton envoyé est encore celui du stockage (`api.ts:167`, `getToken() === sent`). Un 401 sans verrouillage veut donc dire que le jeton a changé entre-temps (autre onglet) : backoff existant (`attempt` + 1), et la demande suivante part avec le nouveau jeton. Attendre un déverrouillage qui ne viendra pas couperait le temps réel pour de bon.
 - Erreur réseau, délai dépassé ou 5xx sur la demande de ticket → backoff existant (`attempt` + 1).
 - `stop()` pendant la demande : la requête est annulée (`AbortController`) et aucune socket n'est ouverte ; une réponse tardive est ignorée.
-- Fermeture 4401 ou toute autre perte : chemin de reconnexion habituel ; la demande de ticket qui suit reçoit le 401 et verrouille. Le ticket n'est jamais affiché ni écrit dans la console par le code de l'interface.
+- Fermeture 4401 ou toute autre perte : chemin de reconnexion habituel ; la demande de ticket qui suit reçoit le 401 et verrouille, ou n'est pas envoyée du tout si une requête REST a déjà verrouillé l'application (`connect()` ne demande jamais de ticket tant que l'application est verrouillée ; amendé après la relecture de CodeRabbit sur la PR A). Le ticket n'est jamais affiché ni écrit dans la console par le code de l'interface.
 - Tauri : `new WebSocket(url, protocols)` fonctionne dans WebView2 ; `NEXUS_ALLOWED_ORIGINS` et le CORS de #47 restent nécessaires pour une interface distante (hors de #57).
 
 ### 3.6 Journaux

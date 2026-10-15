@@ -22,14 +22,16 @@ L'interface reflète chaque changement sans rechargement : un événement posté
 
 ### Point d'entrée
 
+> Depuis #57, la connexion se fait par ticket à usage unique (`POST /api/ws-ticket`, offert en sous-protocole) ; un jeton révoqué ferme la socket avec le code 4401. Voir `docs/superpowers/specs/2026-10-08-ws-ticket-design.md`.
+
 `/api/ws` (WebSocket). Paramètres de requête facultatifs : `history_after`, `events_after` (entiers ≥ 0) et `instance` (16 chiffres hexadécimaux minuscules, ASCII strict).
 
 - **Sans curseur** (premier chargement d'un onglet) : on part du dernier identifiant existant ; l'état actuel vient des lectures REST.
 - **Avec curseur** (reconnexion) : on renvoie tout ce qui a changé au-delà, puis on passe en direct.
 - **Curseur en avance sur la base** (ex. base restaurée depuis une sauvegarde) : le serveur l'annonce (`reset: true` dans `hello`) et repart de l'existant ; le client relit tout.
 - **Instance différente** : à chaque démarrage, le serveur tire un identifiant d'instance aléatoire (`secrets.token_hex(8)`, rien n'en est dérivé) et le renvoie dans `hello`. Le client le redonne avec son curseur à la reconnexion. Si l'instance reçue diffère de celle du serveur (redémarrage, base restaurée), les identifiants ont pu être réécrits sous le curseur sans le dépasser : le serveur répond `reset: true` et repart de l'existant, même si le curseur n'est pas en avance. Conséquence assumée : chaque redémarrage du serveur fait invalider une fois tout le cache des clients connectés.
-- **Compatibilité** : un curseur sans `instance` (ancien client) n'est comparé à aucune instance (comportement d'avant). Une `instance` sans curseur, ou mal formée, est refusée (1008, raison générique « curseur invalide », la valeur reçue n'est jamais recopiée).
-- Paramètre invalide (curseur non entier ou négatif, `instance` mal formée : majuscules, longueur ≠ 16, chiffres non ASCII) : fermeture avec le code 1008 et une raison générique, sans recopier la valeur reçue.
+- **Compatibilité** : un curseur sans `instance` (ancien client) n'est comparé à aucune instance (comportement d'avant). Une `instance` sans curseur, ou mal formée, est refusée (1008, sans raison : la valeur reçue n'est jamais recopiée).
+- Paramètre invalide (curseur non entier ou négatif, `instance` mal formée : majuscules, longueur ≠ 16, chiffres non ASCII) : fermeture avec le code 1008 et sans raison, sans recopier la valeur reçue.
 
 ### Messages (JSON, serveur → client)
 

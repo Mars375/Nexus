@@ -6,7 +6,7 @@ stays optional and must equal that actor (D9). Nothing received is ever echoed b
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, NamedTuple
 
 from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
@@ -35,26 +35,39 @@ def bearer_token(authorization: str) -> str | None:
     return token
 
 
-def authenticated_actor(
+class TokenIdentity(NamedTuple):
+    """Who a presented token is: its row (to check it is still live later) and its actor."""
+
+    token_id: int
+    actor: str
+
+
+def authenticated_token(
     session: Annotated[Session, Depends(get_session)],
     authorization: Annotated[str | None, Header()] = None,
     x_nexus_actor: Annotated[str | None, Header()] = None,
-) -> str:
-    """The actor of the presented token; 401 without a valid one, 403 on a header mismatch."""
+) -> TokenIdentity:
+    """The token row id and actor of the presented token; 401 without a valid one, 403 on a header
+    mismatch."""
     token = None if authorization is None else bearer_token(authorization)
     if token is None:
         raise _unauthorized(
             "auth_required", "en-tête Authorization : jeton porteur attendu (Bearer nxt_…)"
         )
-    actor = tokens.lookup(session, token)
-    if actor is None:
+    row = tokens.lookup_row(session, token)
+    if row is None:
         raise _unauthorized("invalid_token", "en-tête Authorization : jeton invalide ou révoqué")
-    if x_nexus_actor is not None and x_nexus_actor != actor:
+    if x_nexus_actor is not None and x_nexus_actor != row.actor:
         raise HTTPException(status.HTTP_403_FORBIDDEN, {
             "code": "actor_mismatch",
             "message": "l'acteur de l'en-tête X-Nexus-Actor diffère de celui du jeton",
         })
-    return actor
+    return TokenIdentity(row.id, row.actor)
+
+
+def authenticated_actor(identity: Annotated[TokenIdentity, Depends(authenticated_token)]) -> str:
+    """The actor of the presented token; 401 without a valid one, 403 on a header mismatch."""
+    return identity.actor
 
 
 Authenticated = [Depends(authenticated_actor)]

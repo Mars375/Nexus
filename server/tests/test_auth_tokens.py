@@ -126,3 +126,34 @@ def test_label_accepts_unicode_space_separators_as_plain_spaces(session, space):
 def test_label_refuses_format_characters_with_a_clear_message(session):
     with pytest.raises(ValueError, match="caractères imprimables"):
         tokens.issue(session, "loic", "a\u200bb")
+
+
+def test_lookup_row_returns_the_live_row(session):
+    row, token = tokens.issue(session, "codex", "cli")
+    session.commit()
+    found = tokens.lookup_row(session, token)
+    assert found is not None and found.id == row.id and found.actor == "codex"
+
+
+def test_lookup_row_ignores_unknown_malformed_and_revoked(session):
+    row, token = tokens.issue(session, "loic", "navigateur")
+    session.commit()
+    assert tokens.lookup_row(session, "nxt_" + "A" * 43) is None
+    assert tokens.lookup_row(session, "n'importe quoi") is None
+    row.revoked_at = now()
+    session.commit()
+    assert tokens.lookup_row(session, token) is None
+
+
+def test_is_live_is_false_for_a_revoked_or_deleted_row(session):
+    row, _ = tokens.issue(session, "loic", "navigateur")
+    other, _ = tokens.issue(session, "codex", "cli")
+    session.commit()
+    assert tokens.is_live(session, row.id) is True
+    row.revoked_at = now()
+    session.commit()
+    assert tokens.is_live(session, row.id) is False
+    session.delete(other)  # an absent row counts as a revocation (D6)
+    session.commit()
+    assert tokens.is_live(session, other.id) is False
+    assert tokens.is_live(session, 987654) is False

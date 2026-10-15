@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { ApiError, fetchHealth, request, retryQuery, tasksApi } from './api'
+import { ApiError, fetchHealth, liveApi, LIVE_PROTOCOL, request, retryQuery, tasksApi } from './api'
 import { clearToken, getAuthState, getToken, markUnlocked, setToken } from './auth'
 
 afterEach(() => {
@@ -194,4 +194,73 @@ test('joindre une preuve envoie la liste à la route dédiée, sans acteur dans 
   expect(url).toMatch(/\/api\/tasks\/nx-task-1\/evidence$/)
   expect(init.method).toBe('POST')
   expect(JSON.parse(init.body as string)).toEqual({ evidence: ['commit:abc'] })
+})
+
+// --- Ticket WebSocket (#57) --------------------------------------------------------------------
+
+describe('liveApi.ticket', () => {
+  const TOKEN = 'nxt_' + 'A'.repeat(43)
+  const TICKET = 'nxw_' + 'T'.repeat(43)
+  const answer = (body: unknown, status = 200) =>
+    vi.fn(async (..._args: [string, RequestInit?]) =>
+      new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }),
+    )
+  const valid = { ticket: TICKET, protocol: LIVE_PROTOCOL, expires_in: 30 }
+
+  beforeEach(() => {
+    clearToken()
+    markUnlocked()
+    setToken(TOKEN)
+  })
+  afterEach(() => {
+    clearToken()
+    markUnlocked()
+  })
+
+  test('POST /api/ws-ticket avec le jeton stocké, et rend la chaîne du ticket', async () => {
+    const fetchMock = answer(valid)
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(liveApi.ticket(new AbortController().signal)).resolves.toBe(TICKET)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/ws-ticket')
+    expect(init?.method).toBe('POST')
+    expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${TOKEN}`)
+  })
+
+  test.each([
+    ['préfixe nxt_', { ...valid, ticket: 'nxt_' + 'T'.repeat(43) }],
+    ['42 caractères', { ...valid, ticket: 'nxw_' + 'T'.repeat(42) }],
+    ['44 caractères', { ...valid, ticket: 'nxw_' + 'T'.repeat(44) }],
+    ['protocole autre', { ...valid, protocol: 'nexus.live.v2' }],
+    ['ticket absent', { protocol: LIVE_PROTOCOL, expires_in: 30 }],
+    ['ticket non texte', { ...valid, ticket: 42 }],
+    ['corps non objet', ['nxw_' + 'T'.repeat(43)]],
+    ['corps nul', null],
+  ])('une réponse mal formée (%s) est rejetée sans rien recopier', async (_name, body) => {
+    vi.stubGlobal('fetch', answer(body))
+    const error = await liveApi.ticket(new AbortController().signal).then(
+      () => null,
+      (e: unknown) => e,
+    )
+    expect(error).toBeInstanceOf(Error)
+    expect(error).not.toBeInstanceOf(ApiError)
+    expect(String((error as Error).message)).not.toContain('nxw_')
+    expect(String((error as Error).message)).not.toContain('nxt_')
+    expect(getAuthState().locked).toBe(false)
+  })
+
+  test('un 401 invalid_token passe par le chemin habituel : jeton oublié, application verrouillée', async () => {
+    vi.stubGlobal('fetch', answer({ detail: { code: 'invalid_token', message: 'refus' } }, 401))
+    await expect(liveApi.ticket(new AbortController().signal)).rejects.toMatchObject({ status: 401, code: 'invalid_token' })
+    expect(getToken()).toBeNull()
+    expect(getAuthState()).toMatchObject({ locked: true, lockReason: 'invalid_token' })
+  })
+
+  test('le signal passé annule la requête', async () => {
+    vi.stubGlobal('fetch', hangingFetch())
+    const controller = new AbortController()
+    const pending = liveApi.ticket(controller.signal)
+    controller.abort()
+    await expect(pending).rejects.toThrow()
+  })
 })

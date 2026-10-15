@@ -1,9 +1,14 @@
-"""Journaux du serveur sans valeur reçue (ADR-006, #25).
+"""Server logs without received values (ADR-006, #25, #57).
 
-Le journal d'accès d'uvicorn recopie le chemin et les paramètres tels que reçus : un secret
-glissé dans une URL finirait en clair dans les journaux. Nexus le remplace par sa propre ligne
-(méthode, gabarit de route, statut, durée) et retire les paramètres des lignes WebSocket
-qu'uvicorn écrit sur `uvicorn.error`.
+uvicorn's access log copies the path and parameters as received: a secret slipped into a URL
+would end up in clear in the logs. Nexus replaces it with its own line (method, route template,
+status, duration) and strips the parameters from the WebSocket lines uvicorn writes on
+`uvicorn.error`.
+
+At DEBUG (request line, headers and frames of websockets) and TRACE (uvicorn's scope and ASGI
+messages) the logs would copy the WebSocket ticket and the cursors of the URL (#57):
+`WebSocketSecretFilter` masks them, from the message format and the argument position, never
+from the shape of a value.
 """
 
 from __future__ import annotations
@@ -24,6 +29,9 @@ UNKNOWN_METHOD = "<méthode inconnue>"
 HTTP_METHODS = frozenset(
     {"GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"}
 )
+MASKED = "<masqué>"
+MASKED_SCOPE = "<scope masqué>"
+MASKED_DETAIL = " (détail masqué)"
 # Seules routes WebSocket : leur chemin sans paramètres ne porte aucune valeur reçue.
 WEBSOCKET_PATHS = frozenset({"/api/ws"})
 
@@ -90,6 +98,51 @@ class WebSocketPathFilter(logging.Filter):
         return True
 
 
+# websockets (DEBUG): request line, headers and frames, all arguments are received values.
+_ALL_ARGUMENTS_MASKED = frozenset({"< %s %s %s", "< %s: %s", "> %s: %s", "< %s", "> %s"})
+# uvicorn's MessageLoggerMiddleware (TRACE), on the `uvicorn.asgi` logger only.
+_SCOPE_FORMAT = "%s [%d] Started scope=%s"
+_MESSAGE_FORMATS = frozenset({"%s [%d] Receive %s", "%s [%d] Send %s"})
+ASGI_LOGGER = "uvicorn.asgi"
+
+
+class WebSocketSecretFilter(logging.Filter):
+    """Masks what websockets and uvicorn log at DEBUG and TRACE about a WebSocket handshake.
+
+    Three families, recognised by the exact message format (or the "! " prefix) and by argument
+    position, never by what a value looks like (SECURITY §1):
+    1. request line, headers and frames of websockets: every argument becomes MASKED;
+    2. websockets handshake refusals ("! …", "opening handshake failed"): the traceback, which
+       repeats the received header, is dropped and the message says so;
+    3. the scope and ASGI messages of uvicorn's TRACE logger: the scope is masked and each
+       message is reduced to its `type`.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Rewrite the record in place; always keep it."""
+        msg = record.msg
+        if not isinstance(msg, str):
+            return True
+        if msg in _ALL_ARGUMENTS_MASKED:
+            count = len(record.args) if isinstance(record.args, tuple) else 1
+            record.args = (MASKED,) * count
+        elif msg.startswith("! ") or msg == "opening handshake failed":
+            record.exc_info = None
+            record.exc_text = None
+            record.stack_info = None
+            if not msg.endswith(MASKED_DETAIL):
+                record.msg = msg + MASKED_DETAIL
+        elif record.name == ASGI_LOGGER and isinstance(record.args, tuple) and record.args:
+            args = list(record.args)
+            if msg == _SCOPE_FORMAT:
+                args[-1] = MASKED_SCOPE
+            elif msg in _MESSAGE_FORMATS:
+                last = args[-1]
+                args[-1] = {"type": last.get("type")} if isinstance(last, dict) else MASKED
+            record.args = tuple(args)
+        return True
+
+
 def _conversions(fmt: str) -> int:
     """Nombre de conversions `%` dans un format, sans compter les `%%` littéraux."""
     return fmt.replace("%%", "").count("%")
@@ -103,9 +156,11 @@ def uvicorn_log_config() -> dict[str, Any]:
     from uvicorn.config import LOGGING_CONFIG
 
     config = copy.deepcopy(LOGGING_CONFIG)
-    config.setdefault("filters", {})["websocket_path"] = {"()": WebSocketPathFilter}
+    filters = config.setdefault("filters", {})
+    filters["websocket_path"] = {"()": WebSocketPathFilter}
+    filters["websocket_secrets"] = {"()": WebSocketSecretFilter}
     for handler in config["handlers"].values():
-        handler.setdefault("filters", []).append("websocket_path")
+        handler.setdefault("filters", []).extend(["websocket_path", "websocket_secrets"])
     config["loggers"]["nexus"] = {"handlers": ["default"], "level": "INFO", "propagate": False}
     # Défense en profondeur : même avec `access_log=True` par erreur, le journal d'accès
     # d'uvicorn (qui recopie l'URL reçue) n'a aucune sortie.

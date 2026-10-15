@@ -3,6 +3,7 @@
 import re
 
 import pytest
+from conftest import ws_connect
 from starlette.websockets import WebSocketDisconnect
 
 from nexus import live
@@ -196,7 +197,7 @@ def test_hello_without_cursor_starts_from_now(client):
     new_task(client)
     with db(client) as s:
         now = current_cursor(s)
-    with client.websocket_connect("/api/ws") as ws:
+    with ws_connect(client, "/api/ws") as ws:
         hello = ws.receive_json()
     assert re.fullmatch(r"[0-9a-f]{16}", hello.pop("instance"))
     assert hello == {"type": "hello", "cursor": now.as_dict(), "reset": False}
@@ -207,14 +208,14 @@ def test_a_reconnection_replays_what_was_missed(client):
         before = current_cursor(s)
     ref = new_task(client)
     url = f"/api/ws?history_after={before.history}&events_after={before.events}"
-    with client.websocket_connect(url) as ws:
+    with ws_connect(client, url) as ws:
         assert ws.receive_json()["type"] == "hello"
         message = ws.receive_json()
     assert (message["type"], message["task"]) == ("task_changed", ref)
 
 
 def test_a_change_after_connecting_is_pushed_live(client):
-    with client.websocket_connect("/api/ws") as ws:
+    with ws_connect(client, "/api/ws") as ws:
         ws.receive_json()  # hello
         ref = new_task(client)
         message = ws.receive_json()
@@ -223,19 +224,19 @@ def test_a_change_after_connecting_is_pushed_live(client):
 
 def test_silence_is_broken_by_a_ping(client, monkeypatch):
     monkeypatch.setattr(live, "PING_SECONDS", 0.3)
-    with client.websocket_connect("/api/ws") as ws:
+    with ws_connect(client, "/api/ws") as ws:
         hello = ws.receive_json()
         assert ws.receive_json() == {"type": "ping", "cursor": hello["cursor"]}
 
 
 def test_a_cursor_ahead_of_the_base_announces_a_reset(client):
-    with client.websocket_connect("/api/ws?history_after=999&events_after=999") as ws:
+    with ws_connect(client, "/api/ws?history_after=999&events_after=999") as ws:
         assert ws.receive_json()["reset"] is True
 
 
 def test_a_foreign_origin_is_refused(client):
     with pytest.raises(WebSocketDisconnect) as closed:
-        with client.websocket_connect("/api/ws", headers={"origin": "https://evil.example"}):
+        with ws_connect(client, "/api/ws", headers={"origin": "https://evil.example"}):
             pass
     assert closed.value.code == 1008
 
@@ -249,21 +250,21 @@ def test_a_configured_origin_is_accepted(tmp_path):
         data_dir=tmp_path / "data", allowed_origins=frozenset({"tauri://localhost"})
     )
     with ActorClient(create_app(settings, nodes_runner=tailscale_json)) as client:
-        with client.websocket_connect("/api/ws", headers={"origin": "tauri://localhost"}) as ws:
+        with ws_connect(client, "/api/ws", headers={"origin": "tauri://localhost"}) as ws:
             assert ws.receive_json()["type"] == "hello"
 
 
 def test_a_loopback_origin_is_accepted(client):
-    with client.websocket_connect("/api/ws", headers={"origin": "http://localhost:5199"}) as ws:
+    with ws_connect(client, "/api/ws", headers={"origin": "http://localhost:5199"}) as ws:
         assert ws.receive_json()["type"] == "hello"
 
 
 def test_an_invalid_cursor_is_refused_without_echo(client):
     with pytest.raises(WebSocketDisconnect) as closed:
-        with client.websocket_connect("/api/ws?history_after=ghp_trace&events_after=0"):
+        with ws_connect(client, "/api/ws?history_after=ghp_trace&events_after=0"):
             pass
     assert closed.value.code == 1008
-    assert "ghp_trace" not in str(closed.value.reason or "")
+    assert closed.value.reason == ""  # no reason at all: nothing received is echoed
 
 
 def test_allowed_origins_are_read_from_the_environment(monkeypatch, tmp_path):
@@ -275,7 +276,7 @@ def test_allowed_origins_are_read_from_the_environment(monkeypatch, tmp_path):
 
 
 def _hello(client, query=""):
-    with client.websocket_connect("/api/ws" + query) as ws:
+    with ws_connect(client, "/api/ws" + query) as ws:
         return ws.receive_json()
 
 
@@ -300,7 +301,7 @@ def test_hello_instance_differs_between_apps(tmp_path):
 
 def test_only_hello_carries_the_instance(client):
     new_task(client)
-    with client.websocket_connect("/api/ws?history_after=0&events_after=0") as ws:
+    with ws_connect(client, "/api/ws?history_after=0&events_after=0") as ws:
         ws.receive_json()
         assert "instance" not in ws.receive_json()
 
@@ -359,7 +360,8 @@ def test_a_restored_base_makes_the_old_instance_reset(tmp_path):
 def test_a_bad_instance_is_refused_without_echo(client, query):
     value = query.rsplit("instance=", 1)[1]
     with pytest.raises(WebSocketDisconnect) as closed:
-        with client.websocket_connect("/api/ws" + query):
+        with ws_connect(client, "/api/ws" + query):
             pass
     assert closed.value.code == 1008
+    assert closed.value.reason == ""
     assert value not in str(closed.value.reason or "")

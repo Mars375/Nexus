@@ -13,7 +13,11 @@ afterEach(() => {
 function renderApp(hash: string) {
   window.location.hash = hash
   vi.stubGlobal('matchMedia', (query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }))
-  vi.stubGlobal('fetch',vi.fn(async () => new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } })))
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url === '/api/health') return jsonResponse(200, HEALTH)
+    if (url === '/api/ws-ticket') return jsonResponse(200, { ticket: 'nxw_' + 'T'.repeat(43), protocol: 'nexus.live.v1', expires_in: 30 })
+    return jsonResponse(200, [])
+  }))
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><App /></QueryClientProvider>)
 }
 

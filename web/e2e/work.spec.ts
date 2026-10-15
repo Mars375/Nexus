@@ -243,6 +243,11 @@ test('après une coupure, la reconnexion rattrape ce qui a changé', async ({ pa
   let connections = 0
   let blocked = false
   const live: { current: { page: WebSocketRoute; server: WebSocketRoute } | null } = { current: null }
+  const urls: string[] = []
+  // Only the Nexus socket: Vite's dev server keeps its own HMR WebSocket on the page.
+  page.on('websocket', (ws) => {
+    if (new URL(ws.url()).pathname === '/api/ws') urls.push(ws.url())
+  })
   await page.routeWebSocket(/\/api\/ws/, (ws) => {
     if (blocked) {
       void ws.close({ code: 1011, reason: 'coupure simulée' })
@@ -287,6 +292,9 @@ test('après une coupure, la reconnexion rattrape ce qui a changé', async ({ pa
     )
     .toBe(true)
   await expect(card(page, 'Pendant la coupure')).toBeVisible()
+  // Le ticket voyage en sous-protocole, jamais dans l'URL (#57).
+  expect(urls.length).toBeGreaterThan(1)
+  expect(urls.filter((url) => url.includes('nxw_'))).toEqual([])
 })
 
 // --- Tâche terminée en lecture seule et tâche de suite (#65, ADR-022) ---

@@ -1,4 +1,10 @@
+import base64
+import http.client
 import json
+import os
+import socket
+import threading
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -7,6 +13,7 @@ from nexus.actors import ACTORS
 from nexus.app import create_app
 from nexus.auth import tokens
 from nexus.config import Settings
+from nexus.live import LIVE_PROTOCOL
 
 LOCAL_URL = "http://127.0.0.1"  # TestClient sends Host `testserver` by default: refused (D6)
 
@@ -61,6 +68,92 @@ class ActorClient(TestClient):
                 headers |= self.headers_for(actor)
                 kwargs["headers"] = headers
         return super().request(method, url, **kwargs)
+
+
+def ws_connect(client, url="/api/ws", *, actor="loic", **kwargs):
+    """Open the live WebSocket the way the UI does: a fresh ticket, offered as a subprotocol."""
+    res = client.post("/api/ws-ticket", headers=client.headers_for(actor))
+    assert res.status_code == 200, res.status_code
+    ticket = res.json()["ticket"]
+    return client.websocket_connect(url, subprotocols=[LIVE_PROTOCOL, ticket], **kwargs)
+
+
+def serve_real(app, **config):
+    """Run a real uvicorn server on a free loopback port; returns (server, thread, port).
+
+    `log_config` defaults to None so the session's logging stays untouched; `log_level` and any
+    other `uvicorn.Config` option can be passed.
+    """
+    import uvicorn
+
+    options = {"host": "127.0.0.1", "port": 0, "log_config": None, "access_log": False}
+    options.update(config)
+    server = uvicorn.Server(uvicorn.Config(app, **options))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started:
+        if not thread.is_alive() or time.monotonic() > deadline:
+            stop_real(server, thread)
+            raise AssertionError("uvicorn did not start")
+        time.sleep(0.02)
+    return server, thread, server.servers[0].sockets[0].getsockname()[1]
+
+
+def stop_real(server, thread):
+    server.should_exit = True
+    thread.join(timeout=10)
+    assert not thread.is_alive(), "uvicorn did not stop"
+
+
+def raw_handshake(port, host, protocols=None, origin="http://localhost:5173", path="/api/ws"):
+    """A hand-written WebSocket handshake; returns the whole first answer (headers and body).
+
+    `protocols` is the raw `Sec-WebSocket-Protocol` value, sent as is.
+    """
+    key = base64.b64encode(os.urandom(16)).decode()  # a fresh nonce, as a real client sends
+    lines = [
+        f"GET {path} HTTP/1.1",
+        f"Host: {host}",
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        f"Sec-WebSocket-Key: {key}",
+        "Sec-WebSocket-Version: 13",
+        f"Origin: {origin}",
+    ]
+    if protocols is not None:
+        lines.append(f"Sec-WebSocket-Protocol: {protocols}")
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+        sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("latin-1"))
+        chunks = []
+        try:
+            while chunk := sock.recv(4096):
+                chunks.append(chunk)
+                if len(chunk) < 4096:
+                    break
+        except TimeoutError:
+            pass
+        return b"".join(chunks).decode("latin-1")
+
+
+def issue_ticket_http(port, token):
+    """Ask a real server for a ticket over HTTP, as the UI does."""
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        conn.request("POST", "/api/ws-ticket", headers={"Authorization": f"Bearer {token}"})
+        res = conn.getresponse()
+        assert res.status == 200, res.status
+        return json.loads(res.read())["ticket"]
+    finally:
+        conn.close()
+
+
+def issue_token(app, actor="loic"):
+    """A fresh actor token in the app's database."""
+    with app.state.sessionmaker() as session:
+        _, token = tokens.issue(session, actor, "test")
+        session.commit()
+    return token
 
 
 def tailscale_json(**overrides) -> str:

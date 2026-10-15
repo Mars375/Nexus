@@ -1,8 +1,11 @@
 /*
- * Temps réel (#5) : une connexion WebSocket vers /api/ws, avec reconnexion et rattrapage.
- * Le WebSocket est injecté (`open`) pour que la logique se teste sans réseau. Les messages
- * ne portent que des références : l'interface relit toujours les données par l'API REST.
+ * Real time (#5): a WebSocket connection to /api/ws, with reconnection and catch-up.
+ * The WebSocket is injected (`open`) so the logic can be tested without a network. Messages only
+ * carry references: the UI always rereads data through the REST API.
+ * Each connection (and reconnection) first asks for a fresh single-use ticket (#57), offered as a
+ * subprotocol next to `nexus.live.v1`; it is never kept, logged or put in the URL.
  */
+import { ApiError, LIVE_PROTOCOL } from './api'
 import { API_BASE } from './apiBase'
 
 export type Cursor = { history: number; events: number }
@@ -70,7 +73,13 @@ const isCursor = (value: unknown): value is Cursor =>
   isRecord(value) && isCursorValue(value.history) && isCursorValue(value.events)
 
 export function connectLive(options: {
-  open: (url: string) => LiveSocket
+  /** A fresh single-use ticket; cancelled through the signal when the request is not needed. */
+  ticket: (signal: AbortSignal) => Promise<string>
+  /** Whether the app is locked (the server answered 401); read after a refused ticket request. */
+  isLocked: () => boolean
+  /** Calls the listener when the app is unlocked; returns the unsubscribe function. */
+  onUnlock: (listener: () => void) => () => void
+  open: (url: string, protocols: string[]) => LiveSocket
   onMessage: (message: LiveMessage) => void
   onState: (state: LiveState) => void
   random?: () => number
@@ -85,6 +94,8 @@ export function connectLive(options: {
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
   let silenceTimer: ReturnType<typeof setTimeout> | undefined
   let unknownTimer: ReturnType<typeof setTimeout> | undefined
+  let pendingTicket: AbortController | undefined // the ticket request in flight
+  let waitingUnlock = false // locked: no new attempt until the app is unlocked
 
   const armUnknown = () => {
     clearTimeout(unknownTimer)
@@ -100,6 +111,8 @@ export function connectLive(options: {
       const staleSocket = socket
       socket = null
       staleSocket?.close()
+      pendingTicket?.abort() // a ticket request that never answers counts as a failed handshake
+      pendingTicket = undefined
       handleLoss()
     }, SILENCE_MS)
   }
@@ -116,7 +129,7 @@ export function connectLive(options: {
     }
     attempt += 1
     options.onState(unknown ? { status: 'unknown', attempt } : { status: 'reconnecting', attempt })
-    reconnectTimer = setTimeout(connect, reconnectDelay(attempt, options.random))
+    reconnectTimer = setTimeout(() => void connect(), reconnectDelay(attempt, options.random))
   }
 
   // Validate a pushed message per type before any state is touched (review checklist §2).
@@ -142,10 +155,45 @@ export function connectLive(options: {
     }
   }
 
-  const connect = () => {
-    const current = options.open(liveUrl(cursor, instance))
+  const connect = async () => {
+    if (options.isLocked()) {
+      // Locked (the server refused our token): a ticket request would only repeat the 401.
+      // Wait for the unlock.
+      waitingUnlock = true
+      return
+    }
+    // A handshake that never completes (ticket request included) is treated as silence (45 s),
+    // then retried.
+    armSilence()
+    pendingTicket?.abort()
+    const request = new AbortController()
+    pendingTicket = request
+    let ticket: string
+    try {
+      ticket = await options.ticket(request.signal)
+    } catch (error) {
+      if (stopped || pendingTicket !== request) return // stopped or superseded: nothing to do
+      pendingTicket = undefined
+      if (error instanceof ApiError && error.status === 401 && options.isLocked()) {
+        // The server locked the app: retrying would only repeat the 401. Wait for the unlock.
+        clearTimeout(silenceTimer)
+        waitingUnlock = true
+        return
+      }
+      handleLoss() // network error, timeout, 5xx, malformed answer, or a 401 that did not lock
+      return
+    }
+    if (stopped || pendingTicket !== request) return // a late answer is ignored
+    pendingTicket = undefined
+    if (options.isLocked()) {
+      // A REST 401 locked the app while the ticket request was in flight: do not use the ticket
+      // (it is dropped, never reused) and wait for the unlock.
+      clearTimeout(silenceTimer)
+      waitingUnlock = true
+      return
+    }
+    const current = options.open(liveUrl(cursor, instance), [LIVE_PROTOCOL, ticket])
     socket = current
-    // Une poignée de main qui n'aboutit jamais est traitée comme un silence (45 s), puis relancée.
     armSilence()
     current.onopen = () => {
       if (stopped || socket !== current) return
@@ -180,12 +228,22 @@ export function connectLive(options: {
     }
   }
 
+  const unsubscribe = options.onUnlock(() => {
+    if (stopped || !waitingUnlock) return
+    waitingUnlock = false
+    attempt = 0
+    clearTimeout(reconnectTimer)
+    void connect()
+  })
+
   options.onState({ status: 'connecting' })
   armUnknown() // aucune connexion depuis le chargement de la page
-  connect()
+  void connect()
 
   return () => {
     stopped = true
+    unsubscribe()
+    pendingTicket?.abort()
     clearTimeout(reconnectTimer)
     clearTimeout(silenceTimer)
     clearTimeout(unknownTimer)

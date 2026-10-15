@@ -44,8 +44,8 @@ def is_well_formed(token: object) -> bool:
     return isinstance(token, str) and token.isascii() and _FORMAT.fullmatch(token) is not None
 
 
-def lookup(session: Session, token: str) -> str | None:
-    """The actor a live (non-revoked) token belongs to, or None."""
+def lookup_row(session: Session, token: str) -> ActorToken | None:
+    """The row of a live (non-revoked) token, or None."""
     if not is_well_formed(token):
         return None
     wanted = digest(token)
@@ -54,7 +54,19 @@ def lookup(session: Session, token: str) -> str | None:
     ).first()
     if row is None or not hmac.compare_digest(row.token_hash, wanted):
         return None
-    return row.actor
+    return row
+
+
+def lookup(session: Session, token: str) -> str | None:
+    """The actor a live (non-revoked) token belongs to, or None."""
+    row = lookup_row(session, token)
+    return row.actor if row is not None else None
+
+
+def is_live(session: Session, token_id: int) -> bool:
+    """Whether the token row still exists and is not revoked; an absent row counts as revoked."""
+    row = session.get(ActorToken, token_id)
+    return row is not None and row.revoked_at is None
 
 
 def clean_label(label: str) -> str:

@@ -11,17 +11,24 @@ import asyncio
 import re
 from contextlib import suppress
 from dataclasses import dataclass
+from typing import Annotated
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Request, Response, WebSocket, WebSocketDisconnect
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from nexus.auth import tokens
+from nexus.auth.deps import TokenIdentity, authenticated_token
+from nexus.auth.tickets import TTL_SECONDS, is_well_formed
 from nexus.models import Event, TaskHistory
 
 POLL_SECONDS = 0.25
 PING_SECONDS = 15.0
 RESYNC_THRESHOLD = 500
+REVOKED_CODE = 4401
+REVOKED_REASON = "jeton révoqué"
+LIVE_PROTOCOL = "nexus.live.v1"
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
@@ -130,7 +137,7 @@ def changes_since(session: Session, cursor: Cursor) -> tuple[list[dict], Cursor]
 def origin_allowed(origin: str | None, extra: frozenset[str]) -> bool:
     """Un WebSocket échappe à CORS : seule une origine locale (ou déclarée) peut écouter."""
     if origin is None:
-        return True  # client non navigateur, local : il lirait l'API REST de toute façon
+        return True  # non-browser client: it still needs a ticket
     if origin in extra:
         return True
     try:
@@ -144,11 +151,43 @@ def origin_allowed(origin: str | None, extra: frozenset[str]) -> bool:
 router = APIRouter()
 
 
+@router.post("/api/ws-ticket")
+def issue_ws_ticket(
+    request: Request,
+    response: Response,
+    identity: Annotated[TokenIdentity, Depends(authenticated_token)],
+) -> dict:
+    """A single-use WebSocket ticket for the presented token (#57); never cached."""
+    response.headers["Cache-Control"] = "no-store"
+    ticket = request.app.state.ws_tickets.issue(identity.token_id, identity.actor)
+    return {"ticket": ticket, "protocol": LIVE_PROTOCOL, "expires_in": TTL_SECONDS}
+
+
+def ticket_from_subprotocols(protocols: list[str]) -> str | None:
+    """The ticket offered next to `nexus.live.v1`, or None unless the offer is exactly that.
+
+    Exactly two entries: the protocol and one well-formed ticket, in either order, no duplicate.
+    """
+    if len(protocols) != 2 or LIVE_PROTOCOL not in protocols:
+        return None
+    other = protocols[1] if protocols[0] == LIVE_PROTOCOL else protocols[0]
+    return other if other != LIVE_PROTOCOL and is_well_formed(other) else None
+
+
 @router.websocket("/api/ws")
 async def live_updates(websocket: WebSocket) -> None:
+    # Every refusal before `accept` is a bare close(1008): HTTP 403, no reason, nothing received
+    # is echoed and the cases are not told apart (#57). Order: Host (middleware), Origin, ticket
+    # shape, ticket, cursor. A refusal before the ticket step leaves the ticket usable; from the
+    # ticket step on it is spent, whatever the next check says.
     app = websocket.app
     if not origin_allowed(websocket.headers.get("origin"), app.state.settings.allowed_origins):
-        await websocket.close(code=1008)  # avant acceptation : poignée de main refusée
+        await websocket.close(code=1008)
+        return
+    ticket = ticket_from_subprotocols(list(websocket.scope.get("subprotocols") or []))
+    grant = app.state.ws_tickets.consume(ticket) if ticket is not None else None
+    if grant is None:
+        await websocket.close(code=1008)
         return
     make = app.state.sessionmaker
 
@@ -156,9 +195,23 @@ async def live_updates(websocket: WebSocket) -> None:
         with make() as session:
             return current_cursor(session)
 
-    def read_changes(cursor: Cursor) -> tuple[list[dict], Cursor]:
+    def token_live() -> bool:
         with make() as session:
+            return tokens.is_live(session, grant.token_id)
+
+    def read_changes(cursor: Cursor) -> tuple[list[dict], Cursor] | None:
+        """The changes beyond the cursor, or None once the token is revoked or deleted.
+
+        The token is checked first, in the same session: nothing is sent after a revocation.
+        """
+        with make() as session:
+            if not tokens.is_live(session, grant.token_id):
+                return None
             return changes_since(session, cursor)
+
+    if not await asyncio.to_thread(token_live):
+        await websocket.close(code=1008)  # revoked or deleted between issue and use
+        return
 
     try:
         cursor, reset = start_cursor(
@@ -169,10 +222,9 @@ async def live_updates(websocket: WebSocket) -> None:
             app.state.live_instance,
         )
     except ValueError:
-        # Raison générique : la valeur reçue n'est jamais recopiée.
-        await websocket.close(code=1008, reason="curseur invalide")
+        await websocket.close(code=1008)  # no reason: the received value is never echoed
         return
-    await websocket.accept()
+    await websocket.accept(subprotocol=LIVE_PROTOCOL)
     await websocket.send_json({
         "type": "hello",
         "cursor": cursor.as_dict(),
@@ -184,7 +236,11 @@ async def live_updates(websocket: WebSocket) -> None:
         nonlocal cursor
         silent = 0.0
         while True:
-            messages, cursor = await asyncio.to_thread(read_changes, cursor)
+            result = await asyncio.to_thread(read_changes, cursor)
+            if result is None:
+                await websocket.close(code=REVOKED_CODE, reason=REVOKED_REASON)
+                return
+            messages, cursor = result
             for message in messages:
                 await websocket.send_json(message)
             if messages:
