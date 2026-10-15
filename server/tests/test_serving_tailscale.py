@@ -1,4 +1,4 @@
-"""Contrôle de l'adresse du tailnet auprès de Tailscale (ADR-021 D9), runner toujours factice."""
+"""Check of the tailnet address against Tailscale (ADR-021 D9); the runner is always a fake."""
 
 import asyncio
 import ipaddress

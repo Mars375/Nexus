@@ -1,10 +1,11 @@
-"""Sockets de boucle locale et surveillance des écoutes (ADR-021)."""
+"""Loopback sockets and the watch of the listeners (ADR-021)."""
 
 import asyncio
 import collections
 import contextlib
 import errno
 import http.client
+import importlib.util
 import json
 import logging
 import queue
@@ -700,7 +701,13 @@ def hello_on(port, run, ticket_port=None):
         return json.loads(ws.recv())
 
 
-LOOPS = ["asyncio", "uvloop"]
+LOOPS = [
+    "asyncio",
+    pytest.param("uvloop", marks=pytest.mark.skipif(
+        importlib.util.find_spec("uvloop") is None,
+        reason="uvloop is not installed on this platform",
+    )),
+]
 
 
 @pytest.mark.parametrize("loop", LOOPS)
@@ -1061,3 +1068,29 @@ def test_a_watch_task_killed_by_a_base_exception_does_not_block_the_shutdown(lau
     # `stop()` (fixture) checks that `shutdown` still closed every listener.
     run.stop()
     assert run.done.is_set()
+
+
+def test_no_rebind_while_the_address_stays_unconfirmed_after_a_close(launch):
+    """D9: the check precedes EVERY bind, a reopening after a close included."""
+    run = launch(rounds=Rounds(), script=[CONFIRM, STOPPED, STOPPED])
+    run.rounds.next_end()  # round 1: opened
+    assert (run.runner.count, run.bind.tail_count) == (1, 1)
+    for expected_calls in (2, 3):  # round 2 closes, round 3 must not reopen
+        run.rounds.go()
+        run.rounds.next_end()
+        assert run.runner.count == expected_calls  # one runner call per round
+        assert run.bind.tail_count == 1
+        assert_refuses(run.tail_port)
+
+
+def test_a_lost_tailnet_listener_is_not_rebound_when_unconfirmed(launch):
+    run = launch(rounds=Rounds())
+    run.rounds.next_end()
+    assert run.bind.tail_count == 1
+    run.runner.default = STOPPED
+    run.on_loop(run.tail.server.close)  # the socket dies
+    run.rounds.go()
+    run.rounds.next_end()
+    assert run.bind.tail_count == 1
+    assert run.runner.count == 2
+    assert_refuses(run.tail_port)
