@@ -209,7 +209,7 @@ class NexusServer(uvicorn.Server):
                 # `wait` neither re-raises the cancellation nor the task's own exception.
                 # So the `finally` is defence in depth: with `wait` nothing here is expected to
                 # raise, and removing the `finally` alone changes no test. Awaiting the task
-                # itself instead would, and the BaseException test catches that.
+                # itself instead would, and the SIGINT and SIGTERM process tests catch that.
                 await asyncio.wait({self._watch})
         finally:
             await super().shutdown(sockets)
