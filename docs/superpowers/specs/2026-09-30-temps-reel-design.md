@@ -22,7 +22,7 @@ L'interface reflète chaque changement sans rechargement : un événement posté
 
 ### Point d'entrée
 
-> Depuis #57, la connexion se fait par ticket à usage unique (`POST /api/ws-ticket`, offert en sous-protocole) ; un jeton révoqué ferme la socket avec le code 4401. Voir `docs/superpowers/specs/2026-10-08-ws-ticket-design.md`.
+> Depuis #57, la connexion se fait par ticket à usage unique (`POST /api/ws-ticket`, offert en sous-protocole) ; un jeton révoqué ferme la socket avec le code 4401. Voir ADR-021 (`DECISIONS.md`).
 
 `/api/ws` (WebSocket). Paramètres de requête facultatifs : `history_after`, `events_after` (entiers ≥ 0) et `instance` (16 chiffres hexadécimaux minuscules, ASCII strict).
 

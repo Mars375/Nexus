@@ -129,7 +129,11 @@ def create_app(
     app.add_middleware(AccessLogMiddleware)
     # Added after the log so that it is outermost: a foreign Host (DNS rebinding) reaches nothing,
     # neither a route nor the database (ADR-020, D6). The log then does not see its refusals.
-    app.add_middleware(HostCheckMiddleware, allowed_hosts=settings.allowed_hosts)
+    # The IP addresses of NEXUS_HOST are admitted as `Host` without being declared twice
+    # (ADR-021, D11); a MagicDNS name still has to be declared in NEXUS_ALLOWED_HOSTS.
+    app.add_middleware(
+        HostCheckMiddleware, allowed_hosts=settings.allowed_hosts | settings.host_literals
+    )
     app.state.settings = settings
     app.include_router(tasks_api.router)
     app.include_router(events_api.router)

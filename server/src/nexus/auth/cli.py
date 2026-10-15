@@ -121,9 +121,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ValueError:
         # Fixed text: a `float()`/`int()` error would repeat the received value.
         return _error(
-            "configuration invalide : vérifie les variables NEXUS_* (NEXUS_HOST doit être une "
-            "adresse de bouclage, NEXUS_ALLOWED_HOSTS une liste de noms d'hôte, NEXUS_PORT "
-            "un nombre)"
+            "configuration invalide : vérifie les variables NEXUS_* (NEXUS_HOST une adresse de la "
+            "boucle locale et au plus une adresse du tailnet, NEXUS_ALLOWED_HOSTS une liste de "
+            "noms d'hôte, NEXUS_PORT un nombre)"
         )
     # Never creates nor migrates the database (sqlite would create an empty file on connect).
     if not settings.db_path.is_file() or migrate.pending(settings.db_url):

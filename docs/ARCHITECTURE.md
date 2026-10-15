@@ -93,14 +93,14 @@ watch(run_ref)          → événements du run (claimed, progress, blocked, don
 - Sauvegarde : `nexus.db` est la seule donnée non reconstructible → sauvegarde régulière obligatoire (à définir en Phase 1).
 - **Restauration d'une sauvegarde** : arrêter Nexus, remplacer `nexus.db` par la copie, supprimer les fichiers `nexus.db-wal` et `nexus.db-shm`, puis redémarrer. La restauration à chaud, Nexus en marche, n'est **pas** prise en charge, et la garantie du temps réel en dépend : à chaque démarrage le serveur tire une nouvelle instance, ce qui oblige les clients à tout invalider une fois (`reset: true`), alors qu'une base remplacée sous un serveur qui tourne laisserait des curseurs périmés passer pour valides. Chaque redémarrage du serveur fait de même, une seule fois par client (voir `docs/superpowers/specs/2026-09-30-temps-reel-design.md`).
 
-- **Un seul processus serveur** : les tickets WebSocket et l'identifiant d'instance du temps réel vivent en mémoire ; lancer uvicorn avec `--workers` n'est pas pris en charge.
+- **Un seul processus serveur** (ADR-021) : les tickets WebSocket et l'identifiant d'instance du temps réel vivent en mémoire ; lancer uvicorn avec `--workers` n'est pas pris en charge.
 
 ### 3.4 Interface
 
 - **UI web locale** (servie sur le poste de Loïc) : les vues, recherche, provenance cliquable, actions. Encapsulée plus tard dans une **application Windows** (Tauri, §7).
 - **Contrat UI ↔ API** (#16, ADR-020 D4) : l'UI ne parle qu'à l'API FastAPI. Le serveur exige un jeton sur toute route REST sauf `GET /api/health` et la documentation OpenAPI (`/openapi.json`, `/docs`, `/docs/oauth2-redirect`, `/redoc` : schéma seul, SECURITY §3). Le jeton `loic` est enregistré dans le navigateur (`localStorage`, clé `nexus.token`) ; `request()` (`web/src/api.ts`) l'envoie dans `Authorization: Bearer …` sur les seules adresses `/api/…` ; `GET /api/health` reste anonyme. Un 401 de l'API affiche l'écran « Nexus verrouillé » (VIEWS §9), sauf si le jeton enregistré a changé depuis le départ de la requête (nouveau jeton ou jeton oublié) : la réponse tardive est alors ignorée par le verrou et signalée comme un échec ordinaire. Quand il verrouille, un 401 `auth_required` ou `invalid_token` fait aussi oublier le jeton envoyé. Le WebSocket `/api/ws` exige un ticket à usage unique (#57) : l'UI en demande un neuf par `POST /api/ws-ticket` avant chaque connexion et le propose en sous-protocole ; tant que l'application est verrouillée, elle ne retente pas. Aucun cookie : l'en-tête n'est jamais joint automatiquement par le navigateur, le même contrat vaudra dans Tauri.
 - **Telegram** : alertes, rapports, questions urgentes (surface mobile).
-- Pas d'exposition publique ; pas d'app mobile dédiée. Seule exception envisagée : un webhook entrant WhatsApp, limité à cet endpoint (à trancher en Phase 3, ADR-018).
+- Pas d'exposition publique : l'API écoute la boucle locale et, si `NEXUS_HOST` le demande, le tailnet de Loïc (ADR-021) ; pas d'app mobile dédiée. Seule exception envisagée : un webhook entrant WhatsApp, limité à cet endpoint (à trancher en Phase 3, ADR-018).
 
 ### 3.5 Événements
 
@@ -155,7 +155,7 @@ action (répondre à un chat, envoyer un mail, créer un événement…)
 ## 5. Frontières multi-nœuds
 
 - **Règle Nexus :** chaque nœud applique ses changements locaux par son gardien (Helios, Mnēma/Cortex, Aether/Synapse, Artémis).
-- Nexus tourne sur Helios ; la lecture distante passe par SSH/Tailscale read-only ; aucune mutation croisée sans demande au gardien.
+- Nexus tourne sur Helios ; la lecture distante passe par SSH/Tailscale read-only ; aucune mutation croisée sans demande au gardien. Les agents des nœuds écrivent dans Nexus par l'API, sur le tailnet, avec leur jeton (ADR-021).
 - Artémis : éteint volontairement → `offline-by-design`, jamais « en panne ».
 
 ## 6. Sûreté de fonctionnement
@@ -170,7 +170,7 @@ action (répondre à un chat, envoyer un mail, créer un événement…)
 - **Base :** SQLite (`nexus.db`).
 - **UI :** React + TypeScript + Vite. Aucune dépendance à une API propre au navigateur : tout passe par l'API FastAPI.
 - **Temps réel :** WebSocket serveur → UI ; patterns repris du dashboard Hermes quand utiles.
-- **Adresse de l'API :** relative à la page par défaut (navigateur). Dans une WebView, la page n'est pas servie par l'API : `VITE_NEXUS_API_URL` (origine seule `http(s)://hôte:port`, sans chemin, fixée à la compilation et validée par `vite.config.ts`, qui refuse la compilation sinon) devient la base des requêtes REST et du WebSocket. Côté serveur, il restera à autoriser l'origine de la WebView à deux endroits : `NEXUS_ALLOWED_ORIGINS` pour le WebSocket (fermé en 1008 sinon ; CORS ne s'y applique pas) et un middleware CORS pour le REST, qui n'existe pas encore (#47). Ce CORS n'aura qu'à autoriser l'en-tête `Authorization` (et `Content-Type`, `X-Nexus-Actor`) sur l'origine de la WebView, **sans `allow_credentials`** : le jeton voyage dans un en-tête que le navigateur ne joint jamais de lui-même (pas de cookie, pas de CSRF). Le contrôle de `Host` (SECURITY §3) vaut pour toute origine : le nom d'hôte que la WebView appelle doit être loopback ou figurer dans `NEXUS_ALLOWED_HOSTS`.
+- **Adresse de l'API :** relative à la page par défaut (navigateur). Dans une WebView, la page n'est pas servie par l'API : `VITE_NEXUS_API_URL` (origine seule `http(s)://hôte:port`, sans chemin, fixée à la compilation et validée par `vite.config.ts`, qui refuse la compilation sinon) devient la base des requêtes REST et du WebSocket. Côté serveur, il restera à autoriser l'origine de la WebView à deux endroits : `NEXUS_ALLOWED_ORIGINS` pour le WebSocket (fermé en 1008 sinon ; CORS ne s'y applique pas) et un middleware CORS pour le REST, qui n'existe pas encore (#47). Ce CORS n'aura qu'à autoriser l'en-tête `Authorization` (et `Content-Type`, `X-Nexus-Actor`) sur l'origine de la WebView, **sans `allow_credentials`** : le jeton voyage dans un en-tête que le navigateur ne joint jamais de lui-même (pas de cookie, pas de CSRF). Le contrôle de `Host` (SECURITY §3) vaut pour toute origine : le nom d'hôte que la WebView appelle doit être loopback, l'adresse du tailnet de `NEXUS_HOST` ou figurer dans `NEXUS_ALLOWED_HOSTS`.
 - **Application Windows (cible long terme) :** Tauri 2 — la même UI dans WebView2 (`new WebSocket(url, protocols)`, qui porte le ticket, y fonctionne), le serveur FastAPI lancé en sidecar ; icône de barre des tâches, notifications Windows, démarrage automatique. Repli possible : Electron.
 
 ```text
