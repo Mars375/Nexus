@@ -324,3 +324,27 @@ def test_entropy_pass_leaves_structured_but_unlabelled_text_untouched(text):
     # The false-positive criterion (#15): the entropy pass adds nothing to the
     # normal-text corpus — dashes and dots break candidate runs, prose stays flat.
     assert redact(text) == (text, [])
+
+
+def test_labelled_value_that_is_a_url_with_credentials_is_masked_whole():
+    # The labelled value itself is a connection URL: one marker, kept whole (the
+    # assignment layer runs before the URL layer so the value is not split).
+    cleaned, found = redact("password=postgresql://alice:hunter2@db.example/nexus")
+    assert cleaned == f"password={REDACTED}"
+    assert found == ["credential"]
+
+
+def test_masked_token_then_another_secret_on_the_same_line():
+    # The first label's value starts at an existing [REDACTED] and does not
+    # match; the resumed scan masks the second secret under its own label.
+    cleaned, found = redact("token=[REDACTED] password=hunter2 to try")
+    assert cleaned == f"token={REDACTED} password={REDACTED}"
+    assert found == ["credential"]
+
+
+def test_another_secret_then_masked_token_on_the_same_line():
+    # The value sweep stops before the `token=` fragment (continuation runs
+    # exclude `=` and `:`), so the tail mask is not doubled.
+    cleaned, found = redact("password=hunter2 token=[REDACTED]")
+    assert cleaned == f"password={REDACTED} token={REDACTED}"
+    assert found == ["credential"]

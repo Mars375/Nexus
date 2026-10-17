@@ -82,10 +82,14 @@ _ASSIGNMENT = re.compile(
     # that is not a space, comma, semicolon, brace, quote, bracket or line break:
     # a value that starts at an existing [REDACTED] does not match, so the prose
     # after it is not swallowed, and a space held back by the separator's `\s*`
-    # cannot become a value of its own. An auth scheme (Basic xyz) is part of it.
+    # cannot become a value of its own. A word followed by `=` or `:` — a label
+    # waiting for its own value — ends the sweep instead of joining it (the
+    # trailing lookahead pulls it back out): the resumed scan then masks it under
+    # its own label, and the tail [REDACTED] is never doubled. An auth scheme
+    # (Basic xyz) is part of the value.
     r"(?:\"([^\"]*)\"|'([^']*)'"
     r"|((?:(?:basic|bearer|digest|negotiate|ntlm)\s+)?"
-    r"[^\t \r\n,;}\"'\[\]]+(?:[ \t]+[^\t \r\n,;}\"'\[\]]+)*))"
+    r"[^\t \r\n,;}\"'\[\]]+(?:[ \t]+(?![\w.-]*[=:])[^\t \r\n,;}\"'\[\]]+)*))"
 )
 
 # Long opaque runs: random-looking tokens that matched no format above (third-party
@@ -140,9 +144,12 @@ def redact(text: str) -> tuple[str, list[str]]:
         found.append("high_entropy")
         return REDACTED
 
+    # Labelled values run FIRST: a value that is itself a URL holding credentials
+    # is masked whole (one marker, no doubled [REDACTED]), then the URL and header
+    # layers clean up what is left, and the entropy pass runs last.
+    text = _ASSIGNMENT.sub(mask_value, text)
     text = _URL_CREDENTIALS.sub(mask_url, text)
     text = _HEADER_CREDENTIALS.sub(mask_header, text)
-    text = _ASSIGNMENT.sub(mask_value, text)
     text = _ENTROPY_TOKEN.sub(mask_random_run, text)
     return text, sorted(set(found))
 
