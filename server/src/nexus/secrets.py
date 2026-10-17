@@ -76,8 +76,8 @@ _CREDENTIAL_KEY = re.compile(rf"(?i){_LABEL}")
 _ASSIGNMENT = re.compile(
     rf"(?i)(?<![\w.-])({_LABEL})"
     r"([\"']?\s*[:=]\s*)"
-    # Bare value: one run, or several space-separated runs, up to the end of the
-    # line — a multi-word passphrase (« mot de passe : correct horse battery
+    # Bare value: one run, or several space-separated runs, up to the end of
+    # the line — a multi-word passphrase (« mot de passe : correct horse battery
     # staple ») is masked whole (issue #15). The first run starts at a character
     # that is not a space, comma, semicolon, brace, quote, bracket or line break:
     # a value that starts at an existing [REDACTED] does not match, so the prose
@@ -85,11 +85,13 @@ _ASSIGNMENT = re.compile(
     # cannot become a value of its own. A word followed by `=` or `:` — a label
     # waiting for its own value — ends the sweep instead of joining it (the
     # trailing lookahead pulls it back out): the resumed scan then masks it under
-    # its own label, and the tail [REDACTED] is never doubled. An auth scheme
-    # (Basic xyz) is part of the value.
+    # its own label, and the tail [REDACTED] is never doubled. A wrapped value
+    # (`password=[hunter2]`) is captured with its whole shell, spaces included:
+    # an already-masked shell `[REDACTED]` comes back unchanged through
+    # mask_value's short circuit. An auth scheme (Basic xyz) is part of the value.
     r"(?:\"([^\"]*)\"|'([^']*)'"
     r"|((?:(?:basic|bearer|digest|negotiate|ntlm)\s+)?"
-    r"[^\t \r\n,;}\"'\[\]]+(?:[ \t]+(?![\w.-]*[=:])[^\t \r\n,;}\"'\[\]]+)*))"
+    r"(?:\[[^\]\r\n]+\]|[^\t \r\n,;}\"'\[\]]+(?:[ \t]+(?![\w.-]*[=:])[^\t \r\n,;}\"'\[\]]+)*)))"
 )
 
 # Long opaque runs: random-looking tokens that matched no format above (third-party

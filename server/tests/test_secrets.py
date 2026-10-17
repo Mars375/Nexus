@@ -348,3 +348,27 @@ def test_another_secret_then_masked_token_on_the_same_line():
     cleaned, found = redact("password=hunter2 token=[REDACTED]")
     assert cleaned == f"password={REDACTED} token={REDACTED}"
     assert found == ["credential"]
+
+
+def test_bracketed_value_is_masked_whole():
+    # A value wrapped in brackets is a real secret (CodeRabbit finding on
+    # 58f3920): today the bare value skips a leading `[`, none of the other
+    # layers catch a short run, and the password would go out unmasked.
+    cleaned, found = redact("password=[hunter2]")
+    assert cleaned == f"password={REDACTED}"
+    assert found == ["credential"]
+
+
+def test_bracketed_value_with_spaces_is_masked_whole():
+    # The bracket form is captured with its whole shell, spaces included.
+    cleaned, found = redact("mot de passe=[correct horse battery staple]")
+    assert cleaned == f"mot de passe={REDACTED}"
+    assert found == ["credential"]
+
+
+def test_bracketed_marker_value_is_idempotent():
+    # An existing [REDACTED] value is returned unchanged and does not report
+    # a credential a second time (mask_value's short circuit).
+    cleaned, found = redact("token=[REDACTED]")
+    assert cleaned == "token=[REDACTED]"
+    assert found == []
