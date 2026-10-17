@@ -258,3 +258,69 @@ def test_ws_ticket_is_redacted_whatever_its_surroundings():
     cleaned, _ = redact(ticket + "B" * 5)
     assert "B" not in cleaned  # a longer run is masked whole
     assert redact("nxw_court")[0] == "nxw_court"
+
+
+def test_url_with_password_and_no_username_is_masked():
+    # issue #15: redis strips usernames, the password alone sits between // and @.
+    # The masked URL keeps its exact shape: the colon of the empty username stays.
+    cleaned, found = redact("REDIS_URL=redis://:hunter2@localhost/0")
+    assert cleaned == f"REDIS_URL=redis://:{REDACTED}@localhost/0"
+    assert found == ["url_credentials"]
+
+
+def test_url_with_username_and_no_password_is_kept():
+    # A bare username is not a credential (git clone URLs stay readable).
+    text = "git clone https://git@github.com/Mars375/Nexus"
+    assert redact(text) == (text, [])
+
+
+def test_multi_word_passphrase_is_masked_to_end_of_line():
+    # issue #15: only the first word used to survive (« correct »).
+    cleaned, found = redact("mot de passe : correct horse battery staple")
+    assert cleaned == f"mot de passe : {REDACTED}"
+    assert found == ["credential"]
+
+
+def test_bare_value_stops_at_inline_boundaries():
+    # The end-of-line value keeps inline structure readable: a comma, brace or
+    # quote after the value stays untouched, so JSON and trailing prose survive.
+    cleaned, _ = redact("password: hunter2, puis relancer les tests")
+    assert cleaned == f"password: {REDACTED}, puis relancer les tests"
+    cleaned, _ = redact('{"secret": "abc 123", "note": "ok"}')
+    assert cleaned == f'{{"secret": "{REDACTED}", "note": "ok"}}'
+
+
+def test_long_random_string_is_masked_as_high_entropy():
+    # Assembled at runtime from short pieces: 30 unique characters (~4.9 bits/char).
+    chaine = "is6Xk9ZmdwaO1Pq" + "Trhv4lHB7sYpG3u"
+    cleaned, found = redact(f"probe output: {chaine} rest")
+    assert cleaned == f"probe output: {REDACTED} rest"
+    assert found == ["high_entropy"]
+
+
+def test_high_entropy_masking_needs_length_and_randomness():
+    # 23 characters: below the length threshold, never an entropy candidate.
+    court = "a1b2c3d4e5f6a7b8c9d0e1f"
+    assert redact(f"commit {court} ok") == (f"commit {court} ok", [])
+    # A repeated character carries no randomness: long but flat is kept.
+    plat = "a" * 40
+    assert redact(f"commit {plat} ok") == (f"commit {plat} ok", [])
+    # A full-width hex run reads like a random token: masked (over-redaction, ADR-006).
+    sha = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"
+    cleaned, found = redact(f"commit {sha} sur main")
+    assert sha not in cleaned
+    assert found == ["high_entropy"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "uuid 3686f22a-1ac5-4c8a-9d5b-8f29c2f21e90",
+        "chemin F:\\Projet\\Nexus\\serveur\\taches\\evenements.db",
+        "Réponse lente du serveur 127.0.0.1:5173, réessai dans 200s",
+    ],
+)
+def test_entropy_pass_leaves_structured_but_unlabelled_text_untouched(text):
+    # The false-positive criterion (#15): the entropy pass adds nothing to the
+    # normal-text corpus — dashes and dots break candidate runs, prose stays flat.
+    assert redact(text) == (text, [])

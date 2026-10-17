@@ -7,7 +7,9 @@ Les motifs visent des formats reconnaissables pour limiter les faux positifs sur
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Callable
+from math import log2
 from typing import Any
 
 REDACTED = "[REDACTED]"
@@ -32,7 +34,11 @@ _FULL: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 # Mot de passe dans une URL de connexion : postgresql://alice:hunter2@hôte/base.
-_URL_CREDENTIALS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^\s:/@]+:)([^\s@/]+)(@)")
+# The username is optional (redis drops it: REDIS_URL=redis://:hunter2@localhost/0);
+# the masked URL keeps its exact shape, including the colon of the empty username.
+# A URL with a username and no password (git clone https://git@host/org/tool) is not
+# a secret, and a host:port never matches (the password must end at an @).
+_URL_CREDENTIALS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://(?:[^\s:/@]+)?:)([^\s@/]+)(@)")
 
 # En-tête HTTP d'identifiant écrit tel quel (« Authorization: Digest username="…", … »,
 # « Cookie: a=1; b=2 ») : sa valeur court jusqu'à la fin de la ligne, virgules et ; compris,
@@ -70,10 +76,32 @@ _CREDENTIAL_KEY = re.compile(rf"(?i){_LABEL}")
 _ASSIGNMENT = re.compile(
     rf"(?i)(?<![\w.-])({_LABEL})"
     r"([\"']?\s*[:=]\s*)"
-    # Valeur nue : un schéma d'authentification éventuel (Basic xyz) en fait partie.
+    # Bare value: one run, or several space-separated runs, up to the end of the
+    # line — a multi-word passphrase (« mot de passe : correct horse battery
+    # staple ») is masked whole (issue #15). The first run starts at a character
+    # that is not a space, comma, semicolon, brace, quote, bracket or line break:
+    # a value that starts at an existing [REDACTED] does not match, so the prose
+    # after it is not swallowed, and a space held back by the separator's `\s*`
+    # cannot become a value of its own. An auth scheme (Basic xyz) is part of it.
     r"(?:\"([^\"]*)\"|'([^']*)'"
-    r"|((?:(?:basic|bearer|digest|negotiate|ntlm)\s+)?[^\s,;}\"']+))"
+    r"|((?:(?:basic|bearer|digest|negotiate|ntlm)\s+)?"
+    r"[^\t \r\n,;}\"'\[\]]+(?:[ \t]+[^\t \r\n,;}\"'\[\]]+)*))"
 )
+
+# Long opaque runs: random-looking tokens that matched no format above (third-party
+# API keys, full-width hashes). The pass runs last, once labelled values are already
+# masked. Dashes, underscores, slashes and dots are not in the candidate class, so
+# UUIDs, paths, URLs and dotted hosts never become candidates; flat runs are kept.
+_ENTROPY_TOKEN = re.compile(r"[A-Za-z0-9+=]{24,}")
+# Shannon entropy in bits per character: long natural words and repetitions sit
+# around 2-3 bits, a uniform 16-symbol hex run stays near log2(16) = 4 — the
+# threshold divides prose from opaque randomness (documented in issue #15).
+_HIGH_ENTROPY_BITS = 3.5
+
+
+def _shannon_bits_per_char(token: str) -> float:
+    n = len(token)
+    return -sum((p / n) * log2(p / n) for p in Counter(token).values())
 
 
 def redact(text: str) -> tuple[str, list[str]]:
@@ -105,9 +133,17 @@ def redact(text: str) -> tuple[str, list[str]]:
         found.append("credential")
         return f"{match.group(1)}{match.group(2)}{REDACTED}"
 
+    def mask_random_run(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if _shannon_bits_per_char(token) < _HIGH_ENTROPY_BITS:
+            return token
+        found.append("high_entropy")
+        return REDACTED
+
     text = _URL_CREDENTIALS.sub(mask_url, text)
     text = _HEADER_CREDENTIALS.sub(mask_header, text)
     text = _ASSIGNMENT.sub(mask_value, text)
+    text = _ENTROPY_TOKEN.sub(mask_random_run, text)
     return text, sorted(set(found))
 
 
