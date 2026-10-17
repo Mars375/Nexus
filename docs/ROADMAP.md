@@ -54,7 +54,7 @@ Le noyau est déjà utilisé au quotidien ; les derniers merges dessinent un ens
 
 - **Tableau (Travail) :** thème « Salle orbitale » de bout en bout, focus de la première carte, fin du saut à l'ouverture des dialogues, police des toasts, agent principal affiché sur la carte, tâche terminée non modifiable + preuves jointes + tâche « suite » (PR #50, #51, #70, #71).
 - **Vue Maintenant :** vue complète (PR #29) puis paysage d'étages/baies de 4 nœuds par étage, rotation, finitions, et trois temps de demandes reçues (modèle → réponses → répondre/valider/refuser depuis Maintenant) (PR #33, #35, #37, #52, #53, #54).
-- **Temps réel (WebSocket) :** rafales, premier hello, validation par type, journal des requêtes sans valeur reçue, identifiant d'instance pour une base restaurée, URL de base de l'API côté front, handoff réel testé + refus 403, ticket avant tout flux (PR #31, #38, #46, #48, #64, #68, #72).
+- **Temps réel (WebSocket) :** rafales, premier hello, validation par type, journal des requêtes sans valeur reçue, identifiant d'instance pour une base restaurée, URL de base de l'API côté front, handoff réel testé + refus 403, ticket avant tout flux, casse de l'en-tête Origin (PR #31, #38, #46, #48, #64, #68, #72, #75).
 - **Service / API et sécurité :** durcissement des appels directs (types, longueurs), authentification par jeton d'acteur exigée partout + écran « Nexus verrouillé » + matrice de permissions (ADR-020) (PR #41, #43, #44, #55, #56, #60, #62).
 - **Process agents :** conventions de branches/PR/langue, fusion automatique quand les relectures sont OK (sauf une PR touchant une migration, `DECISIONS.md` ou `AGENTS.md` : fusion par Loïc), routage de modèles (sonnet principal, architect/reviewer en Opus) (PR #34, #45, #73).
 
