@@ -99,9 +99,12 @@ _ASSIGNMENT = re.compile(
 
 # Long opaque runs: random-looking tokens that matched no format above (third-party
 # API keys, full-width hashes). The pass runs last, once labelled values are already
-# masked. Dashes, underscores, slashes and dots are not in the candidate class, so
-# UUIDs, paths, URLs and dotted hosts never become candidates; flat runs are kept.
-_ENTROPY_TOKEN = re.compile(r"[A-Za-z0-9+=]{24,}")
+# masked. Dots, slashes and colons are not in the candidate class, so UUIDs, paths,
+# URLs and dotted hosts never become candidates; `_` and `-` joiners ARE allowed —
+# a token like « Y7qP2rTx_N9vH4mKu_C6wJ8sZa_R5dE3fGh » splits into runs below 24
+# characters — with the segment guard in mask_random_run keeping identifiers
+# (a short word between separators) and 4-character UUID groups out (issue #15).
+_ENTROPY_TOKEN = re.compile(r"[A-Za-z0-9+=_-]{24,}")
 # Shannon entropy in bits per character: long natural words and repetitions sit
 # around 2-3 bits, a uniform 16-symbol hex run stays near log2(16) = 4 — the
 # threshold divides prose from opaque randomness (documented in issue #15).
@@ -111,6 +114,15 @@ _HIGH_ENTROPY_BITS = 3.5
 def _shannon_bits_per_char(token: str) -> float:
     n = len(token)
     return -sum((p / n) * log2(p / n) for p in Counter(token).values())
+
+
+def _opaque_run(token: str) -> bool:
+    """Does a high-entropy candidate read as an opaque token or an identifier?"""
+    if _shannon_bits_per_char(token) < _HIGH_ENTROPY_BITS:
+        return False
+    # Every group between `_`/`-` separators must be uniformly long: the 4-char
+    # groups of a UUID and a isolated short word in a slug keep the run out.
+    return min((len(part) for part in re.split(r"[-_]", token)), default=0) >= 8
 
 
 def redact(text: str) -> tuple[str, list[str]]:
@@ -144,7 +156,7 @@ def redact(text: str) -> tuple[str, list[str]]:
 
     def mask_random_run(match: re.Match[str]) -> str:
         token = match.group(0)
-        if _shannon_bits_per_char(token) < _HIGH_ENTROPY_BITS:
+        if not _opaque_run(token):
             return token
         found.append("high_entropy")
         return REDACTED

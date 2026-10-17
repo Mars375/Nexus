@@ -390,3 +390,26 @@ def test_next_recognised_label_still_ends_the_sweep():
     cleaned, found = redact("password: correct horse api_key=xyz soon")
     assert cleaned == "password: [REDACTED] api_key=[REDACTED]"
     assert found == ["credential"]
+
+
+def test_underscored_high_entropy_token_in_prose_is_masked():
+    # A random token framed with `_` separators splits into runs below the
+    # 24-character candidate length (CodeRabbit finding on 7f314de); the
+    # entropy candidate now spans the separators.
+    cleaned, found = redact("jeton reçu : Y7qP2rTx_N9vH4mKu_C6wJ8sZa_R5dE3fGh à lire")
+    assert cleaned == f"jeton reçu : {REDACTED} à lire"
+    assert found == ["high_entropy"]
+
+
+def test_uuid_like_dash_groups_stay_untouched():
+    # A candidate that spans dashes stays an identifier at the 4-character
+    # UUID groups; guarded despite the class change (documented criterion).
+    text = "référence 3686f22a-1ac5-4c8a-9d5b-8f29c2f21e90 créée"
+    assert redact(text) == (text, [])
+
+
+def test_snake_case_identifier_stays_untouched():
+    # A plausible identifier (short segment « access ») is not opaque even
+    # above the entropy threshold; guarded despite the class change.
+    text = "recharger un authorize_access_request_center lent"
+    assert redact(text) == (text, [])
