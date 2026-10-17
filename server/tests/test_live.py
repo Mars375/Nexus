@@ -302,10 +302,11 @@ def test_the_origin_value_is_still_matched_exactly():
 
 
 def test_a_real_server_refuses_a_foreign_origin_without_burning_the_ticket(tmp_path):
-    """Real-path guard for #61: on today's uvicorn every ws mode lowercases names (see probe
-    in the PR body), so the wire case is not exercised here — the scope unit tests carry that
-    part. This one proves the real route refuses a foreign origin and that reusing the
-    ticket still opens (the refusal happened before the ticket step) and stays 101.
+    """Real-path guard for #61 with a case-preserving ASGI scope: a wrapper re-uppercases the
+    Origin header name, as a server forwarding the wire case would (today's uvicorn
+    lowercases every ws mode — probe in the PR body), so a regression to the exact-match
+    Starlette Headers read is caught through the route itself, not only by the scope unit
+    tests. Reusing the ticket proves the refusal happened before the ticket step.
     """
     from conftest import (
         issue_ticket_http,
@@ -319,8 +320,25 @@ def test_a_real_server_refuses_a_foreign_origin_without_burning_the_ticket(tmp_p
     from nexus.app import create_app
     from nexus.live import LIVE_PROTOCOL
 
+    class WireCaseOrigin:
+        """Forwards the Origin header name as on the wire: ASGI only recommends lowercase."""
+
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] == "websocket":
+                scope = {
+                    **scope,
+                    "headers": [
+                        (b"Origin" if key.lower() == b"origin" else key, value)
+                        for key, value in scope["headers"]
+                    ],
+                }
+            await self.app(scope, receive, send)
+
     app = create_app(Settings(data_dir=tmp_path / "data"), nodes_runner=tailscale_json)
-    server, thread, port = serve_real(app, ws="websockets")
+    server, thread, port = serve_real(WireCaseOrigin(app), ws="websockets")
     try:
         protocols = f"{LIVE_PROTOCOL}, {issue_ticket_http(port, issue_token(app))}"
         refused = raw_handshake(port, f"localhost:{port}", protocols,
