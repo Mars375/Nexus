@@ -123,6 +123,14 @@ def test_label_accepts_unicode_space_separators_as_plain_spaces(session, space):
     assert row.label == "poste : Loïc"
 
 
+def test_label_accepts_long_french_joined_words(session):
+    # The entropy guard requires a digit in a candidate: joined label
+    # vocabulary (no digit, no short segment) keeps passing clean_label
+    # (reviewer regression on 327aa8e).
+    label = "authentification-rechargement"
+    assert tokens.issue(session, "loic", label)[0].label == label
+
+
 def test_label_refuses_format_characters_with_a_clear_message(session):
     with pytest.raises(ValueError, match="caractères imprimables"):
         tokens.issue(session, "loic", "a\u200bb")

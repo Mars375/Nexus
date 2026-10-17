@@ -92,11 +92,13 @@ _ASSIGNMENT = re.compile(
     # the last one — a plain label word keeps the sweep running. A wrapped
     # value (`password=[hunter2]`) is captured with its whole
     # shell, spaces included: an already-masked shell `[REDACTED]` comes back
-    # unchanged through mask_value's short circuit. An auth scheme (Basic xyz)
+    # unchanged through mask_value's short circuit. A shell that is never
+    # closed is captured up to the end of the line — the run below the label
+    # stays hidden, nothing is left in the clear. An auth scheme (Basic xyz)
     # is part of the value.
     r"(?:\"([^\"]*)\"|'([^']*)'"
     r"|((?:(?:basic|bearer|digest|negotiate|ntlm)\s+)?"
-    rf"(?:\[[^\]\r\n]+\]|[^\t \r\n,;}}\"'\[\]]+(?:[ \t]+(?!(?:{_LABEL})\s*[=:])"
+    rf"(?:\[[^\]\r\n]*\]?|[^\t \r\n,;}}\"'\[\]]+(?:[ \t]+(?!(?:{_LABEL})\s*[=:])"
     r"[^\t \r\n,;}\"'\[\]]+)*)))"
 )
 
@@ -122,6 +124,12 @@ def _shannon_bits_per_char(token: str) -> float:
 def _opaque_run(token: str) -> bool:
     """Does a high-entropy candidate read as an opaque token or an identifier?"""
     if _shannon_bits_per_char(token) < _HIGH_ENTROPY_BITS:
+        return False
+    # Vendor tokens are drawn from digit-bearing alphabets; a candidate made
+    # only of letters (joined label vocabulary such as
+    # « authentification-rechargement ») is a phrase, not a secret —
+    # clean_label() validates its labels through this very gate.
+    if not any(ch.isdigit() for ch in token):
         return False
     # Framing separators (markdown italics `_token_`) only produce empty
     # segments: they do not drag the floor down, real segments decide.

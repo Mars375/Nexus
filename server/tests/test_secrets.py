@@ -476,3 +476,60 @@ def test_bracketed_value_with_colon_is_masked_whole():
     cleaned, found = redact("password: [hunter2]")
     assert cleaned == f"password: {REDACTED}"
     assert found == ["credential"]
+
+
+def test_label_vocabulary_with_long_joined_words_stays_untouched():
+    # Joined label words are prose, not secrets: an entropy candidate that
+    # carries no digit is vocabulary, whatever the joiners (reviewer
+    # regression on 327aa8e — labels routed through clean_label were
+    # rejected once the candidate class allowed `_` and `-`).
+    text = "authentification-rechargement"
+    assert redact(text) == (text, [])
+
+    text = "pending+cancelled+overdue"
+    assert redact(text) == (text, [])
+
+
+def test_unclosed_bracket_value_is_masked_to_end_of_line():
+    # A shell with no closing bracket must still hide the value (reviewer
+    # regression on 327aa8e: the bracket branch required the `]`, and the
+    # bare run refuses to start at `[` for idempotence).
+    cleaned, found = redact("password: [hunter2")
+    assert cleaned == f"password: {REDACTED}"
+    assert found == ["credential"]
+
+
+def test_bracket_closed_after_a_new_line_stays_line_scoped():
+    # The shell never crosses a newline; the leftover of a value closed on
+    # the next line keeps the base behaviour (`[REDACTED]\n123]`).
+    cleaned, found = redact("password: [hunter2\n123]")
+    assert cleaned == f"password: {REDACTED}\n123]"
+    assert found == ["credential"]
+
+
+def test_double_dash_framed_token_is_masked_whole():
+    # CLI flags frame tokens with `--`: the framing separators belong to
+    # the candidate and are masked with it (reviewer probe on 327aa8e).
+    cleaned, found = redact(
+        "portail --Y7qP2rTx-N9vH4mKu-C6wJ8sZa-R5dE3fGh-- actif"
+    )
+    assert cleaned == f"portail {REDACTED} actif"
+    assert found == ["high_entropy"]
+
+
+def test_digits_only_run_is_not_opaque():
+    # A pure-digit run carries at most log2(10) ≈ 3.32 bits per character:
+    # below the Shannon threshold, whatever its length (locked choice).
+    text = "numerique : 842157306914827563201984 annote"
+    assert redact(text) == (text, [])
+
+
+def test_entropy_candidate_floor_is_24_characters():
+    # Exactly 24 opaque characters are masked, 23 are not even a candidate
+    # (locked boundary; reviewer probe on 327aa8e).
+    cleaned, found = redact("cle A7x9QzW2Ry5Nt8Kv4Jm6Pa1C nette")
+    assert cleaned == f"cle {REDACTED} nette"
+    assert found == ["high_entropy"]
+
+    text = "cle B7x9QzW2Ry5Nt8Kv4Jm6Pa1 brisee"
+    assert redact(text) == (text, [])
