@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, Request, Response, WebSocket, WebSocketDisconnect
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from starlette.types import Scope
 
 from nexus.auth import tokens
 from nexus.auth.deps import TokenIdentity, authenticated_token
@@ -148,6 +149,18 @@ def origin_allowed(origin: str | None, extra: frozenset[str]) -> bool:
     return parts.scheme in ("http", "https") and parts.hostname in _LOOPBACK_HOSTS
 
 
+def origin_allowed_in_scope(scope: Scope, extra: frozenset[str]) -> bool:
+    """Origin read straight from `scope["headers"]`: ASGI only `recommends` lowercase names,
+    and Starlette Headers compare raw names exactly, so a wire-name `b"Origin"` was never
+    found by `.get("origin")` (#61). Same reading pattern as hosts.py for Host; more than one
+    Origin is ambiguous and refused rather than treated as an absent header.
+    """
+    origins = [v.decode("latin-1") for k, v in scope["headers"] if k.lower() == b"origin"]
+    if len(origins) > 1:
+        return False
+    return origin_allowed(origins[0] if origins else None, extra)
+
+
 router = APIRouter()
 
 
@@ -181,7 +194,7 @@ async def live_updates(websocket: WebSocket) -> None:
     # shape, ticket, cursor. A refusal before the ticket step leaves the ticket usable; from the
     # ticket step on it is spent, whatever the next check says.
     app = websocket.app
-    if not origin_allowed(websocket.headers.get("origin"), app.state.settings.allowed_origins):
+    if not origin_allowed_in_scope(websocket.scope, app.state.settings.allowed_origins):
         await websocket.close(code=1008)
         return
     ticket = ticket_from_subprotocols(list(websocket.scope.get("subprotocols") or []))

@@ -8,7 +8,14 @@ from starlette.websockets import WebSocketDisconnect
 
 from nexus import live
 from nexus.config import Settings
-from nexus.live import Cursor, changes_since, current_cursor, origin_allowed, start_cursor
+from nexus.live import (
+    Cursor,
+    changes_since,
+    current_cursor,
+    origin_allowed,
+    origin_allowed_in_scope,
+    start_cursor,
+)
 
 AT = "2026-09-30T09:00:00+02:00"
 PRIVATE = "sujet confidentiel à ne jamais diffuser"
@@ -257,6 +264,71 @@ def test_a_configured_origin_is_accepted(tmp_path):
 def test_a_loopback_origin_is_accepted(client):
     with ws_connect(client, "/api/ws", headers={"origin": "http://localhost:5199"}) as ws:
         assert ws.receive_json()["type"] == "hello"
+
+
+def test_an_origin_header_name_in_any_case_is_read():
+    """ASGI only recommends lowercase header names: a server may pass b"Origin" as is (#61)."""
+    assert not origin_allowed_in_scope(
+        {"headers": [(b"Origin", b"https://evil.example")]}, frozenset()
+    )
+    assert origin_allowed_in_scope(
+        {"headers": [(b"Origin", b"http://localhost:5173")]}, frozenset()
+    )
+
+
+def test_two_origin_headers_are_refused_in_any_order():
+    """More than one Origin is ambiguous: refused, whatever the verdict of the first value."""
+    local, evil = b"http://localhost:5173", b"https://evil.example"
+    for headers in ([(b"origin", local), (b"Origin", evil)],
+                    [(b"Origin", evil), (b"origin", local)]):
+        assert not origin_allowed_in_scope({"headers": headers}, frozenset())
+
+
+def test_an_empty_origin_value_is_not_an_absent_origin():
+    assert not origin_allowed_in_scope({"headers": [(b"Origin", b"")]}, frozenset())
+
+
+def test_a_missing_origin_still_means_a_non_browser_client():
+    assert origin_allowed_in_scope({"headers": []}, frozenset())
+
+
+def test_the_origin_value_is_still_matched_exactly():
+    """Only the header NAME is case-insensitive; the configured value stays exact."""
+    assert not origin_allowed_in_scope(
+        {"headers": [(b"Origin", b"TAURI://localhost")]}, frozenset({"tauri://localhost"})
+    )
+
+
+def test_a_real_server_reads_the_origin_case_insensitively(tmp_path):
+    """Real-path guard for #61: today's uvicorn lowercases every WebSocket mode, but the fix
+    must survive an implementation forwarding the wire case again. Echo-check through a real
+    server that an evil origin is 403 and that reusing the ticket still opens (the refusal
+    happened before the ticket step) and stays 101.
+    """
+    from conftest import (
+        issue_ticket_http,
+        issue_token,
+        raw_handshake,
+        serve_real,
+        stop_real,
+        tailscale_json,
+    )
+
+    from nexus.app import create_app
+    from nexus.live import LIVE_PROTOCOL
+
+    app = create_app(Settings(data_dir=tmp_path / "data"), nodes_runner=tailscale_json)
+    server, thread, port = serve_real(app, ws="websockets")
+    try:
+        protocols = f"{LIVE_PROTOCOL}, {issue_ticket_http(port, issue_token(app))}"
+        refused = raw_handshake(port, f"localhost:{port}", protocols,
+                                origin="https://evil.example")
+        assert refused.startswith("HTTP/1.1 403"), refused.splitlines()[:1]
+        admitted = raw_handshake(port, f"localhost:{port}", protocols,
+                                 origin="http://localhost:5173")
+    finally:
+        stop_real(server, thread)
+    assert admitted.startswith("HTTP/1.1 101"), admitted.splitlines()[:1]
 
 
 def test_an_invalid_cursor_is_refused_without_echo(client):
