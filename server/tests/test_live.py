@@ -276,11 +276,13 @@ def test_an_origin_header_name_in_any_case_is_read():
     )
 
 
-def test_two_origin_headers_are_refused_in_any_order():
-    """More than one Origin is ambiguous: refused, whatever the verdict of the first value."""
+def test_two_origin_headers_are_refused():
+    """More than one Origin is ambiguous: refused whatever the order, and even with equal
+    values, like the Host check (RFC 9112 §3.2)."""
     local, evil = b"http://localhost:5173", b"https://evil.example"
     for headers in ([(b"origin", local), (b"Origin", evil)],
-                    [(b"Origin", evil), (b"origin", local)]):
+                    [(b"Origin", evil), (b"origin", local)],
+                    [(b"Origin", local), (b"origin", local)]):
         assert not origin_allowed_in_scope({"headers": headers}, frozenset())
 
 
@@ -299,11 +301,11 @@ def test_the_origin_value_is_still_matched_exactly():
     )
 
 
-def test_a_real_server_reads_the_origin_case_insensitively(tmp_path):
-    """Real-path guard for #61: today's uvicorn lowercases every WebSocket mode, but the fix
-    must survive an implementation forwarding the wire case again. Echo-check through a real
-    server that an evil origin is 403 and that reusing the ticket still opens (the refusal
-    happened before the ticket step) and stays 101.
+def test_a_real_server_refuses_a_foreign_origin_without_burning_the_ticket(tmp_path):
+    """Real-path guard for #61: on today's uvicorn every ws mode lowercases names (see probe
+    in the PR body), so the wire case is not exercised here — the scope unit tests carry that
+    part. This one proves the real route refuses a foreign origin and that reusing the
+    ticket still opens (the refusal happened before the ticket step) and stays 101.
     """
     from conftest import (
         issue_ticket_http,
