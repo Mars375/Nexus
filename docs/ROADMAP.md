@@ -50,7 +50,7 @@
 
 ### État au 2026-10-17
 
-Le noyau est déjà utilisé au quotidien ; les derniers merges dessinent un ensemble cohérent — dernier fusionné : `a98272e` (#73).
+Le noyau est déjà utilisé au quotidien ; les derniers merges dessinent un ensemble cohérent — dernier fusionné : `e2e25a5` (#75).
 
 - **Tableau (Travail) :** thème « Salle orbitale » de bout en bout, focus de la première carte, fin du saut à l'ouverture des dialogues, police des toasts, agent principal affiché sur la carte, tâche terminée non modifiable + preuves jointes + tâche « suite » (PR #50, #51, #70, #71).
 - **Vue Maintenant :** vue complète (PR #29) puis paysage d'étages/baies de 4 nœuds par étage, rotation, finitions, et trois temps de demandes reçues (modèle → réponses → répondre/valider/refuser depuis Maintenant) (PR #33, #35, #37, #52, #53, #54).
@@ -58,7 +58,7 @@ Le noyau est déjà utilisé au quotidien ; les derniers merges dessinent un ens
 - **Service / API et sécurité :** durcissement des appels directs (types, longueurs), authentification par jeton d'acteur exigée partout + écran « Nexus verrouillé » + matrice de permissions (ADR-020) (PR #41, #43, #44, #55, #56, #60, #62).
 - **Process agents :** conventions de branches/PR/langue, fusion automatique quand les relectures sont OK (sauf une PR touchant une migration, `DECISIONS.md` ou `AGENTS.md` : fusion par Loïc), routage de modèles (sonnet principal, architect/reviewer en Opus) (PR #34, #45, #73).
 
-**Reste pour la sortie de Phase 1 :** le scanner de secrets (#15, dernier livrable de la liste non traité), #17 et #39 ; #59 traité par la PR #76 et #61 par la PR #75 (relectures en cours) ; #58 (migration) : sa PR devra être fusionnée par Loïc ; #57 en PR #74 (volet Tailnet bind, fusion par Loïc) ; #47 reste borné au jalon Tauri (pas avant).
+**Reste pour la sortie de Phase 1 :** le scanner de secrets (#15, dernier livrable de la liste non traité), #17 et #39 ; #59 traité par la PR #76 ; #58 (migration) : sa PR devra être fusionnée par Loïc ; #57 en PR #74 (volet Tailnet bind, fusion par Loïc) ; #47 reste borné au jalon Tauri (pas avant).
 
 ## Phase 2 — Exécution
 
