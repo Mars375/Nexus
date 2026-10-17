@@ -413,3 +413,19 @@ def test_snake_case_identifier_stays_untouched():
     # above the entropy threshold; guarded despite the class change.
     text = "recharger un authorize_access_request_center lent"
     assert redact(text) == (text, [])
+
+
+def test_short_prefixed_opaque_token_is_masked_whole():
+    # A short vendor prefix does not break the token (CodeRabbit finding on
+    # 341a639): the flat 24+ run behind it makes the whole candidate opaque,
+    # prefix included — the token without its prefix would already be masked.
+    cleaned, found = redact("portail tok_Y7qP2rTxN9vH4mKuC6wJ8sZaR5dE3fGh actif")
+    assert cleaned == f"portail {REDACTED} actif"
+    assert found == ["high_entropy"]
+
+
+def test_title_case_slug_with_short_word_stays_untouched():
+    # A candidate with one short segment is only opaque when a flat 24+ run
+    # hides behind it; title-case words (3.545 bits joined) have none.
+    text = "cap sur « Dictionnaire-des_Expressions_Francaises » à lire"
+    assert redact(text) == (text, [])

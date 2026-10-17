@@ -120,9 +120,17 @@ def _opaque_run(token: str) -> bool:
     """Does a high-entropy candidate read as an opaque token or an identifier?"""
     if _shannon_bits_per_char(token) < _HIGH_ENTROPY_BITS:
         return False
-    # Every group between `_`/`-` separators must be uniformly long: the 4-char
-    # groups of a UUID and a isolated short word in a slug keep the run out.
-    return min((len(part) for part in re.split(r"[-_]", token)), default=0) >= 8
+    parts = re.split(r"[-_]", token)
+    if min(map(len, parts)) >= 8:
+        return True
+    # A short vendor prefix does not break a token that holds a flat 24+ run
+    # behind it (« tok_Y7qP2rTx… »): the prefix belongs to the value it names
+    # and the whole candidate is masked. The 4-character groups of a UUID and
+    # the words of a slug never reach 24 characters on their own.
+    return any(
+        len(part) >= 24 and _shannon_bits_per_char(part) >= _HIGH_ENTROPY_BITS
+        for part in parts
+    )
 
 
 def redact(text: str) -> tuple[str, list[str]]:
