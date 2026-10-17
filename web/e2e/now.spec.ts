@@ -224,7 +224,10 @@ test('▲ puis ▼ presque aussitôt : la couche de l\'étage 1 reste le même n
   const upButton = page.getByRole('button', { name: /^Monter d'un étage/ })
   await expect(upButton).toBeVisible()
   // Tag the very element, then sample it on every frame: a node moved or replaced loses the tag and replays its entry from opacity 0.
-  await page.evaluate(() => {
+  // The click can be processed before the probe's first frame, so the pre-click
+  // baseline is captured synchronously here instead of read back from samples[0]
+  // (one less paint-vs-click race in the test itself).
+  const baseline = await page.evaluate(() => {
     type Probe = { samples: { same: boolean; opacity: number; role: string | null }[]; run: boolean }
     const w = window as unknown as { __probe: Probe; __layer: Element }
     w.__layer = document.querySelector('.level[data-level="1"]')!
@@ -236,6 +239,7 @@ test('▲ puis ▼ presque aussitôt : la couche de l\'étage 1 reste le même n
       if (w.__probe.run) requestAnimationFrame(tick)
     }
     requestAnimationFrame(tick)
+    return Number(getComputedStyle(w.__layer).opacity)
   })
   await upButton.click()
   await expect(page.locator('[data-stage]')).toHaveAttribute('data-floor', '2')
@@ -246,7 +250,7 @@ test('▲ puis ▼ presque aussitôt : la couche de l\'étage 1 reste le même n
   const samples = await page.evaluate(() => { const w = window as unknown as { __probe: { samples: { same: boolean; opacity: number; role: string | null }[]; run: boolean } }; w.__probe.run = false; return w.__probe.samples })
   expect(samples.length).toBeGreaterThan(20)
   expect(samples.every((q) => q.same), 'le nœud de l\'étage 1 a été remplacé').toBe(true)
-  expect(samples[0].opacity, 'avant le mouvement, la couche est opaque').toBe(1)
+  expect(baseline, 'avant le mouvement, la couche est opaque').toBe(1)
   // La profondeur du départ dépend du moment exact où le clic retour est tombé (du timing, pas
   // du design : le seuil « jamais sous 0,3 » de la première version a flotté, et le « jamais 0 »
   // tombait dès que le départ allait au bout — issue #59). Ce qui tient à toute vitesse : la
