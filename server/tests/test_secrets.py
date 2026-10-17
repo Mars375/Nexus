@@ -372,3 +372,21 @@ def test_bracketed_marker_value_is_idempotent():
     cleaned, found = redact("token=[REDACTED]")
     assert cleaned == "token=[REDACTED]"
     assert found == []
+
+
+def test_passphrase_containing_an_unlabelled_equals_word_is_masked_whole():
+    # `battery=staple` is part of the passphrase (CodeRabbit comment on
+    # 58f3920): the continued sweep only stops before a word that IS one of
+    # the recognised labels followed by `=` or `:`, not before any `=`.
+    cleaned, found = redact("mot de passe : correct horse battery=staple")
+    assert cleaned == "mot de passe : [REDACTED]"
+    assert found == ["credential"]
+
+
+def test_next_recognised_label_still_ends_the_sweep():
+    # A later, recognised label with its own value ends the sweep: the two
+    # labelled secrets are masked separately, each keeping its own label
+    # (the sweep's generous tail belongs to the second label, not the first).
+    cleaned, found = redact("password: correct horse api_key=xyz soon")
+    assert cleaned == "password: [REDACTED] api_key=[REDACTED]"
+    assert found == ["credential"]

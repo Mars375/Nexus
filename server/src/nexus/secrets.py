@@ -82,16 +82,19 @@ _ASSIGNMENT = re.compile(
     # that is not a space, comma, semicolon, brace, quote, bracket or line break:
     # a value that starts at an existing [REDACTED] does not match, so the prose
     # after it is not swallowed, and a space held back by the separator's `\s*`
-    # cannot become a value of its own. A word followed by `=` or `:` — a label
-    # waiting for its own value — ends the sweep instead of joining it (the
-    # trailing lookahead pulls it back out): the resumed scan then masks it under
-    # its own label, and the tail [REDACTED] is never doubled. A wrapped value
-    # (`password=[hunter2]`) is captured with its whole shell, spaces included:
-    # an already-masked shell `[REDACTED]` comes back unchanged through
-    # mask_value's short circuit. An auth scheme (Basic xyz) is part of the value.
+    # cannot become a value of its own. A word followed by `=` or `:`, IF it is
+    # one of the recognised labels, ends the sweep instead of joining it (the
+    # label-aware lookahead pulls it back out): the resumed scan then masks it
+    # under its own label, the tail [REDACTED] is never doubled, and a passphrase
+    # word that merely carries an `=` (« battery=staple ») stays inside the
+    # value. A wrapped value (`password=[hunter2]`) is captured with its whole
+    # shell, spaces included: an already-masked shell `[REDACTED]` comes back
+    # unchanged through mask_value's short circuit. An auth scheme (Basic xyz)
+    # is part of the value.
     r"(?:\"([^\"]*)\"|'([^']*)'"
     r"|((?:(?:basic|bearer|digest|negotiate|ntlm)\s+)?"
-    r"(?:\[[^\]\r\n]+\]|[^\t \r\n,;}\"'\[\]]+(?:[ \t]+(?![\w.-]*[=:])[^\t \r\n,;}\"'\[\]]+)*)))"
+    rf"(?:\[[^\]\r\n]+\]|[^\t \r\n,;}}\"'\[\]]+(?:[ \t]+(?!{_LABEL}\s*[=:])"
+    r"[^\t \r\n,;}\"'\[\]]+)*)))"
 )
 
 # Long opaque runs: random-looking tokens that matched no format above (third-party
