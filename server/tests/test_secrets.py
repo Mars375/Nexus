@@ -429,3 +429,50 @@ def test_title_case_slug_with_short_word_stays_untouched():
     # hides behind it; title-case words (3.545 bits joined) have none.
     text = "cap sur « Dictionnaire-des_Expressions_Francaises » à lire"
     assert redact(text) == (text, [])
+
+
+def test_passphrase_containing_an_unlabelled_label_word_is_masked_whole():
+    # A word that IS one of the recognised labels but carries no `=` or `:`
+    # must not abort the sweep (Antigravity review on 34e5902): the grouped
+    # lookahead shares its `\s*[=:]` requirement with every label branch,
+    # not just the last one, so a plain label word inside the passphrase
+    # keeps the sweep running and the value is masked whole.
+    for text in (
+        "mot de passe : this is my secret passphrase",
+        "password: use the token right now",
+        "mot de passe : mon mot de passe est simple",
+        "token: un mot de passe fragile comme mot de passe",
+    ):
+        label, _, _ = text.partition(":")
+        cleaned, found = redact(text)
+        assert cleaned == f"{label}: {REDACTED}"
+        assert found == ["credential"]
+
+
+def test_framed_underscore_high_entropy_token_in_prose_is_masked():
+    # Markdown italics frame the token with extra `_` separators (Antigravity
+    # review on 34e5902): the empty framing segments must not drag the
+    # segment floor to 0 and free the candidate.
+    cleaned, found = redact(
+        "jeton reçu : _Y7qP2rTx_N9vH4mKu_C6wJ8sZa_R5dE3fGh_ à lire"
+    )
+    assert cleaned == f"jeton reçu : {REDACTED} à lire"
+    assert found == ["high_entropy"]
+
+
+def test_hyphen_joined_high_entropy_token_in_prose_is_masked():
+    # The same segmented token with `-` joiners (Antigravity review on
+    # 34e5902): locked before the framing fix so the guard cannot regress.
+    cleaned, found = redact(
+        "jeton reçu : Y7qP2rTx-N9vH4mKu-C6wJ8sZa-R5dE3fGh à lire"
+    )
+    assert cleaned == f"jeton reçu : {REDACTED} à lire"
+    assert found == ["high_entropy"]
+
+
+def test_bracketed_value_with_colon_is_masked_whole():
+    # A colon-separated bracketed value (Antigravity review on 34e5902):
+    # the bracket shell is masked whole whatever the separator.
+    cleaned, found = redact("password: [hunter2]")
+    assert cleaned == f"password: {REDACTED}"
+    assert found == ["credential"]

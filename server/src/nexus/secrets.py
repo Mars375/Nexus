@@ -87,13 +87,16 @@ _ASSIGNMENT = re.compile(
     # label-aware lookahead pulls it back out): the resumed scan then masks it
     # under its own label, the tail [REDACTED] is never doubled, and a passphrase
     # word that merely carries an `=` (« battery=staple ») stays inside the
-    # value. A wrapped value (`password=[hunter2]`) is captured with its whole
+    # value. The label group is parenthesised inside the lookahead so the
+    # `[=:]` requirement binds to every branch of the alternation, not just
+    # the last one — a plain label word keeps the sweep running. A wrapped
+    # value (`password=[hunter2]`) is captured with its whole
     # shell, spaces included: an already-masked shell `[REDACTED]` comes back
     # unchanged through mask_value's short circuit. An auth scheme (Basic xyz)
     # is part of the value.
     r"(?:\"([^\"]*)\"|'([^']*)'"
     r"|((?:(?:basic|bearer|digest|negotiate|ntlm)\s+)?"
-    rf"(?:\[[^\]\r\n]+\]|[^\t \r\n,;}}\"'\[\]]+(?:[ \t]+(?!{_LABEL}\s*[=:])"
+    rf"(?:\[[^\]\r\n]+\]|[^\t \r\n,;}}\"'\[\]]+(?:[ \t]+(?!(?:{_LABEL})\s*[=:])"
     r"[^\t \r\n,;}\"'\[\]]+)*)))"
 )
 
@@ -120,8 +123,10 @@ def _opaque_run(token: str) -> bool:
     """Does a high-entropy candidate read as an opaque token or an identifier?"""
     if _shannon_bits_per_char(token) < _HIGH_ENTROPY_BITS:
         return False
-    parts = re.split(r"[-_]", token)
-    if min(map(len, parts)) >= 8:
+    # Framing separators (markdown italics `_token_`) only produce empty
+    # segments: they do not drag the floor down, real segments decide.
+    parts = [part for part in re.split(r"[-_]", token) if part]
+    if parts and min(map(len, parts)) >= 8:
         return True
     # A short vendor prefix does not break a token that holds a flat 24+ run
     # behind it (« tok_Y7qP2rTx… »): the prefix belongs to the value it names
