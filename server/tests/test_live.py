@@ -8,7 +8,14 @@ from starlette.websockets import WebSocketDisconnect
 
 from nexus import live
 from nexus.config import Settings
-from nexus.live import Cursor, changes_since, current_cursor, origin_allowed, start_cursor
+from nexus.live import (
+    Cursor,
+    changes_since,
+    current_cursor,
+    origin_allowed,
+    origin_allowed_in_scope,
+    start_cursor,
+)
 
 AT = "2026-09-30T09:00:00+02:00"
 PRIVATE = "sujet confidentiel à ne jamais diffuser"
@@ -257,6 +264,91 @@ def test_a_configured_origin_is_accepted(tmp_path):
 def test_a_loopback_origin_is_accepted(client):
     with ws_connect(client, "/api/ws", headers={"origin": "http://localhost:5199"}) as ws:
         assert ws.receive_json()["type"] == "hello"
+
+
+def test_an_origin_header_name_in_any_case_is_read():
+    """ASGI only recommends lowercase header names: a server may pass b"Origin" as is (#61)."""
+    assert not origin_allowed_in_scope(
+        {"headers": [(b"Origin", b"https://evil.example")]}, frozenset()
+    )
+    assert origin_allowed_in_scope(
+        {"headers": [(b"Origin", b"http://localhost:5173")]}, frozenset()
+    )
+
+
+def test_two_origin_headers_are_refused():
+    """More than one Origin is ambiguous: refused whatever the order, and even with equal
+    values, like the Host check (RFC 9112 §3.2)."""
+    local, evil = b"http://localhost:5173", b"https://evil.example"
+    for headers in ([(b"origin", local), (b"Origin", evil)],
+                    [(b"Origin", evil), (b"origin", local)],
+                    [(b"Origin", local), (b"origin", local)]):
+        assert not origin_allowed_in_scope({"headers": headers}, frozenset())
+
+
+def test_an_empty_origin_value_is_not_an_absent_origin():
+    assert not origin_allowed_in_scope({"headers": [(b"Origin", b"")]}, frozenset())
+
+
+def test_a_missing_origin_still_means_a_non_browser_client():
+    assert origin_allowed_in_scope({"headers": []}, frozenset())
+
+
+def test_the_origin_value_is_still_matched_exactly():
+    """Only the header NAME is case-insensitive; the configured value stays exact."""
+    assert not origin_allowed_in_scope(
+        {"headers": [(b"Origin", b"TAURI://localhost")]}, frozenset({"tauri://localhost"})
+    )
+
+
+def test_a_real_server_refuses_a_foreign_origin_without_burning_the_ticket(tmp_path):
+    """Real-path guard for #61 with a case-preserving ASGI scope: a wrapper re-uppercases the
+    Origin header name, as a server forwarding the wire case would (today's uvicorn
+    lowercases every ws mode — probe in the PR body), so a regression to the exact-match
+    Starlette Headers read is caught through the route itself, not only by the scope unit
+    tests. Reusing the ticket proves the refusal happened before the ticket step.
+    """
+    from conftest import (
+        issue_ticket_http,
+        issue_token,
+        raw_handshake,
+        serve_real,
+        stop_real,
+        tailscale_json,
+    )
+
+    from nexus.app import create_app
+    from nexus.live import LIVE_PROTOCOL
+
+    class WireCaseOrigin:
+        """Forwards the Origin header name as on the wire: ASGI only recommends lowercase."""
+
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] == "websocket":
+                scope = {
+                    **scope,
+                    "headers": [
+                        (b"Origin" if key.lower() == b"origin" else key, value)
+                        for key, value in scope["headers"]
+                    ],
+                }
+            await self.app(scope, receive, send)
+
+    app = create_app(Settings(data_dir=tmp_path / "data"), nodes_runner=tailscale_json)
+    server, thread, port = serve_real(WireCaseOrigin(app), ws="websockets")
+    try:
+        protocols = f"{LIVE_PROTOCOL}, {issue_ticket_http(port, issue_token(app))}"
+        refused = raw_handshake(port, f"localhost:{port}", protocols,
+                                origin="https://evil.example")
+        assert refused.startswith("HTTP/1.1 403"), refused.splitlines()[:1]
+        admitted = raw_handshake(port, f"localhost:{port}", protocols,
+                                 origin="http://localhost:5173")
+    finally:
+        stop_real(server, thread)
+    assert admitted.startswith("HTTP/1.1 101"), admitted.splitlines()[:1]
 
 
 def test_an_invalid_cursor_is_refused_without_echo(client):
