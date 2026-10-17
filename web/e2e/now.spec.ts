@@ -218,37 +218,51 @@ test('deux clics rapides sur ▲ : étage 3, puis une seule couche pleinement op
   await expect(page.locator('.level')).toHaveCSS('transform', 'none')
 })
 
-test('▲ puis ▼ presque aussitôt : la couche de l\'étage 1 reste le même nœud, son opacité ne retombe jamais à 0', async ({ page }) => {
+test('▲ puis ▼ presque aussitôt : la couche de l\'étage 1 reste le même nœud, sa reprise remonte sans repli jusqu\'au plein opaque', async ({ page }) => {
   await serveNodes(page)
   await page.goto('/#/maintenant')
   const upButton = page.getByRole('button', { name: /^Monter d'un étage/ })
   await expect(upButton).toBeVisible()
   // Tag the very element, then sample it on every frame: a node moved or replaced loses the tag and replays its entry from opacity 0.
   await page.evaluate(() => {
-    type Probe = { samples: { same: boolean; opacity: number }[]; run: boolean }
+    type Probe = { samples: { same: boolean; opacity: number; role: string | null }[]; run: boolean }
     const w = window as unknown as { __probe: Probe; __layer: Element }
     w.__layer = document.querySelector('.level[data-level="1"]')!
     w.__layer.setAttribute('data-probe', '1')
     w.__probe = { samples: [], run: true }
     const tick = () => {
       const el = document.querySelector('.level[data-level="1"]')
-      if (el) w.__probe.samples.push({ same: el === w.__layer && w.__layer.isConnected, opacity: Number(getComputedStyle(el).opacity) })
+      if (el) w.__probe.samples.push({ same: el === w.__layer && w.__layer.isConnected, opacity: Number(getComputedStyle(el).opacity), role: el.getAttribute('data-role') })
       if (w.__probe.run) requestAnimationFrame(tick)
     }
     requestAnimationFrame(tick)
   })
   await upButton.click()
+  await expect(page.locator('[data-stage]')).toHaveAttribute('data-floor', '2')
   await page.waitForTimeout(80)
   await page.getByRole('button', { name: /^Descendre d'un étage/ }).click()
   await expect(page.locator('[data-stage]')).toHaveAttribute('data-floor', '1')
   await page.waitForTimeout(600)
-  const samples = await page.evaluate(() => { const w = window as unknown as { __probe: { samples: { same: boolean; opacity: number }[]; run: boolean } }; w.__probe.run = false; return w.__probe.samples })
+  const samples = await page.evaluate(() => { const w = window as unknown as { __probe: { samples: { same: boolean; opacity: number; role: string | null }[]; run: boolean } }; w.__probe.run = false; return w.__probe.samples })
   expect(samples.length).toBeGreaterThan(20)
   expect(samples.every((q) => q.same), 'le nœud de l\'étage 1 a été remplacé').toBe(true)
-  const visible = samples.findIndex((q) => q.opacity > 0)
-  expect(visible).toBeGreaterThanOrEqual(0)
-  expect(samples.slice(visible).filter((q) => q.opacity === 0), 'l\'étage 1 est retombé à l\'opacité 0').toHaveLength(0)
-  expect(Math.min(...samples.map((q) => q.opacity))).toBeGreaterThan(0.3)
+  expect(samples[0].opacity, 'avant le mouvement, la couche est opaque').toBe(1)
+  // La profondeur du départ dépend du moment exact où le clic retour est tombé (du timing, pas
+  // du design : le seuil « jamais sous 0,3 » de la première version a flotté, et le « jamais 0 »
+  // tombait dès que le départ allait au bout — issue #59). Ce qui tient à toute vitesse : la
+  // couche reste le même nœud, la reprise ne replonge pas, et elle finit opaque.
+  // La comparaison des reprises démarre après le dernier échantillon « leaving » : au
+  // basculement, la transition reprend depuis la valeur en cours (le creux de fin de départ)
+  // et l'écart avec le premier échantillon lu dépend de la latence du clic ; l'invariant
+  // « la couche ne repart pas de zéro » reste garanti à toute vitesse par le même nœud.
+  const dernierDepart = samples.findLastIndex((q) => q.role === 'leaving')
+  expect(dernierDepart, 'l\'étage 1 est passé par l\'état leaving').toBeGreaterThanOrEqual(0)
+  const reprise = samples.slice(dernierDepart + 1)
+  expect(reprise.length, 'la reprise a été vue').toBeGreaterThanOrEqual(2)
+  for (let i = 1; i < reprise.length; i++) {
+    expect(reprise[i].opacity, 'la reprise replonge au lieu de remonter').toBeGreaterThanOrEqual(reprise[i - 1].opacity)
+  }
+  expect(reprise[reprise.length - 1].opacity, 'la reprise finit opaque').toBe(1)
   await expect(page.locator('.level')).toHaveCount(1)
   await expect(page.locator('.level')).toHaveCSS('opacity', '1')
   await expect(page.locator('.level')).toHaveCSS('transform', 'none')
