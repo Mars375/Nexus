@@ -533,3 +533,20 @@ def test_entropy_candidate_floor_is_24_characters():
 
     text = "cle B7x9QzW2Ry5Nt8Kv4Jm6Pa1 brisee"
     assert redact(text) == (text, [])
+
+
+def test_glued_bracket_fragments_join_the_labelled_value():
+    # Bracket fragments glued to a labelled value are part of the same
+    # secret (reviewer P2-3 on 0808860): the naked run of the base class
+    # admitted `[` and `]`, so nothing survives; the shell alternative and
+    # mask_value's marker short-circuit keep the idempotence safe.
+    for text, expected in (
+        ("password=abc[hunter2]", f"password={REDACTED}"),
+        ("password=abc[hunter2", f"password={REDACTED}"),
+        ("password: hunter2[beta]", f"password: {REDACTED}"),
+        ("password=([hunter2])", f"password={REDACTED}"),
+        ("password=([correct horse battery staple])", f"password={REDACTED}"),
+    ):
+        cleaned, found = redact(text)
+        assert cleaned == expected, text
+        assert found == ["credential"], text

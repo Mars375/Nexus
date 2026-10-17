@@ -79,27 +79,25 @@ _ASSIGNMENT = re.compile(
     # Bare value: one run, or several space-separated runs, up to the end of
     # the line — a multi-word passphrase (« mot de passe : correct horse battery
     # staple ») is masked whole (issue #15). The first run starts at a character
-    # that is not a space, comma, semicolon, brace, quote, bracket or line break:
-    # a value that starts at an existing [REDACTED] does not match, so the prose
-    # after it is not swallowed, and a space held back by the separator's `\s*`
-    # cannot become a value of its own. A word followed by `=` or `:`, IF it is
-    # one of the recognised labels, ends the sweep instead of joining it (the
-    # label-aware lookahead pulls it back out): the resumed scan then masks it
-    # under its own label, the tail [REDACTED] is never doubled, and a passphrase
-    # word that merely carries an `=` (« battery=staple ») stays inside the
-    # value. The label group is parenthesised inside the lookahead so the
-    # `[=:]` requirement binds to every branch of the alternation, not just
-    # the last one — a plain label word keeps the sweep running. A wrapped
-    # value (`password=[hunter2]`) is captured with its whole
-    # shell, spaces included: an already-masked shell `[REDACTED]` comes back
-    # unchanged through mask_value's short circuit. A shell that is never
-    # closed is captured up to the end of the line — the run below the label
-    # stays hidden, nothing is left in the clear. An auth scheme (Basic xyz)
+    # that is not a space, comma, semicolon, brace, quote or line break, and
+    # bracket fragments glued to the run stay inside the value: a value
+    # starting at `[` goes through the bracket shell FIRST (alternation order), a
+    # value that starts at an existing [REDACTED] therefore never reaches the
+    # naked-run chain, so the prose after the shell stays prose and the shell
+    # value comes back unchanged through mask_value's short circuit. A word
+    # followed by `=` or `:`, IF it is one of the recognised labels, ends the
+    # sweep instead of joining it (the label-aware lookahead pulls it back
+    # out): the resumed scan then masks it under its own label, the tail
+    # [REDACTED] is never doubled, and a passphrase word that merely carries
+    # an `=` (« battery=staple ») stays inside the value. A wrapped value
+    # (`password=[hunter2]`) is captured with its whole shell, spaces
+    # included; a shell that is never closed is captured up to the end of
+    # the line — nothing is left in the clear. An auth scheme (Basic xyz)
     # is part of the value.
     r"(?:\"([^\"]*)\"|'([^']*)'"
     r"|((?:(?:basic|bearer|digest|negotiate|ntlm)\s+)?"
-    rf"(?:\[[^\]\r\n]*\]?|[^\t \r\n,;}}\"'\[\]]+(?:[ \t]+(?!(?:{_LABEL})\s*[=:])"
-    r"[^\t \r\n,;}\"'\[\]]+)*)))"
+    rf"(?:\[[^\]\r\n]*\]?|[^\t \r\n,;}}\"']+(?:[ \t]+(?!(?:{_LABEL})\s*[=:])"
+    r"[^\t \r\n,;}}\"']+)*)))"
 )
 
 # Long opaque runs: random-looking tokens that matched no format above (third-party
