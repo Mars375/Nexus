@@ -287,6 +287,24 @@ def test_url_credentials_before_a_query_are_still_masked():
     assert found == ["url_credentials"]
 
 
+def test_url_with_a_port_and_a_query_is_kept():
+    # Antigravity review on 6d78a6c (same disposition as above): `host:port` in
+    # front of a query read as a password and the port and query head were
+    # erased. An unencoded ? or # always ends the userinfo, never a password.
+    for text in (
+        "http://localhost:3000?email=alice@example.com",
+        "https://example.org:443?redirect=mailto:alice@example.net",
+    ):
+        assert redact(text) == (text, [])
+
+
+def test_url_credentials_before_a_port_and_a_query_stay_masked():
+    # The password restriction leaves real credentials masked, port included.
+    cleaned, found = redact("https://alice:hunter2@host:8443/x?y=1")
+    assert cleaned == f"https://alice:{REDACTED}@host:8443/x?y=1"
+    assert found == ["url_credentials"]
+
+
 def test_multi_word_passphrase_is_masked_to_end_of_line():
     # issue #15: only the first word used to survive (« correct »).
     cleaned, found = redact("mot de passe : correct horse battery staple")
@@ -358,6 +376,32 @@ def test_slashed_run_with_a_flat_24_segment_is_masked_whole():
     assert found == ["high_entropy"]
 
 
+def test_slashed_base64_with_a_short_head_is_masked_whole():
+    # Antigravity review on 6d78a6c: anchoring the pattern at 16 characters left
+    # the head of the value in the clear (`A1b2C3d4E5/[REDACTED]` is still a
+    # leak) — the whole value is masked now, first segment included.
+    chaine = (
+        "A1b2C3d4E5/"
+        + "F6g7H8i9J0k1L2m3N4"
+        + "/O5p6Q7r8S9t0U1v2W3"
+        + "/X4y5Z6a7B8c9D0e"
+        + "1F2"
+    )
+    cleaned, found = redact(f"cle {chaine} ici")
+    assert cleaned == f"cle {REDACTED} ici"
+    assert found == ["high_entropy"]
+
+
+def test_slashed_base64_with_a_single_slash_is_masked_whole():
+    # A 44-character key split by ONE slash (many 32-byte keys carry a single
+    # `/`): the two-slash floor let it out in the clear (Antigravity review on
+    # 6d78a6c). Assembled at runtime from short pieces.
+    chaine = "K1N7xP+9mQ2vL8jR" + "3tY6/wA0bC4dE5fG7" + "h8i9j0k1l2="
+    cleaned, found = redact(f"cle {chaine} ici")
+    assert cleaned == f"cle {REDACTED} ici"
+    assert found == ["high_entropy"]
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -365,11 +409,15 @@ def test_slashed_run_with_a_flat_24_segment_is_masked_whole():
         "/var/backups/2026-10-18/nexus.db",
         "https://example.org/documentation_officielle_2026/notes/finales",
         "https://example.org/une_variable_tres_longue_2026/archives/notes_finales",
+        "deployments/v1_release_20261018/build_artifacts_run42/output.log",
+        "https://cdn.example.org/v1_release_20261018/build_artifacts_run42/output",
+        "deployments/20261018/releases/build42/output",
     ],
 )
 def test_paths_with_slashes_stay_untouched(text):
-    # The slashed-pattern guard (#84): a path of short segments or words is not
-    # an opaque value, even when one segment is long.
+    # The slashed-pattern guard (#84): a path of words is not an opaque value,
+    # even when it is long and carries digits (Antigravity review on 6d78a6c:
+    # deployment/build paths used to pass the guard and were erased).
     assert redact(text) == (text, [])
 
 
@@ -490,10 +538,47 @@ def test_short_vendor_prefix_with_full_segments_is_masked_whole():
     assert found == ["high_entropy"]
 
 
+def test_real_vendor_key_shape_is_masked_by_the_flat_rule():
+    # Closing assumption of the second disposition (Antigravity review on
+    # 6d78a6c, set-aside finding): a real vendor key is `sk_live_` followed by
+    # ONE continuous run — the flat 24+ rule masks the whole value, prefix
+    # included. Assembled at runtime from short pieces.
+    chaine = "sk_live_" + "51H8xYzAbCdEfGhIj" + "KlMnOpQrStUvWxYz" + "0123456789AbCdEfGh" + "IjKlMn"
+    cleaned, found = redact(f"cle {chaine} ici")
+    assert cleaned == f"cle {REDACTED} ici"
+    assert found == ["high_entropy"]
+
+
+def test_interleaved_short_vendor_segments_stay_untouched_as_assumed():
+    # Same review, the other half of the finding: a value that interleaves a
+    # SHORT segment (`live`, `v1`) between opaque ones stays out of reach on
+    # purpose — tolerating it would reopen the identifier false positives just
+    # closed (see test_identifier_with_one_short_head_…). The assumption is
+    # pinned here so a later widening has to argue with this test.
+    text = "sk_live_" + "Y7qP2rTx_N9vH4mKu" + "_C6wJ8sZa_R5dE3fGh"
+    assert redact(text) == (text, [])
+
+
 def test_identifier_with_two_short_segments_stays_untouched():
     # Counter-example of the same disposition (#84): `String` (6) is a SECOND
     # short segment — the ordinary identifier keeps its old verdict.
     text = "get_Database_Connection_String"
+    assert redact(text) == (text, [])
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "get_database_connection1",
+        "set_Database_Connection1",
+        "id-utilisateur-authentification1",
+        "dans l-amendement2-constitutionnel on voit",
+    ],
+)
+def test_identifier_with_one_short_head_and_plain_tail_stays_untouched(text):
+    # Antigravity review on 6d78a6c (second disposition): full length alone did
+    # not protect a snake_case tail of plain words — every segment behind the
+    # short head must carry a digit too, so only generated-looking tails pass.
     assert redact(text) == (text, [])
 
 

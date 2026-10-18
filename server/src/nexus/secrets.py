@@ -38,9 +38,12 @@ _FULL: list[tuple[str, re.Pattern[str]]] = [
 # the masked URL keeps its exact shape, including the colon of the empty username.
 # A URL with a username and no password (git clone https://git@host/org/tool) is not
 # a secret, and a host:port never matches (the password must end at an @).
-# A `?` or `#` never belongs to the user part (issue #84: without the restriction,
-# `?redirect=mailto:alice@…` made the query's tail a « user » and erased `alice`).
-_URL_CREDENTIALS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://(?:[^\s:/@?#]+)?:)([^\s@/]+)(@)")
+# A `?` or `#` never belongs to the userinfo at all (issue #84: without the
+# restriction, `?redirect=mailto:alice@…` made the query's tail a « user » and
+# erased `alice`). The password part carries the same restriction — Antigravity
+# review on 6d78a6c: `host:port?q=…@…` read the port and the query head as a
+# password and erased them, while an unencoded `?`/`#` always ends the userinfo.
+_URL_CREDENTIALS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://(?:[^\s:/@?#]+)?:)([^\s@/?#]+)(@)")
 
 # En-tête HTTP d'identifiant écrit tel quel (« Authorization: Digest username="…", … »,
 # « Cookie: a=1; b=2 ») : sa valeur court jusqu'à la fin de la ligne, virgules et ; compris,
@@ -113,10 +116,11 @@ _ASSIGNMENT = re.compile(
 _ENTROPY_TOKEN = re.compile(r"[A-Za-z0-9+=_-]{24,}")
 # Unlabelled base64 split by slashes (issue #84): the class above has no `/`, so a
 # segmented value leaked — every flat sub-run stayed under the floor. This pattern
-# spans the whole value when `_opaque_slashed` confirms its shape (first segment
-# ≥ 16, two slashes or more, 40+ characters, entropy and digits); ordinary paths
-# and URLs never pass the guard.
-_SLASHED_TOKEN = re.compile(r"[A-Za-z0-9+=_-]{16,}(?:/[A-Za-z0-9+=_-]+){2,}")
+# spans the whole value from its FIRST segment, however short (Antigravity review
+# on 6d78a6c: anchoring at 16 characters left the head in the clear), and
+# `_opaque_slashed` confirms the shape. `_` and `-` stay out of the class: a
+# slashed standard-base64 value never carries them, while paths and slugs do.
+_SLASHED_TOKEN = re.compile(r"(?<![A-Za-z0-9+=/])[A-Za-z0-9+=]{2,}(?:/[A-Za-z0-9+=]+)+")
 # Shannon entropy in bits per character: long natural words and repetitions sit
 # around 2-3 bits, a uniform 16-symbol hex run stays near log2(16) = 4 — the
 # threshold divides prose from opaque randomness (documented in issue #15).
@@ -144,9 +148,14 @@ def _opaque_run(token: str) -> bool:
     if parts and min(map(len, parts)) >= 8:
         return True
     # A short head segment is tolerated when EVERY following segment is full
-    # length (≥ 8): « tok_Y7qP2rTx_… » is opaque (issue #84), while
-    # get_Database_Connection_String (two short segments) stays an identifier.
-    if len(parts) >= 2 and len(parts[0]) < 8 and all(len(part) >= 8 for part in parts[1:]):
+    # length (≥ 8) AND carries a digit: « tok_Y7qP2rTx_… » is opaque (issue
+    # #84), while a snake_case identifier whose tail is plain words —
+    # get_database_connection1, id-utilisateur-authentification1 — stays an
+    # identifier even above the entropy threshold (Antigravity review on
+    # 6d78a6c: the digit-free `database` used to pass on length alone).
+    if len(parts) >= 2 and len(parts[0]) < 8 and all(
+        len(part) >= 8 and any(ch.isdigit() for ch in part) for part in parts[1:]
+    ):
         return True
     # A short vendor prefix does not break a token that holds a flat 24+ run
     # behind it (« tok_Y7qP2rTx… »): the prefix belongs to the value it names
@@ -166,16 +175,16 @@ def _opaque_slashed(token: str) -> bool:
         return False
     if _shannon_bits_per_char(token) < _HIGH_ENTROPY_BITS:
         return False
-    parts = token.split("/")
-    if sum(1 for part in parts if len(part) >= 12) < 2:
-        return False
-    # Chopped base64 holds several segments mixing letters and digits; a path is
-    # words, with at most one number-bearing segment.
+    # Chopped base64 holds several segments mixing both cases and digits; a
+    # lowercase path that reaches 40 characters and carries digits
+    # (`deployments/20261018/releases/build42/output`) mixes no case and stops
+    # here, while the hex-segment asset paths of the corpus never qualify.
     return (
         sum(
             1
-            for part in parts
-            if any(ch.isdigit() for ch in part) and any(ch.isalpha() for ch in part)
+            for part in token.split("/")
+            if any(c.isdigit() for c in part) and any(c.isupper() for c in part)
+            and any(c.islower() for c in part)
         )
         >= 2
     )
