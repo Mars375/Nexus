@@ -91,12 +91,13 @@ _ASSIGNMENT = re.compile(
     # [REDACTED] is never doubled, and a passphrase word that merely carries
     # an `=` (« battery=staple ») stays inside the value. A wrapped value
     # (`password=[hunter2]`) is captured with its whole shell, spaces
-    # included; a shell that is never closed is captured up to the end of
-    # the line — nothing is left in the clear. An auth scheme (Basic xyz)
-    # is part of the value.
+    # included, and the code glued right after the shell
+    # (`password=[hunter2]abc123`) joins the same value; a shell that is
+    # never closed is captured up to the end of the line — nothing is left
+    # in the clear. An auth scheme (Basic xyz) is part of the value.
     r"(?:\"([^\"]*)\"|'([^']*)'"
     r"|((?:(?:basic|bearer|digest|negotiate|ntlm)\s+)?"
-    rf"(?:\[[^\]\r\n]*\]?|[^\t \r\n,;}}\"']+(?:[ \t]+(?!(?:{_LABEL})\s*[=:])"
+    rf"(?:\[[^\]\r\n]*\]?[^\t \r\n,;}}\"']*|[^\t \r\n,;}}\"']+(?:[ \t]+(?!(?:{_LABEL})\s*[=:])"
     r"[^\t \r\n,;}}\"']+)*)))"
 )
 

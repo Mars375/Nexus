@@ -550,3 +550,31 @@ def test_glued_bracket_fragments_join_the_labelled_value():
         cleaned, found = redact(text)
         assert cleaned == expected, text
         assert found == ["credential"], text
+
+
+def test_suffix_glued_after_a_shell_joins_the_value():
+    # CodeRabbit Major (18:36Z on d6d4033, verified at source): the shell
+    # branch stopped right after the closing bracket, so code glued to a
+    # masked shell survived in the clear (`password=[hunter2]abc123` kept
+    # `abc123`); the never-glued base class masked it whole. The shell
+    # branch now takes the glued run too; prose after a SPACE stays prose,
+    # and the exact marker still comes back unchanged through the short
+    # circuit.
+    cleaned, found = redact("password=[hunter2]abc123")
+    assert cleaned == f"password={REDACTED}"
+    assert found == ["credential"]
+
+    cleaned, found = redact("password: [hunter2]x suite")
+    assert cleaned == f"password: {REDACTED} suite"
+    assert found == ["credential"]
+
+    cleaned, found = redact("password=[hunter2]abc def")
+    assert cleaned == f"password={REDACTED} def"
+    assert found == ["credential"]
+
+    # A glued suffix on an already-masked value collapses back to the
+    # marker; the marker alone comes back unchanged.
+    cleaned, found = redact("token=[REDACTED]abc123")
+    assert cleaned == f"token={REDACTED}"
+    assert found == ["credential"]
+    assert redact("token=[REDACTED]") == ("token=[REDACTED]", [])
