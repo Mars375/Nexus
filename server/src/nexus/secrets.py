@@ -117,10 +117,14 @@ _ENTROPY_TOKEN = re.compile(r"[A-Za-z0-9+=_-]{24,}")
 # Unlabelled base64 split by slashes (issue #84): the class above has no `/`, so a
 # segmented value leaked — every flat sub-run stayed under the floor. This pattern
 # spans the whole value from its FIRST segment, however short (Antigravity review
-# on 6d78a6c: anchoring at 16 characters left the head in the clear), and
-# `_opaque_slashed` confirms the shape. `_` and `-` stay out of the class: a
-# slashed standard-base64 value never carries them, while paths and slugs do.
-_SLASHED_TOKEN = re.compile(r"(?<![A-Za-z0-9+=/])[A-Za-z0-9+=]{2,}(?:/[A-Za-z0-9+=]+)+")
+# on 6d78a6c: anchoring at 16 characters left the head in the clear; review on
+# c73aee9: `{2,}` still let a one-character head through — `A/F6g7…`), and the
+# lookbehind leaves `/` OUT so a value glued behind one is reached (`/etc/tokens/…`,
+# review on c73aee9). The match may then start on a path word ahead of the value:
+# `_opaque_slashed` rules on the whole candidate and an opaque run takes it all
+# (over-redaction, ADR-006). `_` and `-` stay out of the class: a slashed
+# standard-base64 value never carries them, while paths and slugs do.
+_SLASHED_TOKEN = re.compile(r"(?<![A-Za-z0-9+=])[A-Za-z0-9+=]{1,}(?:/[A-Za-z0-9+=]+)+")
 # Shannon entropy in bits per character: long natural words and repetitions sit
 # around 2-3 bits, a uniform 16-symbol hex run stays near log2(16) = 4 — the
 # threshold divides prose from opaque randomness (documented in issue #15).
@@ -167,27 +171,56 @@ def _opaque_run(token: str) -> bool:
     )
 
 
+def _blob_segment(segment: str) -> bool:
+    """One chunk of an opaque slashed value, as opposed to a path word.
+
+    Opaque chunks interleave letters and digits (`A1b2C3d4E5`,
+    `K1N7xP9mQ2vL8jR3tY6`) or shuffle case without any word structure
+    (`G9woFbdKetaZSNxZWxL2`). Human names of the corpus — `AccountSettingsV2`,
+    `V1Release2026Build`, `deployments`, `build42` — keep letters and digits in
+    words, and change case at word starts instead of at random, so each part
+    stays far below one of the two signals (Antigravity and reviewer reviews on
+    c73aee9: this guard replaces the old « two segments mixing case and digits »,
+    which erased exactly those paths).
+    """
+    pairs = list(zip(segment, segment[1:], strict=False))
+    # Letters and digits alternate: the signature of a chunked base64 value.
+    boundaries = sum(
+        1
+        for left, right in pairs
+        if (left.isalpha() and right.isdigit()) or (left.isdigit() and right.isalpha())
+    )
+    if len(pairs) >= 3 and boundaries / len(pairs) >= 0.6:
+        return True
+    # Case changes at random rather than at word starts (letter pairs only).
+    # Short PascalCase names (`ApiV2`, `AppData`) stay out: a real value mixes
+    # case across many more letter pairs than a name holds.
+    letter_pairs = [(left, right) for left, right in pairs if left.isalpha() and right.isalpha()]
+    return (
+        len(letter_pairs) >= 6
+        and sum(1 for left, right in letter_pairs if left.isupper() != right.isupper())
+        / len(letter_pairs)
+        > 0.5
+    )
+
+
 def _opaque_slashed(token: str) -> bool:
     """Guard of the slashed pattern (issue #84): an opaque chopped value, not a path."""
-    if len(token) < 40:
+    if len(token) < 24:
         return False
     if not any(ch.isdigit() for ch in token):
         return False
     if _shannon_bits_per_char(token) < _HIGH_ENTROPY_BITS:
         return False
-    # Chopped base64 holds several segments mixing both cases and digits; a
-    # lowercase path that reaches 40 characters and carries digits
-    # (`deployments/20261018/releases/build42/output`) mixes no case and stops
-    # here, while the hex-segment asset paths of the corpus never qualify.
-    return (
-        sum(
-            1
-            for part in token.split("/")
-            if any(c.isdigit() for c in part) and any(c.isupper() for c in part)
-            and any(c.islower() for c in part)
-        )
-        >= 2
-    )
+    # A chopped value keeps the signature of its chunks: at least TWO of them
+    # are blobs (24-character floor instead of 40, Antigravity review on
+    # c73aee9: 24-to-39-character keys leaked). Paths of words
+    # (`deployments/20261018/releases/build42/output`), case-mixed deployment
+    # names (`Apps/V2Prod2026/Release42Build`) and source paths
+    # (`src/views/AccountSettingsV2/OAuth2Callback`) reach zero or one blob and
+    # stay intact. An all-lowercase slashed blob still reads as words to the
+    # guard: assumed limit, as with the hex segment of an asset path (#84).
+    return sum(1 for part in token.split("/") if part and _blob_segment(part)) >= 2
 
 
 def redact(text: str) -> tuple[str, list[str]]:

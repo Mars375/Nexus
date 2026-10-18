@@ -402,6 +402,85 @@ def test_slashed_base64_with_a_single_slash_is_masked_whole():
     assert found == ["high_entropy"]
 
 
+def test_slashed_value_with_a_one_character_head_is_masked_whole():
+    # Antigravity review on c73aee9: a two-character minimum on the first
+    # segment let a one-character head through (`A/F6g7…` half in the clear).
+    chaine = (
+        "A/"
+        + "F6g7H8i9J0k1L2m3N4"
+        + "/O5p6Q7r8S9t0U1v2W3"
+        + "/X4y5Z6a7B8c9D0e1F2"
+    )
+    cleaned, found = redact(f"cle {chaine} ici")
+    assert cleaned == f"cle {REDACTED} ici"
+    assert found == ["high_entropy"]
+
+
+def test_slashed_value_glued_behind_a_slash_is_masked_whole():
+    # Antigravity review on c73aee9: the lookbehind included `/`, so a value
+    # written after a bare slash (`lecture /<jeton>`) blocked every start and
+    # leaked whole. Assembled at runtime from short pieces.
+    chaine = (
+        "A1b2C3d4E5/" + "F6g7H8i9J0k1L2m3N4"
+        + "/O5p6Q7r8S9t0U1v2W3"
+        + "/X4y5Z6a7B8c9D0e1F2"
+    )
+    cleaned, found = redact(f"lecture /{chaine} sur le disque")
+    assert cleaned == f"lecture /{REDACTED} sur le disque"
+    assert found == ["high_entropy"]
+
+
+def test_slashed_value_behind_path_words_is_masked_whole():
+    # `/etc/tokens/<jeton>`: the match starts on the path words ahead of the
+    # value and the opaque run takes them with it (over-redaction, ADR-006).
+    chaine = (
+        "A1b2C3d4E5/" + "F6g7H8i9J0k1L2m3N4"
+        + "/O5p6Q7r8S9t0U1v2W3"
+        + "/X4y5Z6a7B8c9D0e1F2"
+    )
+    cleaned, found = redact(f"cat /etc/tokens/{chaine}")
+    assert cleaned == f"cat /{REDACTED}"
+    assert found == ["high_entropy"]
+
+
+@pytest.mark.parametrize(
+    "chaine",
+    [
+        # A short segment on either side of the single slash.
+        "k1l2=/" + "K1N7xP+9mQ" + "2vL8jR3tY6" + "wA0bC4dE5f" + "G7h8i9j0",
+        "K1N7xP+9mQ" + "2vL8jR3tY6" + "wA0bC4dE5f" + "G7h8i9j0" + "/k1l2=",
+        # Unequal sides, no segment reaching the old 40-character key length.
+        "1a2b3c4d5e6f" + "7g8h9i0j1" + "/K1N7xP9mQ2vL" + "8jR3tY6wA=",
+    ],
+)
+def test_slashed_values_sided_by_a_short_segment_are_masked_whole(chaine):
+    # Antigravity review on c73aee9: a value split by ONE slash with a short
+    # segment beside it (`k1l2=/…`, `…/k1l2=`, 21/22 characters) leaked partly
+    # or whole — the guard reads the chunks, it does not count full-length
+    # segments.
+    cleaned, found = redact(f"cle {chaine} ici")
+    assert cleaned == f"cle {REDACTED} ici"
+    assert found == ["high_entropy"]
+
+
+def test_slashed_keys_from_24_to_39_characters_are_masked_whole():
+    # Antigravity review on c73aee9: the 40-character floor let 24-to-39
+    # character slashed keys stay in the clear (the flat floor is 24 too).
+    for chaine in (
+        "A1b2C3d4E5f6" + "/K1l2M3n4O5p6",
+        "A1b2C3d4E5f6" + "G7h8I9j" + "/K1l2M3n4O5p6" + "Q7r8S9t",
+    ):
+        cleaned, found = redact(f"jeton {chaine} reçu")
+        assert cleaned == f"jeton {REDACTED} reçu"
+        assert found == ["high_entropy"]
+
+
+def test_slashed_run_under_the_length_floor_stays_untouched():
+    # 23 characters: under the slashed and flat floors alike, no candidate.
+    text = "cle A1b2C3d4E5f6/K1l2M3n4O5 fin"
+    assert redact(text) == (text, [])
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -418,6 +497,25 @@ def test_paths_with_slashes_stay_untouched(text):
     # The slashed-pattern guard (#84): a path of words is not an opaque value,
     # even when it is long and carries digits (Antigravity review on 6d78a6c:
     # deployment/build paths used to pass the guard and were erased).
+    assert redact(text) == (text, [])
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Deployments/V1Release2026Build/Build42Output2026",
+        "Apps/V2Prod2026/Release42Build/Deploy20261018",
+        "src/views/AccountSettingsV2/OAuth2Callback",
+        "components/AuthDialogV2/Step1EmailAddress",
+        "api/Version2/PaymentGateway3/ProcessOrder",
+        "app/Http/Controllers/ApiV2/Auth3StepFlow",
+    ],
+)
+def test_case_mixed_paths_and_names_stay_untouched(text):
+    # Antigravity and reviewer reviews on c73aee9: the previous guard masked a
+    # path part merely for mixing case and digits (`Deployments/V1Release…`,
+    # `…AccountSettingsV2/OAuth2Callback`). A path names its parts: neither
+    # signal of `_blob_segment` fires on a word or a version number.
     assert redact(text) == (text, [])
 
 
