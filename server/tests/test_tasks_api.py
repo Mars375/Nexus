@@ -527,6 +527,85 @@ def test_unknown_field_on_create_is_refused(client):
     assert res.status_code == 422
 
 
+# --- POST /status: fields that do not apply to the target ------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("target", "field", "value"),
+    [
+        ("backlog", "evidence", ["commit:a1b2c3d"]),
+        ("todo", "role", "main"),
+        ("in_progress", "block_cause", "c"),
+        ("in_progress", "follow_up_at", "2026-11-01T09:00:00+01:00"),
+        ("blocked", "reason", "motif"),
+        ("blocked", "evidence", ["commit:a1b2c3d"]),
+        ("review", "block_plan", "p"),
+        ("done", "reason", "motif"),
+        ("dropped", "block_plan", "p"),
+    ],
+)
+def test_field_inapplicable_to_the_target_is_refused(client, target, field, value):
+    ref = create(client, next_action="x")["id"]
+    move(client, ref, "in_progress")
+
+    res = move(client, ref, target, **{field: value})
+
+    assert res.status_code == 422, res.text
+    (error,) = res.json()["detail"]
+    assert error["loc"] == ["body", field]
+    assert error["msg"] == f"{field} : champ inapplicable au statut « {target} »"
+    assert client.get(f"/api/tasks/{ref}").json()["status"] == "in_progress"
+
+
+def test_every_inapplicable_field_is_named(client):
+    ref = create(client, next_action="x")["id"]
+
+    res = move(client, ref, "backlog", evidence=["commit:a1b2c3d"], block_cause="c", role="main")
+
+    assert res.status_code == 422, res.text
+    assert {error["loc"][-1] for error in res.json()["detail"]} == {
+        "evidence",
+        "block_cause",
+        "role",
+    }
+
+
+def test_inapplicable_field_never_echoes_its_value(client):
+    ref = create(client, next_action="x")["id"]
+
+    res = move(client, ref, "todo", evidence=[f"token={SECRET}"])
+
+    assert res.status_code == 422
+    assert SECRET not in res.text
+
+
+def test_a_provided_but_null_field_is_refused_too(client):
+    ref = create(client, next_action="x")["id"]
+
+    res = move(client, ref, "todo", evidence=None)
+
+    assert res.status_code == 422, res.text
+    assert res.json()["detail"][0]["loc"] == ["body", "evidence"]
+
+
+def test_applicable_fields_are_accepted_per_target(client):
+    ref = create(client, next_action="x")["id"]
+
+    prepared = move(client, ref, "in_progress", role="main", next_action="suite")
+    assert prepared.status_code == 200, prepared.text
+    assert prepared.json()["operation_role"] == "main"
+    blocked = move(
+        client, ref, "blocked",
+        block_cause="SSH", block_plan="clé", follow_up_at="2026-11-01T09:00:00+01:00",
+    )
+    assert blocked.status_code == 200, blocked.text
+    assert move(client, ref, "in_progress").status_code == 200
+    reviewed = move(client, ref, "review", evidence=["commit:a1b2c3d"])
+    assert reviewed.json()["evidence"] == ["commit:a1b2c3d"]
+    dropped = move(client, ref, "dropped", reason="doublon")
+    assert dropped.json()["drop_reason"] == "doublon"
+
+
 def test_secret_only_expected_evidence_is_cleared(client):
     task = create(client, next_action="x", expected_evidence=SECRET)
     assert task["expected_evidence"] is None

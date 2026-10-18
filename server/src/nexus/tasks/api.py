@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from fastapi import APIRouter, Depends, Query, status
-from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    Field,
+    StringConstraints,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -124,6 +132,19 @@ class TaskUpdate(InputModel):
         return self
 
 
+# `StatusChange` field -> targets where the service applies it (`change_status`): on any other
+# target it used to be ignored silently (Codex, issue #17). `next_action` applies everywhere and
+# is deliberately absent.
+_STATUS_CHANGE_TARGETS: dict[str, frozenset[str]] = {
+    "reason": frozenset({"dropped"}),
+    "block_cause": frozenset({"blocked"}),
+    "block_plan": frozenset({"blocked"}),
+    "follow_up_at": frozenset({"blocked"}),
+    "evidence": frozenset({"done", "review"}),
+    "role": frozenset({"in_progress"}),
+}
+
+
 class StatusChange(InputModel):
 
     status: Status
@@ -134,6 +155,14 @@ class StatusChange(InputModel):
     evidence: list[EvidenceRef] | None = None
     next_action: str | None = None
     role: Role | None = None
+
+    @field_validator(*_STATUS_CHANGE_TARGETS, mode="after")
+    @classmethod
+    def _refuse_inapplicable(cls, value: Any, info: ValidationInfo) -> Any:
+        target = info.data.get("status")
+        if target is not None and target not in _STATUS_CHANGE_TARGETS[info.field_name]:
+            raise ValueError(f"champ inapplicable au statut « {target} »")
+        return value
 
 
 class EvidenceIn(InputModel):
