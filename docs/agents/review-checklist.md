@@ -93,7 +93,7 @@ How to use it:
 - [ ] Secret-scanner exceptions are exact fingerprints (commit, file, rule, line), never a whole path; fake secrets in tests are assembled at runtime (`"ghp_" + "A" * 36`).
 - [ ] Adding an ignore rule also untracks files it already matches (`git ls-files -ci --exclude-standard` must print nothing).
 - [ ] Scripts edited with `sed`/`perl` are re-read (`cat -A`): an escaping mistake silently turned a hook check into a no-op.
-- [ ] Docs and README only name commands that exist on that branch; a dependency on another PR is stated and resolved by merge order, then a rebase.
+- [ ] Docs and README only name commands that exist on that branch.
 - [ ] Instructions in docs are reviewed like a spec: they must not read as permission for the wrong behaviour (e.g. "re-check after a conflict" must not mean "replay the losing edit").
 
 ## 9. Before opening the PR
@@ -102,5 +102,5 @@ How to use it:
 - [ ] Migrations tested on an existing database, not only a fresh one.
 - [ ] Every regression test is proven to fail on the old code (revert or mutate, record the failing run): a test that passes both before and after the fix proves nothing (#5: a « reset on first message » test that never opened the second socket).
 - [ ] Error suppression is as narrow as the expected case: suppress the specific disconnect exception, never a broad `RuntimeError`/`Exception` around a task result — a real bug must surface in the logs (#5).
-- [ ] Stacked PRs are retargeted to `master` **before** their base branch is merged and deleted (otherwise GitHub closes them).
+- [ ] The branch starts directly from an up-to-date `master` and depends on no other PR: no stacked PRs (a rule change and its checklist are updated in the same PR).
 - [ ] No stray artefacts committed (screenshots, test data): check `git status` before `git add -A`.

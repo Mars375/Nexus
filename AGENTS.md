@@ -13,7 +13,7 @@
 
 ## Branches et PR
 
-- Une branche par issue ou par sujet, jamais deux sujets sur une même branche. Elle part de `master` à jour, sauf une PR empilée sur une autre (à recibler sur `master` avant la fusion de sa base, voir `docs/agents/review-checklist.md` §9). Noms : `feat/<n>-<sujet>`, `fix/<n>-<sujet>`, `docs/<sujet>`, `chore/<sujet>` (le numéro d'issue quand il y en a une) ; une session cloud qui impose `claude/<…>` garde ce nom.
+- Une branche par issue ou par sujet, jamais deux sujets sur une même branche. Elle part de `master` à jour ; une PR ne dépend jamais d'une autre PR (règle de Loïc, 2026-10-17 : pas de PR empilée — chaque sujet sur sa propre branche depuis `master` à jour, et la règle se recopie avec la checklist qui la contraint). Noms : `feat/<n>-<sujet>`, `fix/<n>-<sujet>`, `docs/<sujet>`, `chore/<sujet>` (le numéro d'issue quand il y en a une) ; une session cloud qui impose `claude/<…>` garde ce nom.
 - Jamais de push direct sur `master`, pas de push forcé sauf `--force-with-lease` sur sa propre branche.
 - Une PR par branche, fusionnée en squash par l'agent. Règle de Loïc (2026-10-06) : l'agent fusionne **de lui-même** une PR qu'il a ouverte quand toutes les conditions suivantes valent pour le **même commit de tête**, puis passe au sujet suivant (une issue `ready-for-agent` ; il demande à Loïc s'il n'y en a pas ou si le choix n'est pas évident).
   - `reviewer` a relu le diff complet jusqu'à ce commit ; chaque P1 et P2 est corrigé, ou écarté avec sa raison notée dans le corps de la PR.
