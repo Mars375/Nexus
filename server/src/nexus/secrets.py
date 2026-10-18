@@ -38,7 +38,9 @@ _FULL: list[tuple[str, re.Pattern[str]]] = [
 # the masked URL keeps its exact shape, including the colon of the empty username.
 # A URL with a username and no password (git clone https://git@host/org/tool) is not
 # a secret, and a host:port never matches (the password must end at an @).
-_URL_CREDENTIALS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://(?:[^\s:/@]+)?:)([^\s@/]+)(@)")
+# A `?` or `#` never belongs to the user part (issue #84: without the restriction,
+# `?redirect=mailto:alice@…` made the query's tail a « user » and erased `alice`).
+_URL_CREDENTIALS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://(?:[^\s:/@?#]+)?:)([^\s@/]+)(@)")
 
 # En-tête HTTP d'identifiant écrit tel quel (« Authorization: Digest username="…", … »,
 # « Cookie: a=1; b=2 ») : sa valeur court jusqu'à la fin de la ligne, virgules et ; compris,
@@ -109,6 +111,12 @@ _ASSIGNMENT = re.compile(
 # characters — with the segment guard in mask_random_run keeping identifiers
 # (a short word between separators) and 4-character UUID groups out (issue #15).
 _ENTROPY_TOKEN = re.compile(r"[A-Za-z0-9+=_-]{24,}")
+# Unlabelled base64 split by slashes (issue #84): the class above has no `/`, so a
+# segmented value leaked — every flat sub-run stayed under the floor. This pattern
+# spans the whole value when `_opaque_slashed` confirms its shape (first segment
+# ≥ 16, two slashes or more, 40+ characters, entropy and digits); ordinary paths
+# and URLs never pass the guard.
+_SLASHED_TOKEN = re.compile(r"[A-Za-z0-9+=_-]{16,}(?:/[A-Za-z0-9+=_-]+){2,}")
 # Shannon entropy in bits per character: long natural words and repetitions sit
 # around 2-3 bits, a uniform 16-symbol hex run stays near log2(16) = 4 — the
 # threshold divides prose from opaque randomness (documented in issue #15).
@@ -135,6 +143,11 @@ def _opaque_run(token: str) -> bool:
     parts = [part for part in re.split(r"[-_]", token) if part]
     if parts and min(map(len, parts)) >= 8:
         return True
+    # A short head segment is tolerated when EVERY following segment is full
+    # length (≥ 8): « tok_Y7qP2rTx_… » is opaque (issue #84), while
+    # get_Database_Connection_String (two short segments) stays an identifier.
+    if len(parts) >= 2 and len(parts[0]) < 8 and all(len(part) >= 8 for part in parts[1:]):
+        return True
     # A short vendor prefix does not break a token that holds a flat 24+ run
     # behind it (« tok_Y7qP2rTx… »): the prefix belongs to the value it names
     # and the whole candidate is masked. The 4-character groups of a UUID and
@@ -142,6 +155,29 @@ def _opaque_run(token: str) -> bool:
     return any(
         len(part) >= 24 and _shannon_bits_per_char(part) >= _HIGH_ENTROPY_BITS
         for part in parts
+    )
+
+
+def _opaque_slashed(token: str) -> bool:
+    """Guard of the slashed pattern (issue #84): an opaque chopped value, not a path."""
+    if len(token) < 40:
+        return False
+    if not any(ch.isdigit() for ch in token):
+        return False
+    if _shannon_bits_per_char(token) < _HIGH_ENTROPY_BITS:
+        return False
+    parts = token.split("/")
+    if sum(1 for part in parts if len(part) >= 12) < 2:
+        return False
+    # Chopped base64 holds several segments mixing letters and digits; a path is
+    # words, with at most one number-bearing segment.
+    return (
+        sum(
+            1
+            for part in parts
+            if any(ch.isdigit() for ch in part) and any(ch.isalpha() for ch in part)
+        )
+        >= 2
     )
 
 
@@ -181,12 +217,22 @@ def redact(text: str) -> tuple[str, list[str]]:
         found.append("high_entropy")
         return REDACTED
 
+    def mask_slashed_run(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if not _opaque_slashed(token):
+            return token
+        found.append("high_entropy")
+        return REDACTED
+
     # Labelled values run FIRST: a value that is itself a URL holding credentials
     # is masked whole (one marker, no doubled [REDACTED]), then the URL and header
-    # layers clean up what is left, and the entropy pass runs last.
+    # layers clean up what is left. The slashed pass runs just before the entropy
+    # pass so a segmented value is masked whole (issue #84), and the entropy pass
+    # runs last.
     text = _ASSIGNMENT.sub(mask_value, text)
     text = _URL_CREDENTIALS.sub(mask_url, text)
     text = _HEADER_CREDENTIALS.sub(mask_header, text)
+    text = _SLASHED_TOKEN.sub(mask_slashed_run, text)
     text = _ENTROPY_TOKEN.sub(mask_random_run, text)
     return text, sorted(set(found))
 

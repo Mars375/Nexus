@@ -274,6 +274,19 @@ def test_url_with_username_and_no_password_is_kept():
     assert redact(text) == (text, [])
 
 
+def test_url_without_credentials_in_a_query_is_kept():
+    # issue #84, third disposition: without the user-class restriction, the query
+    # fed the « user » role and `alice` was erased.
+    text = "https://example.org?redirect=mailto:alice@example.net"
+    assert redact(text) == (text, [])
+
+
+def test_url_credentials_before_a_query_are_still_masked():
+    cleaned, found = redact("postgresql://alice:hunter2@db.example/nexus?sslmode=require")
+    assert cleaned == f"postgresql://alice:{REDACTED}@db.example/nexus?sslmode=require"
+    assert found == ["url_credentials"]
+
+
 def test_multi_word_passphrase_is_masked_to_end_of_line():
     # issue #15: only the first word used to survive (« correct »).
     cleaned, found = redact("mot de passe : correct horse battery staple")
@@ -324,6 +337,50 @@ def test_entropy_pass_leaves_structured_but_unlabelled_text_untouched(text):
     # The false-positive criterion (#15): the entropy pass adds nothing to the
     # normal-text corpus — dashes and dots break candidate runs, prose stays flat.
     assert redact(text) == (text, [])
+
+
+def test_slashed_base64_is_masked_whole():
+    # issue #84, first disposition: a slash broke the candidate class and every
+    # flat sub-run stayed under 24 characters; the dedicated pattern masks the
+    # whole value (61 characters, three slashes, assembled at runtime).
+    chaine = "G9woFbdKetaZSNx" + "ZWxL2/h6SqXW3Jx2" + "i1Un7pjawt/N/" + "lHENmK19lIgDjpy40"
+    cleaned, found = redact(f"cle {chaine} notée")
+    assert cleaned == f"cle {REDACTED} notée"
+    assert found == ["high_entropy"]
+
+
+def test_slashed_run_with_a_flat_24_segment_is_masked_whole():
+    # Order matters: the slashed pass runs BEFORE the entropy pass, so a value
+    # whose first segment already reaches 24 characters is masked in one piece.
+    chaine = "A1b2C3d4E5f6G7h8" + "I9j0K1l2/M3n4O5p6Q7" + "r8S9t0U1v2/W3x4Y5z6" + "A7b8C9d0E1f2"
+    cleaned, found = redact(f"jeton {chaine} reçu")
+    assert cleaned == f"jeton {REDACTED} reçu"
+    assert found == ["high_entropy"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "serveur/src/nexus/secrets.py",
+        "/var/backups/2026-10-18/nexus.db",
+        "https://example.org/documentation_officielle_2026/notes/finales",
+        "https://example.org/une_variable_tres_longue_2026/archives/notes_finales",
+    ],
+)
+def test_paths_with_slashes_stay_untouched(text):
+    # The slashed-pattern guard (#84): a path of short segments or words is not
+    # an opaque value, even when one segment is long.
+    assert redact(text) == (text, [])
+
+
+def test_hexadecimal_segment_in_an_asset_path_is_masked_as_assumed():
+    # issue #84, fourth disposition: over-masking assumed (never a leak); the
+    # honest fix needs a path-context heuristic — the current behaviour is
+    # pinned here so the assumption stays visible.
+    text = "https://example.org/assets/0123456789abcdef0123456789abcdef/logo.svg"
+    cleaned, found = redact(text)
+    assert cleaned == f"https://example.org/assets/{REDACTED}/logo.svg"
+    assert found == ["high_entropy"]
 
 
 def test_labelled_value_that_is_a_url_with_credentials_is_masked_whole():
@@ -422,6 +479,22 @@ def test_short_prefixed_opaque_token_is_masked_whole():
     cleaned, found = redact("portail tok_Y7qP2rTxN9vH4mKuC6wJ8sZaR5dE3fGh actif")
     assert cleaned == f"portail {REDACTED} actif"
     assert found == ["high_entropy"]
+
+
+def test_short_vendor_prefix_with_full_segments_is_masked_whole():
+    # issue #84, second disposition: a short prefix is accepted at the head when
+    # EVERY following segment is full length (≥ 8) — the vendor token that holds
+    # no flat 24+ run is protected.
+    cleaned, found = redact("portail tok_Y7qP2rTx_N9vH4mKu_C6wJ8sZa_R5dE3fGh actif")
+    assert cleaned == f"portail {REDACTED} actif"
+    assert found == ["high_entropy"]
+
+
+def test_identifier_with_two_short_segments_stays_untouched():
+    # Counter-example of the same disposition (#84): `String` (6) is a SECOND
+    # short segment — the ordinary identifier keeps its old verdict.
+    text = "get_Database_Connection_String"
+    assert redact(text) == (text, [])
 
 
 def test_title_case_slug_with_short_word_stays_untouched():
