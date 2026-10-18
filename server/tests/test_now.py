@@ -375,8 +375,10 @@ def test_a_pending_ask_stays_listed_whatever_its_age(client):
 
 def test_a_treated_ask_leaves_the_list_seven_days_after_its_decision(client, monkeypatch):
     ask_loic(client)
-    client.post("/api/approvals/nx-appr-1/answer", json={"text": "ok"})
-    decided = now()
+    response = client.post("/api/approvals/nx-appr-1/answer", json={"text": "ok"})
+    # The anchor is the instant the server recorded for the decision -- the same field the
+    # seven-day window compares; a slow answer POST can no longer slide the boundary.
+    decided = datetime.fromisoformat(response.json()["decided_at"])
     before = shifted(decided, days=7, minutes=-1)
     after = shifted(decided, days=7, minutes=1)
 
