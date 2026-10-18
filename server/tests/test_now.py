@@ -1,6 +1,6 @@
 """Vue Maintenant (#6) : l'instantané GET /api/now."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import delete, event, update
@@ -55,6 +55,11 @@ def set_received(client, event_ref, instant):
         session.execute(update(Event).where(Event.id == int(event_ref.removeprefix("nx-evt-")))
                         .values(received_at=instant))
         session.commit()
+
+
+def shifted(instant, **delta):
+    """An absolute shift, back in the app zone: a real duration (checklist §7)."""
+    return (instant.astimezone(UTC) + timedelta(**delta)).astimezone(TZ)
 
 
 def snapshot(client):
@@ -146,7 +151,7 @@ def test_asks_received_more_than_seven_days_ago_are_left_out(client, monkeypatch
     publish(client, "needs_human", actor="helios", needs=["loic"], subject="Ancienne",
             payload={"options": ["oui", "non"], "consequence": "Publie"})
     forget_approvals(client)  # before migration 0004 there is no approval: the #6 rule applies
-    later = now() + timedelta(days=7, minutes=1)
+    later = shifted(now(), days=7, minutes=1)
     monkeypatch.setattr("nexus.now.now", lambda: later)
     assert snapshot(client)["asks"] == []
 
@@ -179,7 +184,7 @@ def test_done_tasks_older_than_seven_days_are_left_out(client, monkeypatch):
     move(client, ref, "in_progress")
     move(client, ref, "done", evidence=["PR #1"])
     assert [d["task"] for d in snapshot(client)["done"]] == [ref]
-    later = now() + timedelta(days=7, minutes=1)
+    later = shifted(now(), days=7, minutes=1)
     monkeypatch.setattr("nexus.now.now", lambda: later)
     assert snapshot(client)["done"] == []
 
@@ -191,7 +196,7 @@ def test_a_done_task_touched_later_still_leaves_the_window_on_its_done_instant(
     ref = create(client, title="Livrée", next_action="x")
     move(client, ref, "in_progress")
     move(client, ref, "done", evidence=["PR #1"])
-    later = now() + timedelta(days=7, minutes=1)
+    later = shifted(now(), days=7, minutes=1)
     # `updated_at` est récent (retouche), mais le passage à done date de plus de sept jours
     monkeypatch.setattr("nexus.tasks.service.now", lambda: later)
     if touch == "comment":
@@ -372,10 +377,12 @@ def test_a_treated_ask_leaves_the_list_seven_days_after_its_decision(client, mon
     ask_loic(client)
     client.post("/api/approvals/nx-appr-1/answer", json={"text": "ok"})
     decided = now()
+    before = shifted(decided, days=7, minutes=-1)
+    after = shifted(decided, days=7, minutes=1)
 
-    monkeypatch.setattr("nexus.now.now", lambda: decided + timedelta(days=7, minutes=-1))
+    monkeypatch.setattr("nexus.now.now", lambda: before)
     assert len(snapshot(client)["asks"]) == 1
-    monkeypatch.setattr("nexus.now.now", lambda: decided + timedelta(days=7, minutes=1))
+    monkeypatch.setattr("nexus.now.now", lambda: after)
     assert snapshot(client)["asks"] == []
 
 
@@ -397,7 +404,7 @@ def test_an_expired_ask_is_listed_for_seven_days_after_its_deadline(client, monk
     assert ask["approval"]["status"] == "expired"
     assert ask["approval"]["decided_by"] is None
 
-    monkeypatch.setattr("nexus.now.now", lambda: deadline + timedelta(days=7, minutes=1))
+    monkeypatch.setattr("nexus.now.now", lambda: shifted(deadline, days=7, minutes=1))
     assert snapshot(client)["asks"] == []
 
 
