@@ -87,11 +87,22 @@ def test_the_message_names_no_received_value_and_is_not_read_as_already_done():
     assert exc.value.code == "task_done"
 
 
-@pytest.mark.parametrize("target", ["in_progress", "todo", "blocked", "review", "backlog"])
-def test_a_status_change_on_a_done_task_is_refused(client, target):
+# The payload only carries the fields its target applies (#17): a field sent to the wrong target
+# is refused with 422 before the done-task rule could ever fire.
+@pytest.mark.parametrize(
+    ("target", "fields"),
+    [
+        ("in_progress", {}),
+        ("todo", {}),
+        ("blocked", {"block_cause": "c", "block_plan": "p"}),
+        ("review", {}),
+        ("backlog", {}),
+    ],
+)
+def test_a_status_change_on_a_done_task_is_refused(client, target, fields):
     ref = close(client)
     before = state(client, ref)
-    assert code(move(client, ref, target, block_cause="c", block_plan="p")) == "task_done"
+    assert code(move(client, ref, target, **fields)) == "task_done"
     assert state(client, ref) == before
 
 

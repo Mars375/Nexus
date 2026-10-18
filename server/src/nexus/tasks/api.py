@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from fastapi import APIRouter, Depends, Query, status
-from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    Field,
+    StringConstraints,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -17,7 +25,7 @@ from nexus.clock import now
 from nexus.events.limits import EVIDENCE_REF_MAX
 from nexus.models import Task, TaskComment, TaskHistory
 from nexus.tasks import service
-from nexus.tasks.rules import RuleViolation
+from nexus.tasks.rules import STATUS_CHANGE_TARGETS, RuleViolation
 from nexus.validation import InputModel
 
 Status =Literal["backlog", "todo", "in_progress", "blocked", "review", "done", "dropped"]
@@ -134,6 +142,16 @@ class StatusChange(InputModel):
     evidence: list[EvidenceRef] | None = None
     next_action: str | None = None
     role: Role | None = None
+
+    # `mode="before"`: an inapplicable field is refused by name even when its value has the wrong
+    # type (a type error would otherwise be reported instead, naming no target status).
+    @field_validator(*STATUS_CHANGE_TARGETS, mode="before")
+    @classmethod
+    def _refuse_inapplicable(cls, value: Any, info: ValidationInfo) -> Any:
+        target = info.data.get("status")
+        if target is not None and target not in STATUS_CHANGE_TARGETS[info.field_name]:
+            raise ValueError(f"champ inapplicable au statut « {target} »")
+        return value
 
 
 class EvidenceIn(InputModel):
