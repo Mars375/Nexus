@@ -30,6 +30,19 @@ INITIAL_STATUSES = frozenset({"backlog", "todo"})
 # Une tâche n'entre dans ces statuts que si toutes ses dépendances sont traitées.
 GATED_BY_DEPENDENCIES = frozenset({"in_progress", "review", "done"})
 DEPENDENCY_RESOLVED = frozenset({"done", "dropped"})
+
+# `StatusChange` field -> targets where the service applies it (`change_status`): on any other
+# target it used to be ignored silently (Codex, issue #17). `next_action` applies everywhere and
+# is deliberately absent.
+STATUS_CHANGE_TARGETS: dict[str, frozenset[str]] = {
+    "reason": frozenset({"dropped"}),
+    "block_cause": frozenset({"blocked"}),
+    "block_plan": frozenset({"blocked"}),
+    "follow_up_at": frozenset({"blocked"}),
+    "evidence": frozenset({"done", "review"}),
+    "role": frozenset({"in_progress"}),
+}
+
 PRIORITIES = ("low", "normal", "high", "critical")
 ROLES = ("main", "auxiliary")
 

@@ -25,7 +25,7 @@ from nexus.clock import now
 from nexus.events.limits import EVIDENCE_REF_MAX
 from nexus.models import Task, TaskComment, TaskHistory
 from nexus.tasks import service
-from nexus.tasks.rules import RuleViolation
+from nexus.tasks.rules import STATUS_CHANGE_TARGETS, RuleViolation
 from nexus.validation import InputModel
 
 Status =Literal["backlog", "todo", "in_progress", "blocked", "review", "done", "dropped"]
@@ -132,19 +132,6 @@ class TaskUpdate(InputModel):
         return self
 
 
-# `StatusChange` field -> targets where the service applies it (`change_status`): on any other
-# target it used to be ignored silently (Codex, issue #17). `next_action` applies everywhere and
-# is deliberately absent.
-_STATUS_CHANGE_TARGETS: dict[str, frozenset[str]] = {
-    "reason": frozenset({"dropped"}),
-    "block_cause": frozenset({"blocked"}),
-    "block_plan": frozenset({"blocked"}),
-    "follow_up_at": frozenset({"blocked"}),
-    "evidence": frozenset({"done", "review"}),
-    "role": frozenset({"in_progress"}),
-}
-
-
 class StatusChange(InputModel):
 
     status: Status
@@ -156,11 +143,13 @@ class StatusChange(InputModel):
     next_action: str | None = None
     role: Role | None = None
 
-    @field_validator(*_STATUS_CHANGE_TARGETS, mode="after")
+    # `mode="before"`: an inapplicable field is refused by name even when its value has the wrong
+    # type (a type error would otherwise be reported instead, naming no target status).
+    @field_validator(*STATUS_CHANGE_TARGETS, mode="before")
     @classmethod
     def _refuse_inapplicable(cls, value: Any, info: ValidationInfo) -> Any:
         target = info.data.get("status")
-        if target is not None and target not in _STATUS_CHANGE_TARGETS[info.field_name]:
+        if target is not None and target not in STATUS_CHANGE_TARGETS[info.field_name]:
             raise ValueError(f"champ inapplicable au statut « {target} »")
         return value
 

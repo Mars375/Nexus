@@ -588,6 +588,38 @@ def test_a_provided_but_null_field_is_refused_too(client):
     assert res.json()["detail"][0]["loc"] == ["body", "evidence"]
 
 
+@pytest.mark.parametrize(
+    ("target", "field", "value"),
+    [
+        ("todo", "evidence", "pas-une-liste"),
+        ("todo", "follow_up_at", "pas-une-date"),
+        ("todo", "role", 3),
+    ],
+)
+def test_inapplicable_field_is_refused_before_its_type_is_judged(client, target, field, value):
+    ref = create(client, next_action="x")["id"]
+    move(client, ref, "in_progress")
+
+    res = move(client, ref, target, **{field: value})
+
+    assert res.status_code == 422, res.text
+    (error,) = res.json()["detail"]
+    assert error["loc"] == ["body", field]
+    assert error["msg"] == f"{field} : champ inapplicable au statut « {target} »"
+
+
+def test_invalid_value_on_an_applicable_field_keeps_its_own_error(client):
+    ref = create(client, next_action="x")["id"]
+    move(client, ref, "in_progress")
+
+    res = move(client, ref, "done", evidence="pas-une-liste")
+
+    assert res.status_code == 422, res.text
+    (error,) = res.json()["detail"]
+    assert error["loc"] == ["body", "evidence"]
+    assert "champ inapplicable" not in error["msg"]
+
+
 def test_applicable_fields_are_accepted_per_target(client):
     ref = create(client, next_action="x")["id"]
 
