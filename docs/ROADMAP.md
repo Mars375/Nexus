@@ -2,6 +2,7 @@
 
 **Version :** 0.2 (refonte : application autonome — ADR-011)
 **Date :** 2026-09-28
+**Mise à jour d'état :** 2026-10-17
 
 ---
 
@@ -47,6 +48,18 @@
 
 **Critère de sortie :** Loïc gère ses tâches dans Nexus au quotidien ; un agent lancé à la main déclare `claimed` → `done` + preuve via l'API ; « retrouver l'état d'une tâche < 30 s ».
 
+### État au 2026-10-17
+
+Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un ensemble cohérent — dernier fusionné : `f6cf78c` (#76).
+
+- **Tableau (Travail) :** thème « Salle orbitale » de bout en bout, focus de la première carte, fin du saut à l'ouverture des dialogues, police des toasts, agent principal affiché sur la carte, tâche terminée non modifiable + preuves jointes + tâche « suite » (PR #50, #51, #70, #71).
+- **Vue Maintenant :** vue complète (PR #29) puis paysage d'étages/baies de 4 nœuds par étage, rotation, finitions, et trois temps de demandes reçues (modèle → réponses → répondre/valider/refuser depuis Maintenant) (PR #33, #35, #37, #52, #53, #54).
+- **Temps réel (WebSocket) :** rafales, premier hello, validation par type, journal des requêtes sans valeur reçue, identifiant d'instance pour une base restaurée, URL de base de l'API côté front, handoff réel testé + refus 403, ticket avant tout flux, casse de l'en-tête Origin (PR #31, #38, #46, #48, #64, #68, #72, #75).
+- **Service / API et sécurité :** durcissement des appels directs (types, longueurs), authentification par jeton d'acteur exigée partout + écran « Nexus verrouillé » + matrice de permissions (ADR-020) (PR #41, #43, #44, #55, #56, #60, #62).
+- **Process agents :** conventions de branches/PR/langue, fusion automatique quand les relectures sont OK (sauf une PR touchant une migration, `DECISIONS.md` ou `AGENTS.md` : fusion par Loïc), routage de modèles (sonnet principal, architect/reviewer en Opus) (PR #34, #45, #73).
+
+**Reste pour la sortie de Phase 1 :** le scanner de secrets (#15, en vol par la PR #80), #17 et #39 ; #59 traité par la PR #76 ; #58 (migration) : sa PR devra être fusionnée par Loïc ; #57 en PR #74 (volet Tailnet bind, fusion par Loïc).
+
 ## Phase 2 — Exécution
 
 **Objectif :** confier du travail aux agents depuis Nexus et le suivre.
@@ -78,7 +91,7 @@
 
 **Quand :** dès que le noyau (Phase 1) est stable, au moment choisi par Loïc ; ne bloque aucune phase.
 
-**Livrables :** Tauri 2 encapsulant l'UI existante ; serveur FastAPI en sidecar ; icône de barre des tâches, notifications Windows, démarrage automatique ; installeur.
+**Livrables :** Tauri 2 encapsulant l'UI existante ; serveur FastAPI en sidecar ; origine de la WebView autorisée côté serveur (CORS REST + WebSocket, #47) ; icône de barre des tâches, notifications Windows, démarrage automatique ; installeur.
 
 **Critère de sortie :** Nexus s'ouvre comme une application Windows, sans navigateur, avec les mêmes vues.
 
@@ -122,7 +135,7 @@
 
 ## Prochaine action immédiate
 
-**Phase 1 :** découper le noyau en issues GitHub, puis squelette du projet (FastAPI + `nexus.db` + React/Vite).
+**Phase 1 :** boucler les issues restantes — PR #80 en vol pour #15 (scanner de secrets : formats à couvrir + détection par entropie ; il reste à boucler ses relectures, puis fusion), puis #17 et #39 ; #58 demande une nouvelle migration (date de dernière utilisation des jetons : sa PR se fusionne par Loïc) ; les PR ouvertes se fusionnent quand leurs relectures sont complètes (rappel : une PR touchant une migration, `DECISIONS.md` ou `AGENTS.md` se fusionne par Loïc).
 
 ---
 
