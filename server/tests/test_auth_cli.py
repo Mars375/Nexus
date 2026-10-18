@@ -159,6 +159,7 @@ def test_a_read_only_database_is_not_reported_as_busy(env, monkeypatch, capsys):
 
 @pytest.mark.parametrize("name,value", [
     ("NEXUS_HOST", "0.0.0.0"),
+    ("NEXUS_HOST", "192.168.1.10"),
     ("NEXUS_ALLOWED_HOSTS", "http://evil.example/x"),
 ])
 def test_an_invalid_configuration_is_a_french_error_without_traceback(

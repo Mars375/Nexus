@@ -175,3 +175,32 @@ def test_a_real_server_answers_403_to_a_websocket_with_a_foreign_host(settings):
         stop_real(server, thread)
     assert refused.startswith("HTTP/1.1 403"), refused.splitlines()[:1]
     assert admitted.startswith("HTTP/1.1 101"), admitted.splitlines()[:1]
+
+
+def _tailnet_client(tmp_path, *hosts):
+    settings = Settings(data_dir=tmp_path / "d", hosts=hosts)
+    return ActorClient(create_app(settings, nodes_runner=tailscale_json))
+
+
+def test_the_tailnet_bind_address_is_an_allowed_host(tmp_path):
+    with _tailnet_client(tmp_path, "127.0.0.1", "100.101.102.103") as c:
+        assert c.get("/api/health", headers={"Host": "100.101.102.103:8765"}).status_code == 200
+
+
+def test_the_ipv6_tailnet_bind_address_is_an_allowed_host(tmp_path):
+    with _tailnet_client(tmp_path, "fd7a:115c:a1e0::1") as c:
+        res = c.get("/api/health", headers={"Host": "[fd7a:115c:a1e0::1]:8765"})
+        assert res.status_code == 200
+
+
+def test_another_tailnet_address_is_refused(tmp_path):
+    with _tailnet_client(tmp_path, "127.0.0.1", "100.101.102.103") as c:
+        res = c.get("/api/health", headers={"Host": "100.101.102.104:8765"})
+        assert res.status_code == 400 and res.json()["detail"]["code"] == "invalid_host"
+        assert "100.101.102.104" not in res.text
+
+
+def test_a_websocket_to_the_tailnet_address_passes_the_host_check(tmp_path):
+    with _tailnet_client(tmp_path, "127.0.0.1", "100.101.102.103") as c:
+        with ws_connect(c, headers={"host": "100.101.102.103:8765"}) as ws:
+            assert ws.receive_json()["type"] == "hello"

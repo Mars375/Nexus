@@ -86,16 +86,26 @@ def test_both_entry_points_turn_off_uvicorns_access_log(monkeypatch, tmp_path):
     import uvicorn
 
     import nexus
+    from nexus import serving
 
-    calls = []
+    configs, calls = [], []
+
+    async def fake_serve(config, settings):
+        configs.append(config)
+        return True
+
+    monkeypatch.setattr(serving, "serve", fake_serve)
     monkeypatch.setattr(uvicorn, "run", lambda *a, **kw: calls.append(kw))
+    # The real `Config` would reconfigure the logging of the whole test session.
+    monkeypatch.setattr(uvicorn.Config, "configure_logging", lambda self: None)
     monkeypatch.setenv("NEXUS_DATA_DIR", str(tmp_path))
     nexus.main()
     nexus.dev()
-    assert len(calls) == 2
-    for kw in calls:
-        assert kw["access_log"] is False
-        assert "websocket_path" in kw["log_config"]["filters"]
+    assert len(configs) == 1 and len(calls) == 1
+    assert configs[0].access_log is False
+    assert "websocket_path" in configs[0].log_config["filters"]
+    assert calls[0]["access_log"] is False
+    assert "websocket_path" in calls[0]["log_config"]["filters"]
 
 
 def test_uvicorn_runs_without_its_access_log_and_with_ours():

@@ -1,3 +1,4 @@
+import ipaddress
 import json
 import subprocess
 from datetime import datetime
@@ -181,3 +182,93 @@ def test_unexpected_exception_in_first_read_is_logged(settings, caplog):
         and record.levelname == "ERROR"
         for record in caplog.records
     )
+
+
+def test_run_tailscale_self_asks_for_this_node_only(monkeypatch):
+    calls = []
+
+    def fake(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake)
+    assert nodes.run_tailscale_self("ts-bin") == "{}"
+    nodes.run_tailscale("ts-bin")
+    (argv, kwargs), (_, status_kwargs) = calls
+    assert argv == ["ts-bin", "status", "--json", "--peers=false"]
+    assert kwargs["timeout"] == nodes.TIMEOUT_SECONDS
+    assert kwargs["check"] is True and kwargs["capture_output"] is True
+    assert kwargs["encoding"] == "utf-8"
+    assert kwargs["creationflags"] == status_kwargs["creationflags"]
+
+
+def test_run_tailscale_self_falls_back_when_the_cli_refuses_peers_flag(monkeypatch):
+    argvs = []
+
+    def fake(argv, **kwargs):
+        argvs.append(argv)
+        if "--peers=false" in argv:
+            raise subprocess.CalledProcessError(2, argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake)
+    assert nodes.run_tailscale_self("ts-bin") == "{}"
+    assert argvs == [
+        ["ts-bin", "status", "--json", "--peers=false"],
+        ["ts-bin", "status", "--json"],
+    ]
+
+
+def test_run_tailscale_self_fallback_failure_and_timeout_propagate(monkeypatch):
+    def refuse_all(argv, **kwargs):
+        raise subprocess.CalledProcessError(2, argv)
+
+    monkeypatch.setattr(subprocess, "run", refuse_all)
+    with pytest.raises(subprocess.CalledProcessError):
+        nodes.run_tailscale_self("ts-bin")
+
+    calls = []
+
+    def slow(argv, **kwargs):
+        calls.append(argv)
+        raise subprocess.TimeoutExpired(argv, 5)
+
+    monkeypatch.setattr(subprocess, "run", slow)
+    with pytest.raises(subprocess.TimeoutExpired):
+        nodes.run_tailscale_self("ts-bin")
+    assert len(calls) == 1
+
+
+ADDRESS = ipaddress.ip_address("100.101.102.103")
+ADDRESS6 = ipaddress.ip_address("fd7a:115c:a1e0::1")
+
+
+def _status(state="Running", ips=("100.101.102.103", "fd7a:115c:a1e0::1")):
+    return json.dumps({"BackendState": state, "TailscaleIPs": list(ips)})
+
+
+@pytest.mark.parametrize("output,address,reason", [
+    (_status(), ADDRESS, None),
+    (_status(), ADDRESS6, None),
+    (_status(ips=("fd7a:115c:a1e0:0:0:0:0:1",)), ADDRESS6, None),
+    (_status("Stopped"), ADDRESS, nodes.NOT_CONNECTED),
+    (_status("NeedsLogin"), ADDRESS, nodes.NOT_CONNECTED),
+    (_status("Starting"), ADDRESS, nodes.NOT_CONNECTED),
+    (_status("NoState"), ADDRESS, nodes.NOT_CONNECTED),
+    (json.dumps({"TailscaleIPs": ["100.101.102.103"]}), ADDRESS, nodes.NOT_CONNECTED),
+    (_status(ips=("100.101.102.104",)), ADDRESS, nodes.ABSENT),
+    (_status(ips=()), ADDRESS, nodes.ABSENT),
+    (json.dumps({"BackendState": "Running", "TailscaleIPs": None}), ADDRESS, nodes.ABSENT),
+    (json.dumps({"BackendState": "Running"}), ADDRESS, nodes.ABSENT),
+    (json.dumps({"BackendState": "Running", "Self": {"TailscaleIPs": ["100.101.102.103"]}}),
+     ADDRESS, nodes.ABSENT),
+    (_status(ips=("x",)), ADDRESS, nodes.UNEXPECTED),
+    (_status(ips=(42,)), ADDRESS, nodes.UNEXPECTED),
+    (json.dumps({"BackendState": "Running", "TailscaleIPs": "100.101.102.103"}),
+     ADDRESS, nodes.UNEXPECTED),
+    (json.dumps([]), ADDRESS, nodes.UNEXPECTED),
+    (json.dumps("s"), ADDRESS, nodes.UNEXPECTED),
+    ("not json 100.101.102.103", ADDRESS, nodes.UNEXPECTED),
+])
+def test_tailnet_address_reason(output, address, reason):
+    assert nodes.tailnet_address_reason(output, address) == reason

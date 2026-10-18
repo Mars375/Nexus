@@ -7,6 +7,7 @@ jamais « en panne » (ADR-008).
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import subprocess
@@ -21,6 +22,16 @@ log = logging.getLogger("nexus.nodes")
 
 SOURCE = "tailscale"
 TIMEOUT_SECONDS = 5
+
+# Fixed words for the tailnet address check (ADR-021 D9): a reason never carries Tailscale's
+# output, an address or `str(exc)`.
+NOT_FOUND = "Tailscale introuvable"
+NOT_CONNECTED = "Tailscale pas connecté"
+UNREADABLE = "lecture de Tailscale impossible"
+UNEXPECTED = "réponse de Tailscale inattendue"
+ABSENT = "adresse absente de Tailscale"
+NO_ANSWER = "Tailscale ne répond pas"
+CHECK_FAILED = "contrôle de Tailscale en échec"
 
 
 @dataclass(frozen=True)
@@ -73,6 +84,57 @@ def run_tailscale(binary: str = "tailscale") -> str:
         creationflags=flags,
     )
     return result.stdout
+
+
+def run_tailscale_self(binary: str = "tailscale") -> str:
+    """`tailscale status --json --peers=false`: this node only, without the peer list (ADR-021)."""
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    try:
+        result = subprocess.run(
+            [binary, "status", "--json", "--peers=false"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=TIMEOUT_SECONDS,
+            check=True,
+            creationflags=flags,
+        )
+    except subprocess.CalledProcessError:
+        # A CLI that refuses the flag: same reading without it (docs/SECURITY.md §3).
+        return run_tailscale(binary)
+    return result.stdout
+
+
+def tailnet_address_reason(
+    output: str, address: ipaddress.IPv4Address | ipaddress.IPv6Address
+) -> str | None:
+    """None if Tailscale is running and gave `address` to this node, else a fixed reason.
+
+    Compares `ipaddress` objects, never text. `Self.TailscaleIPs` is not read: the status-level
+    `TailscaleIPs` is the field `tailscale ip` prints.
+    """
+    try:
+        status = json.loads(output)
+    except ValueError:
+        return UNEXPECTED
+    if not isinstance(status, dict):
+        return UNEXPECTED
+    if status.get("BackendState") != "Running":
+        return NOT_CONNECTED
+    listed = status.get("TailscaleIPs")
+    if listed is None:
+        listed = []
+    if not isinstance(listed, list):
+        return UNEXPECTED
+    addresses = []
+    for entry in listed:
+        if not isinstance(entry, str):
+            return UNEXPECTED
+        try:
+            addresses.append(ipaddress.ip_address(entry))
+        except ValueError:
+            return UNEXPECTED
+    return None if address in addresses else ABSENT
 
 
 def probe(runner: Runner) -> list[NodeState]:
