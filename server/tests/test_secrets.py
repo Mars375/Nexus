@@ -258,3 +258,323 @@ def test_ws_ticket_is_redacted_whatever_its_surroundings():
     cleaned, _ = redact(ticket + "B" * 5)
     assert "B" not in cleaned  # a longer run is masked whole
     assert redact("nxw_court")[0] == "nxw_court"
+
+
+def test_url_with_password_and_no_username_is_masked():
+    # issue #15: redis strips usernames, the password alone sits between // and @.
+    # The masked URL keeps its exact shape: the colon of the empty username stays.
+    cleaned, found = redact("REDIS_URL=redis://:hunter2@localhost/0")
+    assert cleaned == f"REDIS_URL=redis://:{REDACTED}@localhost/0"
+    assert found == ["url_credentials"]
+
+
+def test_url_with_username_and_no_password_is_kept():
+    # A bare username is not a credential (git clone URLs stay readable).
+    text = "git clone https://git@github.com/Mars375/Nexus"
+    assert redact(text) == (text, [])
+
+
+def test_multi_word_passphrase_is_masked_to_end_of_line():
+    # issue #15: only the first word used to survive (« correct »).
+    cleaned, found = redact("mot de passe : correct horse battery staple")
+    assert cleaned == f"mot de passe : {REDACTED}"
+    assert found == ["credential"]
+
+
+def test_bare_value_stops_at_inline_boundaries():
+    # The end-of-line value keeps inline structure readable: a comma, brace or
+    # quote after the value stays untouched, so JSON and trailing prose survive.
+    cleaned, _ = redact("password: hunter2, puis relancer les tests")
+    assert cleaned == f"password: {REDACTED}, puis relancer les tests"
+    cleaned, _ = redact('{"secret": "abc 123", "note": "ok"}')
+    assert cleaned == f'{{"secret": "{REDACTED}", "note": "ok"}}'
+
+
+def test_long_random_string_is_masked_as_high_entropy():
+    # Assembled at runtime from short pieces: 30 unique characters (~4.9 bits/char).
+    chaine = "is6Xk9ZmdwaO1Pq" + "Trhv4lHB7sYpG3u"
+    cleaned, found = redact(f"probe output: {chaine} rest")
+    assert cleaned == f"probe output: {REDACTED} rest"
+    assert found == ["high_entropy"]
+
+
+def test_high_entropy_masking_needs_length_and_randomness():
+    # 23 characters: below the length threshold, never an entropy candidate.
+    court = "a1b2c3d4e5f6a7b8c9d0e1f"
+    assert redact(f"commit {court} ok") == (f"commit {court} ok", [])
+    # A repeated character carries no randomness: long but flat is kept.
+    plat = "a" * 40
+    assert redact(f"commit {plat} ok") == (f"commit {plat} ok", [])
+    # A full-width hex run reads like a random token: masked (over-redaction, ADR-006).
+    sha = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"
+    cleaned, found = redact(f"commit {sha} sur main")
+    assert sha not in cleaned
+    assert found == ["high_entropy"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "uuid 3686f22a-1ac5-4c8a-9d5b-8f29c2f21e90",
+        "chemin F:\\Projet\\Nexus\\serveur\\taches\\evenements.db",
+        "Réponse lente du serveur 127.0.0.1:5173, réessai dans 200s",
+    ],
+)
+def test_entropy_pass_leaves_structured_but_unlabelled_text_untouched(text):
+    # The false-positive criterion (#15): the entropy pass adds nothing to the
+    # normal-text corpus — dashes and dots break candidate runs, prose stays flat.
+    assert redact(text) == (text, [])
+
+
+def test_labelled_value_that_is_a_url_with_credentials_is_masked_whole():
+    # The labelled value itself is a connection URL: one marker, kept whole (the
+    # assignment layer runs before the URL layer so the value is not split).
+    cleaned, found = redact("password=postgresql://alice:hunter2@db.example/nexus")
+    assert cleaned == f"password={REDACTED}"
+    assert found == ["credential"]
+
+
+def test_masked_token_then_another_secret_on_the_same_line():
+    # The first label's value starts at an existing [REDACTED] and does not
+    # match; the resumed scan masks the second secret under its own label.
+    cleaned, found = redact("token=[REDACTED] password=hunter2 to try")
+    assert cleaned == f"token={REDACTED} password={REDACTED}"
+    assert found == ["credential"]
+
+
+def test_another_secret_then_masked_token_on_the_same_line():
+    # The value sweep stops before the `token=` fragment (continuation runs
+    # exclude `=` and `:`), so the tail mask is not doubled.
+    cleaned, found = redact("password=hunter2 token=[REDACTED]")
+    assert cleaned == f"password={REDACTED} token={REDACTED}"
+    assert found == ["credential"]
+
+
+def test_bracketed_value_is_masked_whole():
+    # A value wrapped in brackets is a real secret (CodeRabbit finding on
+    # 58f3920): today the bare value skips a leading `[`, none of the other
+    # layers catch a short run, and the password would go out unmasked.
+    cleaned, found = redact("password=[hunter2]")
+    assert cleaned == f"password={REDACTED}"
+    assert found == ["credential"]
+
+
+def test_bracketed_value_with_spaces_is_masked_whole():
+    # The bracket form is captured with its whole shell, spaces included.
+    cleaned, found = redact("mot de passe=[correct horse battery staple]")
+    assert cleaned == f"mot de passe={REDACTED}"
+    assert found == ["credential"]
+
+
+def test_bracketed_marker_value_is_idempotent():
+    # An existing [REDACTED] value is returned unchanged and does not report
+    # a credential a second time (mask_value's short circuit).
+    cleaned, found = redact("token=[REDACTED]")
+    assert cleaned == "token=[REDACTED]"
+    assert found == []
+
+
+def test_passphrase_containing_an_unlabelled_equals_word_is_masked_whole():
+    # `battery=staple` is part of the passphrase (CodeRabbit comment on
+    # 58f3920): the continued sweep only stops before a word that IS one of
+    # the recognised labels followed by `=` or `:`, not before any `=`.
+    cleaned, found = redact("mot de passe : correct horse battery=staple")
+    assert cleaned == "mot de passe : [REDACTED]"
+    assert found == ["credential"]
+
+
+def test_next_recognised_label_still_ends_the_sweep():
+    # A later, recognised label with its own value ends the sweep: the two
+    # labelled secrets are masked separately, each keeping its own label
+    # (the sweep's generous tail belongs to the second label, not the first).
+    cleaned, found = redact("password: correct horse api_key=xyz soon")
+    assert cleaned == "password: [REDACTED] api_key=[REDACTED]"
+    assert found == ["credential"]
+
+
+def test_underscored_high_entropy_token_in_prose_is_masked():
+    # A random token framed with `_` separators splits into runs below the
+    # 24-character candidate length (CodeRabbit finding on 7f314de); the
+    # entropy candidate now spans the separators.
+    cleaned, found = redact("jeton reçu : Y7qP2rTx_N9vH4mKu_C6wJ8sZa_R5dE3fGh à lire")
+    assert cleaned == f"jeton reçu : {REDACTED} à lire"
+    assert found == ["high_entropy"]
+
+
+def test_uuid_like_dash_groups_stay_untouched():
+    # A candidate that spans dashes stays an identifier at the 4-character
+    # UUID groups; guarded despite the class change (documented criterion).
+    text = "référence 3686f22a-1ac5-4c8a-9d5b-8f29c2f21e90 créée"
+    assert redact(text) == (text, [])
+
+
+def test_snake_case_identifier_stays_untouched():
+    # A plausible identifier (short segment « access ») is not opaque even
+    # above the entropy threshold; guarded despite the class change.
+    text = "recharger un authorize_access_request_center lent"
+    assert redact(text) == (text, [])
+
+
+def test_short_prefixed_opaque_token_is_masked_whole():
+    # A short vendor prefix does not break the token (CodeRabbit finding on
+    # 341a639): the flat 24+ run behind it makes the whole candidate opaque,
+    # prefix included — the token without its prefix would already be masked.
+    cleaned, found = redact("portail tok_Y7qP2rTxN9vH4mKuC6wJ8sZaR5dE3fGh actif")
+    assert cleaned == f"portail {REDACTED} actif"
+    assert found == ["high_entropy"]
+
+
+def test_title_case_slug_with_short_word_stays_untouched():
+    # A candidate with one short segment is only opaque when a flat 24+ run
+    # hides behind it; title-case words (3.545 bits joined) have none.
+    text = "cap sur « Dictionnaire-des_Expressions_Francaises » à lire"
+    assert redact(text) == (text, [])
+
+
+def test_passphrase_containing_an_unlabelled_label_word_is_masked_whole():
+    # A word that IS one of the recognised labels but carries no `=` or `:`
+    # must not abort the sweep (Antigravity review on 34e5902): the grouped
+    # lookahead shares its `\s*[=:]` requirement with every label branch,
+    # not just the last one, so a plain label word inside the passphrase
+    # keeps the sweep running and the value is masked whole.
+    for text in (
+        "mot de passe : this is my secret passphrase",
+        "password: use the token right now",
+        "mot de passe : mon mot de passe est simple",
+        "token: un mot de passe fragile comme mot de passe",
+    ):
+        label, _, _ = text.partition(":")
+        cleaned, found = redact(text)
+        assert cleaned == f"{label}: {REDACTED}"
+        assert found == ["credential"]
+
+
+def test_framed_underscore_high_entropy_token_in_prose_is_masked():
+    # Markdown italics frame the token with extra `_` separators (Antigravity
+    # review on 34e5902): the empty framing segments must not drag the
+    # segment floor to 0 and free the candidate.
+    cleaned, found = redact(
+        "jeton reçu : _Y7qP2rTx_N9vH4mKu_C6wJ8sZa_R5dE3fGh_ à lire"
+    )
+    assert cleaned == f"jeton reçu : {REDACTED} à lire"
+    assert found == ["high_entropy"]
+
+
+def test_hyphen_joined_high_entropy_token_in_prose_is_masked():
+    # The same segmented token with `-` joiners (Antigravity review on
+    # 34e5902): locked before the framing fix so the guard cannot regress.
+    cleaned, found = redact(
+        "jeton reçu : Y7qP2rTx-N9vH4mKu-C6wJ8sZa-R5dE3fGh à lire"
+    )
+    assert cleaned == f"jeton reçu : {REDACTED} à lire"
+    assert found == ["high_entropy"]
+
+
+def test_bracketed_value_with_colon_is_masked_whole():
+    # A colon-separated bracketed value (Antigravity review on 34e5902):
+    # the bracket shell is masked whole whatever the separator.
+    cleaned, found = redact("password: [hunter2]")
+    assert cleaned == f"password: {REDACTED}"
+    assert found == ["credential"]
+
+
+def test_label_vocabulary_with_long_joined_words_stays_untouched():
+    # Joined label words are prose, not secrets: an entropy candidate that
+    # carries no digit is vocabulary, whatever the joiners (reviewer
+    # regression on 327aa8e — labels routed through clean_label were
+    # rejected once the candidate class allowed `_` and `-`).
+    text = "authentification-rechargement"
+    assert redact(text) == (text, [])
+
+    text = "pending+cancelled+overdue"
+    assert redact(text) == (text, [])
+
+
+def test_unclosed_bracket_value_is_masked_to_end_of_line():
+    # A shell with no closing bracket must still hide the value (reviewer
+    # regression on 327aa8e: the bracket branch required the `]`, and the
+    # bare run refuses to start at `[` for idempotence).
+    cleaned, found = redact("password: [hunter2")
+    assert cleaned == f"password: {REDACTED}"
+    assert found == ["credential"]
+
+
+def test_bracket_closed_after_a_new_line_stays_line_scoped():
+    # The shell never crosses a newline; the leftover of a value closed on
+    # the next line keeps the base behaviour (`[REDACTED]\n123]`).
+    cleaned, found = redact("password: [hunter2\n123]")
+    assert cleaned == f"password: {REDACTED}\n123]"
+    assert found == ["credential"]
+
+
+def test_double_dash_framed_token_is_masked_whole():
+    # CLI flags frame tokens with `--`: the framing separators belong to
+    # the candidate and are masked with it (reviewer probe on 327aa8e).
+    cleaned, found = redact(
+        "portail --Y7qP2rTx-N9vH4mKu-C6wJ8sZa-R5dE3fGh-- actif"
+    )
+    assert cleaned == f"portail {REDACTED} actif"
+    assert found == ["high_entropy"]
+
+
+def test_digits_only_run_is_not_opaque():
+    # A pure-digit run carries at most log2(10) ≈ 3.32 bits per character:
+    # below the Shannon threshold, whatever its length (locked choice).
+    text = "numerique : 842157306914827563201984 annote"
+    assert redact(text) == (text, [])
+
+
+def test_entropy_candidate_floor_is_24_characters():
+    # Exactly 24 opaque characters are masked, 23 are not even a candidate
+    # (locked boundary; reviewer probe on 327aa8e).
+    cleaned, found = redact("cle A7x9QzW2Ry5Nt8Kv4Jm6Pa1C nette")
+    assert cleaned == f"cle {REDACTED} nette"
+    assert found == ["high_entropy"]
+
+    text = "cle B7x9QzW2Ry5Nt8Kv4Jm6Pa1 brisee"
+    assert redact(text) == (text, [])
+
+
+def test_glued_bracket_fragments_join_the_labelled_value():
+    # Bracket fragments glued to a labelled value are part of the same
+    # secret (reviewer P2-3 on 0808860): the naked run of the base class
+    # admitted `[` and `]`, so nothing survives; the shell alternative and
+    # mask_value's marker short-circuit keep the idempotence safe.
+    for text, expected in (
+        ("password=abc[hunter2]", f"password={REDACTED}"),
+        ("password=abc[hunter2", f"password={REDACTED}"),
+        ("password: hunter2[beta]", f"password: {REDACTED}"),
+        ("password=([hunter2])", f"password={REDACTED}"),
+        ("password=([correct horse battery staple])", f"password={REDACTED}"),
+    ):
+        cleaned, found = redact(text)
+        assert cleaned == expected, text
+        assert found == ["credential"], text
+
+
+def test_suffix_glued_after_a_shell_joins_the_value():
+    # CodeRabbit Major (18:36Z on d6d4033, verified at source): the shell
+    # branch stopped right after the closing bracket, so code glued to a
+    # masked shell survived in the clear (`password=[hunter2]abc123` kept
+    # `abc123`); the never-glued base class masked it whole. The shell
+    # branch now takes the glued run too; prose after a SPACE stays prose,
+    # and the exact marker still comes back unchanged through the short
+    # circuit.
+    cleaned, found = redact("password=[hunter2]abc123")
+    assert cleaned == f"password={REDACTED}"
+    assert found == ["credential"]
+
+    cleaned, found = redact("password: [hunter2]x suite")
+    assert cleaned == f"password: {REDACTED} suite"
+    assert found == ["credential"]
+
+    cleaned, found = redact("password=[hunter2]abc def")
+    assert cleaned == f"password={REDACTED} def"
+    assert found == ["credential"]
+
+    # A glued suffix on an already-masked value collapses back to the
+    # marker; the marker alone comes back unchanged.
+    cleaned, found = redact("token=[REDACTED]abc123")
+    assert cleaned == f"token={REDACTED}"
+    assert found == ["credential"]
+    assert redact("token=[REDACTED]") == ("token=[REDACTED]", [])

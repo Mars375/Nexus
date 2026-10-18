@@ -7,7 +7,9 @@ Les motifs visent des formats reconnaissables pour limiter les faux positifs sur
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Callable
+from math import log2
 from typing import Any
 
 REDACTED = "[REDACTED]"
@@ -32,7 +34,11 @@ _FULL: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 # Mot de passe dans une URL de connexion : postgresql://alice:hunter2@hôte/base.
-_URL_CREDENTIALS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^\s:/@]+:)([^\s@/]+)(@)")
+# The username is optional (redis drops it: REDIS_URL=redis://:hunter2@localhost/0);
+# the masked URL keeps its exact shape, including the colon of the empty username.
+# A URL with a username and no password (git clone https://git@host/org/tool) is not
+# a secret, and a host:port never matches (the password must end at an @).
+_URL_CREDENTIALS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://(?:[^\s:/@]+)?:)([^\s@/]+)(@)")
 
 # En-tête HTTP d'identifiant écrit tel quel (« Authorization: Digest username="…", … »,
 # « Cookie: a=1; b=2 ») : sa valeur court jusqu'à la fin de la ligne, virgules et ; compris,
@@ -70,10 +76,73 @@ _CREDENTIAL_KEY = re.compile(rf"(?i){_LABEL}")
 _ASSIGNMENT = re.compile(
     rf"(?i)(?<![\w.-])({_LABEL})"
     r"([\"']?\s*[:=]\s*)"
-    # Valeur nue : un schéma d'authentification éventuel (Basic xyz) en fait partie.
+    # Bare value: one run, or several space-separated runs, up to the end of
+    # the line — a multi-word passphrase (« mot de passe : correct horse battery
+    # staple ») is masked whole (issue #15). The first run starts at a character
+    # that is not a space, comma, semicolon, brace, quote or line break, and
+    # bracket fragments glued to the run stay inside the value: a value
+    # starting at `[` goes through the bracket shell FIRST (alternation order), a
+    # value that starts at an existing [REDACTED] therefore never reaches the
+    # naked-run chain, so the prose after the shell stays prose and the shell
+    # value comes back unchanged through mask_value's short circuit. A word
+    # followed by `=` or `:`, IF it is one of the recognised labels, ends the
+    # sweep instead of joining it (the label-aware lookahead pulls it back
+    # out): the resumed scan then masks it under its own label, the tail
+    # [REDACTED] is never doubled, and a passphrase word that merely carries
+    # an `=` (« battery=staple ») stays inside the value. A wrapped value
+    # (`password=[hunter2]`) is captured with its whole shell, spaces
+    # included, and the code glued right after the shell
+    # (`password=[hunter2]abc123`) joins the same value; a shell that is
+    # never closed is captured up to the end of the line — nothing is left
+    # in the clear. An auth scheme (Basic xyz) is part of the value.
     r"(?:\"([^\"]*)\"|'([^']*)'"
-    r"|((?:(?:basic|bearer|digest|negotiate|ntlm)\s+)?[^\s,;}\"']+))"
+    r"|((?:(?:basic|bearer|digest|negotiate|ntlm)\s+)?"
+    rf"(?:\[[^\]\r\n]*\]?[^\t \r\n,;}}\"']*|[^\t \r\n,;}}\"']+(?:[ \t]+(?!(?:{_LABEL})\s*[=:])"
+    r"[^\t \r\n,;}}\"']+)*)))"
 )
+
+# Long opaque runs: random-looking tokens that matched no format above (third-party
+# API keys, full-width hashes). The pass runs last, once labelled values are already
+# masked. Dots, slashes and colons are not in the candidate class, so UUIDs, paths,
+# URLs and dotted hosts never become candidates; `_` and `-` joiners ARE allowed —
+# a token like « Y7qP2rTx_N9vH4mKu_C6wJ8sZa_R5dE3fGh » splits into runs below 24
+# characters — with the segment guard in mask_random_run keeping identifiers
+# (a short word between separators) and 4-character UUID groups out (issue #15).
+_ENTROPY_TOKEN = re.compile(r"[A-Za-z0-9+=_-]{24,}")
+# Shannon entropy in bits per character: long natural words and repetitions sit
+# around 2-3 bits, a uniform 16-symbol hex run stays near log2(16) = 4 — the
+# threshold divides prose from opaque randomness (documented in issue #15).
+_HIGH_ENTROPY_BITS = 3.5
+
+
+def _shannon_bits_per_char(token: str) -> float:
+    n = len(token)
+    return -sum((p / n) * log2(p / n) for p in Counter(token).values())
+
+
+def _opaque_run(token: str) -> bool:
+    """Does a high-entropy candidate read as an opaque token or an identifier?"""
+    if _shannon_bits_per_char(token) < _HIGH_ENTROPY_BITS:
+        return False
+    # Vendor tokens are drawn from digit-bearing alphabets; a candidate made
+    # only of letters (joined label vocabulary such as
+    # « authentification-rechargement ») is a phrase, not a secret —
+    # clean_label() validates its labels through this very gate.
+    if not any(ch.isdigit() for ch in token):
+        return False
+    # Framing separators (markdown italics `_token_`) only produce empty
+    # segments: they do not drag the floor down, real segments decide.
+    parts = [part for part in re.split(r"[-_]", token) if part]
+    if parts and min(map(len, parts)) >= 8:
+        return True
+    # A short vendor prefix does not break a token that holds a flat 24+ run
+    # behind it (« tok_Y7qP2rTx… »): the prefix belongs to the value it names
+    # and the whole candidate is masked. The 4-character groups of a UUID and
+    # the words of a slug never reach 24 characters on their own.
+    return any(
+        len(part) >= 24 and _shannon_bits_per_char(part) >= _HIGH_ENTROPY_BITS
+        for part in parts
+    )
 
 
 def redact(text: str) -> tuple[str, list[str]]:
@@ -105,9 +174,20 @@ def redact(text: str) -> tuple[str, list[str]]:
         found.append("credential")
         return f"{match.group(1)}{match.group(2)}{REDACTED}"
 
+    def mask_random_run(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if not _opaque_run(token):
+            return token
+        found.append("high_entropy")
+        return REDACTED
+
+    # Labelled values run FIRST: a value that is itself a URL holding credentials
+    # is masked whole (one marker, no doubled [REDACTED]), then the URL and header
+    # layers clean up what is left, and the entropy pass runs last.
+    text = _ASSIGNMENT.sub(mask_value, text)
     text = _URL_CREDENTIALS.sub(mask_url, text)
     text = _HEADER_CREDENTIALS.sub(mask_header, text)
-    text = _ASSIGNMENT.sub(mask_value, text)
+    text = _ENTROPY_TOKEN.sub(mask_random_run, text)
     return text, sorted(set(found))
 
 
