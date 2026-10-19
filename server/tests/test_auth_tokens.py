@@ -1,14 +1,16 @@
 """Jetons d'acteur (#16, ADR-020) : format, empreinte, recherche."""
 
 import hashlib
+import logging
 import re
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.orm import sessionmaker
 
 from nexus import migrate
 from nexus.auth import tokens
-from nexus.clock import now
+from nexus.clock import TZ, now
 from nexus.db import make_engine
 from nexus.models import ActorToken
 
@@ -20,6 +22,13 @@ def session(settings):
     engine = make_engine(settings.db_url)
     with sessionmaker(engine, expire_on_commit=False)() as s:
         yield s
+    engine.dispose()
+
+
+@pytest.fixture
+def factory(settings, session):
+    engine = make_engine(settings.db_url)
+    yield sessionmaker(engine, expire_on_commit=False)
     engine.dispose()
 
 
@@ -165,3 +174,105 @@ def test_is_live_is_false_for_a_revoked_or_deleted_row(session):
     session.commit()
     assert tokens.is_live(session, other.id) is False
     assert tokens.is_live(session, 987654) is False
+
+
+def test_touch_last_used_sets_it_on_the_first_use(session, factory):
+    row, _ = tokens.issue(session, "helios", "poste")
+    session.commit()
+    assert row.last_used_at is None
+    tokens.touch_last_used(factory, row.id)
+    session.refresh(row)
+    assert row.last_used_at is not None
+    assert abs((row.last_used_at - now()).total_seconds()) < 5
+
+
+def test_touch_last_used_leaves_a_recent_value_alone(session, factory):
+    row, _ = tokens.issue(session, "helios", "poste")
+    recent = now() - timedelta(seconds=100)
+    row.last_used_at = recent
+    session.commit()
+    tokens.touch_last_used(factory, row.id)
+    session.expire(row)
+    assert row.last_used_at == recent
+
+
+def test_touch_last_used_writes_again_after_the_window(session, factory):
+    row, _ = tokens.issue(session, "helios", "poste")
+    old = now() - timedelta(seconds=301)
+    row.last_used_at = old
+    session.commit()
+    tokens.touch_last_used(factory, row.id)
+    session.expire(row)
+    assert row.last_used_at is not None and row.last_used_at > old
+    assert abs((row.last_used_at - now()).total_seconds()) < 5
+
+
+def test_two_touches_in_a_row_write_once(session, factory):
+    row, _ = tokens.issue(session, "helios", "poste")
+    session.commit()
+    tokens.touch_last_used(factory, row.id)
+    session.refresh(row)
+    first = row.last_used_at
+    tokens.touch_last_used(factory, row.id)
+    session.expire(row)
+    assert row.last_used_at == first
+
+
+def test_touch_last_used_ignores_an_unknown_token(factory):
+    tokens.touch_last_used(factory, 987654)  # no exception, nothing written
+
+
+def test_a_failed_touch_never_fails_the_request(caplog):
+    class Broken:
+        def __call__(self):
+            raise RuntimeError("base indisponible")
+
+    caplog.set_level(logging.WARNING, logger="nexus")
+    tokens.touch_last_used(Broken(), 1)
+    assert "dernière utilisation" in caplog.text
+    assert "base indisponible" not in caplog.text
+
+
+def test_the_window_holds_across_the_autumn_fall_back(session, factory, monkeypatch):
+    # 2026-10-25: 03:00 CEST becomes 02:00 CET, so this local time exists twice (fold=1).
+    # 02:15+01:00 is 01:15Z: values are built on the UTC timeline, as real instants are.
+    fixed = datetime(2026, 10, 25, 2, 15, tzinfo=TZ, fold=1)
+    monkeypatch.setattr(tokens, "now", lambda: fixed)
+    row, _ = tokens.issue(session, "helios", "poste")
+
+    inside = (fixed.astimezone(UTC) - timedelta(seconds=299)).astimezone(TZ)
+    row.last_used_at = inside
+    session.commit()
+    tokens.touch_last_used(factory, row.id)
+    session.expire(row)
+    assert row.last_used_at == inside  # still inside the window
+
+    # 45 minutes is beyond the window; wall-clock subtraction would call it recent (00:30Z).
+    stale = (fixed.astimezone(UTC) - timedelta(minutes=45)).astimezone(TZ)
+    row.last_used_at = stale
+    session.commit()
+    tokens.touch_last_used(factory, row.id)
+    session.expire(row)
+    assert row.last_used_at == fixed
+
+    outside = (fixed.astimezone(UTC) - timedelta(seconds=301)).astimezone(TZ)
+    row.last_used_at = outside
+    session.commit()
+    tokens.touch_last_used(factory, row.id)
+    session.expire(row)
+    assert row.last_used_at == fixed
+
+
+def test_the_window_holds_across_the_spring_forward(session, factory, monkeypatch):
+    # 2026-03-29: 02:00 CET becomes 03:00 CEST. At 03:02+02:00 (01:02Z), wall-clock
+    # subtraction lands on 02:57, an hour that does not exist, i.e. 01:57Z: the future.
+    fixed = datetime(2026, 3, 29, 3, 2, tzinfo=TZ)
+    monkeypatch.setattr(tokens, "now", lambda: fixed)
+    row, _ = tokens.issue(session, "helios", "poste")
+
+    recent = (fixed.astimezone(UTC) - timedelta(minutes=2)).astimezone(TZ)
+    row.last_used_at = recent
+    session.commit()
+    tokens.touch_last_used(factory, row.id)
+    session.expire(row)
+    assert row.last_used_at == recent  # still inside the window

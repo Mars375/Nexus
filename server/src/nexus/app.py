@@ -20,6 +20,7 @@ from nexus import backup, live, migrate, nodes
 from nexus import now as now_view
 from nexus.approvals import api as approvals_api
 from nexus.approvals.service import ApprovalNotFound
+from nexus.auth import tokens
 from nexus.auth.deps import Authenticated
 from nexus.auth.tickets import TicketStore
 from nexus.clock import now
@@ -104,6 +105,10 @@ def create_app(
         app.state.ws_tickets = TicketStore()
         app.state.engine = make_engine(settings.db_url)
         app.state.sessionmaker = sessionmaker(app.state.engine, expire_on_commit=False)
+        # The diagnostic write (last_used_at) gets its own engine with a short busy timeout:
+        # a locked database delays an authenticated request by a fraction of a second (#58).
+        app.state.touch_engine = make_engine(settings.db_url, timeout=tokens.TOUCH_BUSY_TIMEOUT)
+        app.state.touch_sessionmaker = sessionmaker(app.state.touch_engine, expire_on_commit=False)
         if not before_migration:
             backup.backup(settings.db_path, settings.backup_dir, settings.backup_keep)
         # Réponse immédiate (unknown) tant que la première lecture n'a pas abouti ; on lui
@@ -123,6 +128,7 @@ def create_app(
                 with suppress(asyncio.CancelledError):
                     await task
             app.state.engine.dispose()
+            app.state.touch_engine.dispose()
 
     app = FastAPI(title="Nexus", version=version("nexus"), lifespan=lifespan)
     # Journal d'accès sans valeur reçue (ADR-006) : gabarit de route, jamais le chemin réel.

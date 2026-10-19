@@ -43,12 +43,13 @@ class TokenIdentity(NamedTuple):
 
 
 def authenticated_token(
+    request: Request,
     session: Annotated[Session, Depends(get_session)],
     authorization: Annotated[str | None, Header()] = None,
     x_nexus_actor: Annotated[str | None, Header()] = None,
 ) -> TokenIdentity:
     """The token row id and actor of the presented token; 401 without a valid one, 403 on a header
-    mismatch."""
+    mismatch. A successful authentication records the token's last use."""
     token = None if authorization is None else bearer_token(authorization)
     if token is None:
         raise _unauthorized(
@@ -62,6 +63,7 @@ def authenticated_token(
             "code": "actor_mismatch",
             "message": "l'acteur de l'en-tête X-Nexus-Actor diffère de celui du jeton",
         })
+    tokens.touch_last_used(request.app.state.touch_sessionmaker, row.id)
     return TokenIdentity(row.id, row.actor)
 
 

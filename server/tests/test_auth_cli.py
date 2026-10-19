@@ -2,12 +2,14 @@
 
 import re
 import sqlite3
+from datetime import datetime
 
 import pytest
 from alembic import command
 
 from nexus import migrate
 from nexus.auth import cli, tokens
+from nexus.clock import TZ
 
 TOKEN_RE = re.compile(r"nxt_[A-Za-z0-9_-]{43}")
 
@@ -67,6 +69,59 @@ def test_list_shows_refs_but_never_token_or_hash(env, capsys):
 def test_list_when_empty(env, capsys):
     code, out, _ = run(capsys, "list")
     assert code == 0 and "aucun" in out.lower()
+
+
+def test_list_shows_jamais_for_a_fresh_token(env, capsys):
+    run(capsys, "issue", "loic", "--label", "navigateur")
+    code, out, _ = run(capsys, "list")
+    assert code == 0
+    line = next(line for line in out.splitlines() if "nx-tok-1" in line)
+    assert "dernière utilisation jamais" in line
+
+
+def test_list_shows_the_last_use_timestamp(env, capsys):
+    run(capsys, "issue", "loic", "--label", "navigateur")
+    stored = "2026-10-18T21:04:00+00:00"
+    conn = sqlite3.connect(env.db_path)
+    conn.execute("UPDATE actor_tokens SET last_used_at = ? WHERE id = 1", (stored,))
+    conn.commit()
+    conn.close()
+    code, out, _ = run(capsys, "list")
+    assert code == 0
+    line = next(line for line in out.splitlines() if "nx-tok-1" in line)
+    expected = datetime.fromisoformat(stored).astimezone(TZ).strftime("%Y-%m-%d %H:%M %z")
+    assert f"dernière utilisation {expected}" in line
+    assert "jamais" not in line
+
+
+def test_list_tells_the_two_hours_of_the_autumn_fall_back_apart(env, capsys):
+    run(capsys, "issue", "loic", "--label", "premier")
+    run(capsys, "issue", "loic", "--label", "second")
+    conn = sqlite3.connect(env.db_path)
+    # 2026-10-25: 02:15 exists twice in Europe/Paris, one hour apart on the UTC timeline.
+    conn.execute("UPDATE actor_tokens SET last_used_at = '2026-10-25T00:15:00+00:00' WHERE id = 1")
+    conn.execute("UPDATE actor_tokens SET last_used_at = '2026-10-25T01:15:00+00:00' WHERE id = 2")
+    conn.commit()
+    conn.close()
+    code, out, _ = run(capsys, "list")
+    assert code == 0
+    first = next(line for line in out.splitlines() if "nx-tok-1" in line)
+    second = next(line for line in out.splitlines() if "nx-tok-2" in line)
+    assert "02:15 +0200" in first  # CEST side (00:15Z)
+    assert "02:15 +0100" in second  # CET side (01:15Z), an hour later
+
+
+def test_list_never_shows_the_token_or_its_digest_after_a_use(env, capsys):
+    _, issued, _ = run(capsys, "issue", "loic", "--label", "navigateur")
+    token = issued.strip()
+    conn = sqlite3.connect(env.db_path)
+    conn.execute("UPDATE actor_tokens SET last_used_at = '2026-10-18T21:04:00+00:00' WHERE id = 1")
+    conn.commit()
+    conn.close()
+    code, out, err = run(capsys, "list")
+    assert code == 0
+    for secret in (token, token[:8], token[4:12], tokens.digest(token), tokens.digest(token)[:8]):
+        assert secret not in out and secret not in err
 
 
 def test_revoke_then_again_is_idempotent(env, capsys):

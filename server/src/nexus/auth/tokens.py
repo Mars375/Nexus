@@ -10,11 +10,13 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import logging
 import re
 import secrets
 import unicodedata
+from datetime import UTC, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from nexus import secrets as redaction
@@ -25,9 +27,15 @@ from nexus.models import ActorToken
 PREFIX = "nxt_"
 BODY_LENGTH = 43  # base64url of 32 bytes, without padding
 LABEL_MAX = 64
+TOUCH_WINDOW = timedelta(seconds=300)  # at most one last_used_at write per token per window
+# Seconds sqlite waits on a locked database for the diagnostic write: the driver default (5 s)
+# would delay every authenticated request; a failed touch is retried on the next one.
+TOUCH_BUSY_TIMEOUT = 0.25
 
 # ASCII alphabet spelled out: `\d` and `\w` accept other scripts' digits and letters.
 _FORMAT = re.compile(rf"nxt_[A-Za-z0-9_-]{{{BODY_LENGTH}}}")
+
+log = logging.getLogger("nexus")
 
 
 def generate() -> str:
@@ -67,6 +75,34 @@ def is_live(session: Session, token_id: int) -> bool:
     """Whether the token row still exists and is not revoked; an absent row counts as revoked."""
     row = session.get(ActorToken, token_id)
     return row is not None and row.revoked_at is None
+
+
+def touch_last_used(factory, token_id: int) -> None:
+    """Record that a token was used, at most once per window; never fails the caller.
+
+    A separate short session keeps a failure (locked database, disk full) away from the
+    request's own transaction. The conditional UPDATE is atomic: simultaneous requests write
+    once, and the others see a rowcount of zero.
+    """
+    try:
+        moment = now()
+        # Subtracting on the UTC timeline keeps the window a real duration: wall-clock
+        # arithmetic in Europe/Paris crosses the DST change an hour off.
+        cutoff = moment.astimezone(UTC) - TOUCH_WINDOW
+        with factory() as session:
+            session.execute(
+                update(ActorToken)
+                .where(
+                    ActorToken.id == token_id,
+                    (ActorToken.last_used_at.is_(None))
+                    | (ActorToken.last_used_at < cutoff),
+                )
+                .values(last_used_at=moment)
+            )
+            session.commit()
+    except Exception:
+        # The request keeps working: a missed timestamp only delays the next write.
+        log.warning("dernière utilisation du jeton %s non enregistrée", token_id)
 
 
 def clean_label(label: str) -> str:

@@ -1,6 +1,9 @@
 """Authentification par jeton porteur (#16, ADR-020) : lecture du jeton, 401 et 403 d'identité."""
 
 import logging
+import sqlite3
+import time
+from datetime import timedelta
 from typing import Annotated
 
 import pytest
@@ -9,7 +12,7 @@ from sqlalchemy import select
 
 from nexus.auth import tokens
 from nexus.clock import now
-from nexus.models import Approval, Task, TaskHistory
+from nexus.models import ActorToken, Approval, Task, TaskHistory
 
 AT = "2026-09-28T09:05:00+02:00"
 SECRET_FREE_TOKEN = "nxt_" + "A" * 43  # construit à l'exécution
@@ -24,6 +27,11 @@ def issue(client, actor="helios"):
 
 def bearer(token):
     return {"Authorization": f"Bearer {token}"}
+
+
+def last_used_of(client, token_id):
+    with client.app.state.sessionmaker() as s:
+        return s.get(ActorToken, token_id).last_used_at
 
 
 def create_task(client, **headers):
@@ -127,6 +135,67 @@ def test_revocation_is_effective_on_the_next_request(client):
         s.get(ActorToken, tid).revoked_at = now()
         s.commit()
     assert create_task(client, **bearer(token)).status_code == 401
+
+
+def test_a_valid_token_records_its_last_use(client):
+    token, token_id = issue(client, "codex")
+    assert last_used_of(client, token_id) is None
+    assert create_task(client, **bearer(token)).status_code == 201
+    stamp = last_used_of(client, token_id)
+    assert stamp is not None
+    assert abs((stamp - now()).total_seconds()) < 5
+
+
+def test_a_recent_use_is_not_written_again(client):
+    token, token_id = issue(client)
+    recent = now() - timedelta(seconds=100)
+    with client.app.state.sessionmaker() as s:
+        s.get(ActorToken, token_id).last_used_at = recent
+        s.commit()
+    assert create_task(client, **bearer(token)).status_code == 201
+    assert last_used_of(client, token_id) == recent
+
+
+def test_a_use_after_the_window_is_recorded_again(client):
+    token, token_id = issue(client)
+    old = now() - timedelta(seconds=301)
+    with client.app.state.sessionmaker() as s:
+        s.get(ActorToken, token_id).last_used_at = old
+        s.commit()
+    assert create_task(client, **bearer(token)).status_code == 201
+    stamp = last_used_of(client, token_id)
+    assert stamp is not None and stamp > old
+    assert abs((stamp - now()).total_seconds()) < 5
+
+
+def test_a_locked_database_does_not_delay_an_authenticated_request(client):
+    token, token_id = issue(client, "codex")
+    locker = sqlite3.connect(client.app.state.settings.db_path)
+    locker.execute("BEGIN IMMEDIATE")  # holds the write lock: the diagnostic write cannot run
+    try:
+        start = time.perf_counter()
+        res = client.get("/api/tasks", headers=bearer(token))
+        elapsed = time.perf_counter() - start
+    finally:
+        locker.rollback()
+        locker.close()
+    assert res.status_code == 200
+    assert elapsed < 2.0  # the driver default would block ~5 s here
+    assert last_used_of(client, token_id) is None  # the touch was skipped, not the request
+    assert client.get("/api/tasks", headers=bearer(token)).status_code == 200
+    assert last_used_of(client, token_id) is not None  # the next request records it
+
+
+def test_a_revoked_token_is_refused_without_touching_its_last_use(client):
+    token, token_id = issue(client)
+    old = now() - timedelta(seconds=301)
+    with client.app.state.sessionmaker() as s:
+        row = s.get(ActorToken, token_id)
+        row.last_used_at = old
+        row.revoked_at = now()
+        s.commit()
+    assert create_task(client, **bearer(token)).status_code == 401
+    assert last_used_of(client, token_id) == old
 
 
 def test_actor_header_matching_the_token_is_accepted(client):
