@@ -121,9 +121,12 @@ _ENTROPY_TOKEN = re.compile(r"[A-Za-z0-9+=_-]{24,}")
 # c73aee9: `{2,}` still let a one-character head through — `A/F6g7…`), and the
 # lookbehind leaves `/` OUT so a value glued behind one is reached (`/etc/tokens/…`,
 # review on c73aee9). The match may then start on a path word ahead of the value:
-# `_opaque_slashed` rules on the whole candidate and an opaque run takes it all
-# (over-redaction, ADR-006). `_` and `-` stay out of the class: a slashed
-# standard-base64 value never carries them, while paths and slugs do.
+# `_opaque_slashed` rules on the whole candidate, and when the candidate reads as a
+# path `mask_slashed_run` masks from the head of an opaque tail instead (review on
+# 5b186c5: a real 24-to-39-character key behind `etc/tokens` leaked whole); when the
+# whole candidate is opaque, all of it goes (over-redaction, ADR-006).
+# `_` and `-` stay out of the class: a slashed standard-base64 value never
+# carries them, while paths and slugs do.
 # `=` is base64 padding: it only ever CLOSES a segment and stays out of the
 # lookbehind, so a value glued behind an unlabelled `=` is reached
 # (`payload=A1b2…/K1l2…`, `param=k1l2=/K1N7…` — Antigravity review on d2361cc:
@@ -163,22 +166,33 @@ def _lower_run_share(text: str) -> float:
 
 
 def _case_chaos(token: str) -> float | None:
-    """Share of adjacent letter pairs that change case, on eight pairs or more.
+    """Share of adjacent letter pairs that shuffle case, on eight pairs or more.
 
-    A random value shuffles case between neighbours; names and paths change
-    case at word starts, far below. None when the token holds too few letter
-    pairs for the ratio to mean anything.
+    A random value shuffles case between neighbours; a name changes case at
+    word starts, and a word start is not a shuffle. The chain of three-letter
+    TitleCase words — `Dev/Ops/Tool/Run12345/Log6789` — holds two-character
+    lowercase runs, below the words veto, and reached 0.45 on word starts
+    alone: it was erased (Antigravity review on 5b186c5, a regression against
+    master). A token whose changes ONLY open words carries no shuffle: None.
+    None as well when the token holds too few letter pairs for the ratio to
+    mean anything.
     """
-    letter_pairs = [
-        (left, right)
-        for left, right in zip(token, token[1:], strict=False)
-        if left.isalpha() and right.isalpha()
-    ]
-    if len(letter_pairs) < 8:
+    changes = word_starts = pairs = 0
+    for index, (left, right) in enumerate(zip(token, token[1:], strict=False)):
+        if not (left.isalpha() and right.isalpha()):
+            continue
+        pairs += 1
+        if left.isupper() == right.isupper():
+            continue
+        changes += 1
+        preceding = token[index - 1] if index else ""
+        if left.isupper() and right.islower() and not preceding.isalpha():
+            word_starts += 1
+    if pairs < 8 or changes == word_starts:
+        # Every change opens a word: `Dev/Ops/Tool/Run12345/Log6789` shuffles
+        # nothing, a value that changes case only at word starts is a name.
         return None
-    return sum(
-        1 for left, right in letter_pairs if left.isupper() != right.isupper()
-    ) / len(letter_pairs)
+    return changes / pairs
 
 
 def _alternating_chunk(segment: str) -> bool:
@@ -280,6 +294,33 @@ def _blob_segment(segment: str) -> bool:
     )
 
 
+def _blobs_of(parts: list[str]) -> list[str]:
+    return [part for part in parts if _blob_segment(part)]
+
+
+def _opaque_tail(token: str) -> bool:
+    """A chopped value sitting behind path words: the tail of a candidate.
+
+    The words veto of `_opaque_slashed` reads `etc/tokens/A1b2…/K1l2…` as a
+    path — the words ahead of the value push its lowercase share to 0.6 — and
+    the whole candidate then failed the guard with the value in the clear
+    (Antigravity review on 5b186c5; the leak exists on master too). The
+    case-shuffle arm is left out here: it rules a whole candidate, and a
+    name split on one slash, `DevSecOps/getById2`, reaches it alone (frozen
+    keep case, Antigravity review on c73aee9) — a tail must show the
+    structural signal instead, TWO blobs, as the whole-candidate guard does.
+    """
+    if len(token) < 24:
+        return False
+    if not any(ch.isdigit() for ch in token):
+        return False
+    if _shannon_bits_per_char(token) < _HIGH_ENTROPY_BITS:
+        return False
+    if _lower_run_share(token) >= 0.6:
+        return False
+    return len(_blobs_of([part for part in token.split("/") if part])) >= 2
+
+
 def _opaque_slashed(token: str) -> bool:
     """Guard of the slashed pattern (issue #84): an opaque chopped value, not a path."""
     if len(token) < 24:
@@ -312,7 +353,7 @@ def _opaque_slashed(token: str) -> bool:
     # still reads as words to the guard: assumed limit, as with the hex
     # segment of an asset path (#84).
     parts = [part for part in token.split("/") if part]
-    blobs = [part for part in parts if _blob_segment(part)]
+    blobs = _blobs_of(parts)
     if len(blobs) >= 2:
         return True
     # One blob is enough when every other chunk is itself signal-shaped: a
@@ -366,10 +407,20 @@ def redact(text: str) -> tuple[str, list[str]]:
 
     def mask_slashed_run(match: re.Match[str]) -> str:
         token = match.group(0)
-        if not _opaque_slashed(token):
-            return token
-        found.append("high_entropy")
-        return REDACTED
+        if _opaque_slashed(token):
+            found.append("high_entropy")
+            return REDACTED
+        # The match starts on the FIRST segment, and a value written behind
+        # path words comes with them: the candidate then reads as a path and
+        # the value leaked whole (`cat /etc/tokens/A1b2…/K1l2…` — Antigravity
+        # review on 5b186c5). Mask from the head of the longest opaque tail
+        # and keep the path words ahead of it.
+        parts = token.split("/")
+        for start in range(1, len(parts)):
+            if _opaque_tail("/".join(parts[start:])):
+                found.append("high_entropy")
+                return "/".join(parts[:start]) + "/" + REDACTED
+        return token
 
     # Labelled values run FIRST: a value that is itself a URL holding credentials
     # is masked whole (one marker, no doubled [REDACTED]), then the URL and header

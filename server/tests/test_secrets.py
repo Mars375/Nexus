@@ -446,6 +446,29 @@ def test_slashed_value_behind_path_words_is_masked_whole():
     assert found == ["high_entropy"]
 
 
+def test_slashed_key_behind_path_words_is_masked_to_its_tail():
+    # Antigravity review on 5b186c5: a 24-to-39-character key behind path
+    # words pushes the words veto over 0.6 — the candidate reads as a path
+    # and the key leaked in the clear (`cat /etc/tokens/…`, the failure the
+    # long chain above never reached because its segments diluted the words).
+    # The opaque tail is masked; the path words ahead of it are kept.
+    chaine = "A1b2C3d4E5f6" + "/K1l2M3n4O5p6"
+    cleaned, found = redact(f"cat /etc/tokens/{chaine}")
+    assert cleaned == f"cat /etc/{REDACTED}"
+    assert found == ["high_entropy"]
+
+
+def test_slashed_key_behind_url_words_is_masked_to_its_tail():
+    # The same leak in a URL: `localhost/keys/<cle>` and `…/tokens/<cle>`.
+    chaine = "A1b2C3d4" + "/E5f6G7h8" + "/I9j0K1l2" + "/M3n4O5p6"
+    cleaned, found = redact(f"curl http://localhost/keys/{chaine}")
+    assert cleaned == f"curl http://localhost/{REDACTED}"
+    assert found == ["high_entropy"]
+    cleaned, found = redact(f"https://example.com/api/v1/auth/tokens/{chaine}")
+    assert cleaned == f"https://example.com/{REDACTED}"
+    assert found == ["high_entropy"]
+
+
 @pytest.mark.parametrize(
     "chaine",
     [
@@ -606,6 +629,24 @@ def test_case_mixed_paths_and_names_stay_untouched(text):
     # path part merely for mixing case and digits (`Deployments/V1Release…`,
     # `…AccountSettingsV2/OAuth2Callback`). A path names its parts: neither
     # signal of `_blob_segment` fires on a word or a version number.
+    assert redact(text) == (text, [])
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Dev/Ops/Tool/Run12345/Log6789",
+        "Src/App/Doc/Test1/Build2",
+        "App/Api/Doc/Web/Job1/Log2",
+        "Pkg/Src/Doc/Lib1/Bin2026",
+    ],
+)
+def test_short_titlecase_word_paths_stay_untouched(text):
+    # Antigravity review on 5b186c5: a three-letter TitleCase word holds a
+    # two-character lowercase run, below the words veto, and chains of them
+    # were erased on their word-start capitals alone (a regression against
+    # master, where they stayed intact). A change that only opens a word is
+    # not a shuffle.
     assert redact(text) == (text, [])
 
 
