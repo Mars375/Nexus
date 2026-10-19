@@ -72,9 +72,12 @@ def _list(factory, _args: argparse.Namespace) -> int:
         return 0
     for row in rows:
         revoked = f"révoqué {row.revoked_at:%Y-%m-%d %H:%M}" if row.revoked_at else "actif"
+        last_used = (
+            "jamais" if row.last_used_at is None else row.last_used_at.strftime("%Y-%m-%d %H:%M")
+        )
         print(
             f"{row.ref}  {row.actor:<8}  {row.label}  créé {row.created_at:%Y-%m-%d %H:%M}"
-            f"  {revoked}"
+            f"  dernière utilisation {last_used}  {revoked}"
         )
     return 0
 

@@ -205,6 +205,7 @@ class ActorToken(Base):
     token_hash: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(AwareDateTime)
     revoked_at: Mapped[datetime | None] = mapped_column(AwareDateTime)
+    last_used_at: Mapped[datetime | None] = mapped_column(AwareDateTime)
 
     @property
     def ref(self) -> str:

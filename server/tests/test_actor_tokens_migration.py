@@ -26,6 +26,14 @@ def tables(path) -> set[str]:
         conn.close()
 
 
+def columns(path, table) -> set[str]:
+    conn = sqlite3.connect(path)
+    try:
+        return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    finally:
+        conn.close()
+
+
 def at_0004(settings):
     settings.data_dir.mkdir(parents=True)
     command.upgrade(migrate.alembic_config(settings.db_url), "0004")
@@ -109,3 +117,34 @@ def test_every_known_actor_can_hold_a_token(settings):
             (actor, f"{index:064x}"),
         )
     conn.close()
+
+
+def test_last_used_at_is_added_to_an_existing_database_and_removed_again(settings):
+    at_0004(settings)
+    config = migrate.alembic_config(settings.db_url)
+    command.upgrade(config, "0006")
+    conn = sqlite3.connect(settings.db_path)
+    conn.execute(
+        "INSERT INTO actor_tokens (actor, label, token_hash, created_at) "
+        "VALUES ('loic', 'navigateur', ?, '2026-10-07T07:00:00+00:00')",
+        (HASH,),
+    )
+    conn.commit()
+    conn.close()
+    assert "last_used_at" not in columns(settings.db_path, "actor_tokens")
+    command.upgrade(config, "head")
+    assert "last_used_at" in columns(settings.db_path, "actor_tokens")
+    conn = sqlite3.connect(settings.db_path)
+    assert conn.execute("SELECT actor, label, last_used_at FROM actor_tokens").fetchall() == [
+        ("loic", "navigateur", None)
+    ]
+    conn.close()
+    command.downgrade(config, "0006")
+    assert "last_used_at" not in columns(settings.db_path, "actor_tokens")
+    conn = sqlite3.connect(settings.db_path)
+    assert conn.execute("SELECT actor, label FROM actor_tokens").fetchall() == [
+        ("loic", "navigateur")
+    ]
+    conn.close()
+    command.upgrade(config, "head")
+    assert "last_used_at" in columns(settings.db_path, "actor_tokens")

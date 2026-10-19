@@ -98,7 +98,7 @@ Format d'une demande de validation : **quoi · pourquoi · conséquence · plan 
 
 ## 6. Audit & traçabilité
 
-- L'émission et la révocation d'un jeton sont tracées dans `actor_tokens` (`created_at`, `revoked_at`, `label`) : une ligne n'est jamais supprimée, seulement révoquée.
+- L'émission, la dernière utilisation et la révocation d'un jeton sont tracées dans `actor_tokens` (`created_at`, `last_used_at`, `revoked_at`, `label`) : une ligne n'est jamais supprimée, seulement révoquée.
 - Les événements sont **immuables** (on corrige par un nouvel événement, jamais par réécriture).
 - Chaque mutation : qui, quoi, quand, avant/après (si applicable), preuve de read-back.
 - Les logs Nexus ne contiennent jamais de secret ; un contrôle automatique peut scanner les écritures (pattern tokens/clés) et bloquer.

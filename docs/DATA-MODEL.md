@@ -166,6 +166,7 @@ Un acteur s'authentifie par un jeton porteur (ADR-020). Table `actor_tokens`, r�
 | `token_hash` | SHA-256 hexadécimal du jeton, **jamais le jeton** ; unique |
 | `created_at` | instant d'émission |
 | `revoked_at` | nul tant que le jeton est actif ; une révocation prend effet dès la requête suivante |
+| `last_used_at` | dernière requête authentifiée réussie, mise à jour au plus une fois par 5 minutes ; nul tant que le jeton n'a pas servi (diagnostic seulement, jamais l'authentification) |
 
 ### 2.11 Decision (décision) — native
 

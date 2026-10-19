@@ -135,7 +135,7 @@ Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un 
 
 ## Prochaine action immédiate
 
-**Phase 1 :** boucler les issues restantes — PR #80 en vol pour #15 (scanner de secrets : formats à couvrir + détection par entropie ; il reste à boucler ses relectures, puis fusion), puis #17 et #39 ; #58 demande une nouvelle migration (date de dernière utilisation des jetons : sa PR se fusionne par Loïc) ; les PR ouvertes se fusionnent quand leurs relectures sont complètes (rappel : une PR touchant une migration, `DECISIONS.md` ou `AGENTS.md` se fusionne par Loïc).
+**Phase 1 :** boucler les issues restantes — #58 en PR (date de dernière utilisation des jetons, migration `0007` : sa PR se fusionne par Loïc), puis #39 et #86 ; #47 (Tauri) attend le go de Loïc. Les PR ouvertes se fusionnent quand leurs relectures sont complètes (rappel : une PR touchant une migration, `DECISIONS.md` ou `AGENTS.md` se fusionne par Loïc).
 
 ---
 
