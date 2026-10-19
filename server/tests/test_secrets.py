@@ -544,6 +544,76 @@ def test_slashed_key_with_a_crypto_segment_beside_its_blob_is_masked():
         assert found == ["high_entropy"], text
 
 
+def test_slashed_key_with_short_lowercase_fragments_is_masked():
+    # Antigravity review on a77d504: the word veto read any digitless chunk
+    # holding three adjacent lowercase letters as a word, so a real key that
+    # carries a short base64 fragment (`xyz`, `abcde`, `fcn`, `vwsw=`) leaked
+    # naked or behind a path. A word is now all-lowercase letters, six of them
+    # at least. Chains assembled at runtime from short pieces.
+    cas = (
+        (
+            "cat /etc/tokens/" + "A1b2C3d4E5f6" + "/k1l2=/" + "abcde",
+            f"cat /etc/tokens/{REDACTED}",
+        ),
+        (
+            "cle " + "A/1b2C3d4E5f6" + "K1l2M3n4O5p6" + "/xyz" + " ici",
+            f"cle {REDACTED} ici",
+        ),
+        (
+            "cat /etc/tokens/" + "A/1b2C3d4E5f6" + "K1l2M3n4O5p6" + "/xyz",
+            f"cat /etc/tokens/{REDACTED}",
+        ),
+        # The digitless mixed-case chunk (`reviewer` r8, P3) stays no word
+        # either: it shuffles case, it is not lowercase letters.
+        (
+            "cle " + "A1b2C3d4E5f6G7h8" + "/abc/XY/w ici",
+            f"cle {REDACTED} ici",
+        ),
+        (
+            "cle " + "a1b2c3d4e5f6g7h8" + "/ijkl/MN ici",
+            f"cle {REDACTED} ici",
+        ),
+    )
+    for text, attendu in cas:
+        cleaned, found = redact(text)
+        assert cleaned == attendu, text
+        assert found == ["high_entropy"], text
+
+
+def test_slashed_key_whose_extra_chunks_shuffle_case_is_masked():
+    # Antigravity review on a77d504: a real 44-character base64 key chopped
+    # by its own slashes leaked whole when every extra chunk missed the two
+    # older signal arms (no letter-digit alternation, no boundary segment).
+    # A chunk whose case shuffles like a random draw is the third signal of a
+    # chopped piece, at the same 0.30 bar the whole-candidate guard reads on
+    # its own token. Chains assembled at runtime from short pieces.
+    cas = (
+        (
+            "cat /etc/tokens/"
+            + "0UzvrPCc"
+            + "/fcn/"
+            + "8SKDsHj+ePj"
+            + "/"
+            + "q3QCEgcaHD6honHxcM=",
+            f"cat /etc/tokens/0UzvrPCc/{REDACTED}",
+        ),
+        (
+            "cat /etc/tokens/"
+            + "xJ8byUs17"
+            + "mQNVb7DnqRJ"
+            + "/"
+            + "IlatOVdVhdwasWF"
+            + "/"
+            + "JbUUEY=",
+            f"cat /etc/tokens/{REDACTED}",
+        ),
+    )
+    for text, attendu in cas:
+        cleaned, found = redact(text)
+        assert cleaned == attendu, text
+        assert found == ["high_entropy"], text
+
+
 @pytest.mark.parametrize(
     "chaine",
     [

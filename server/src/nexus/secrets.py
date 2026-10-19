@@ -211,15 +211,21 @@ def _alternating_chunk(segment: str) -> bool:
 
 
 def _word_chunk(part: str) -> bool:
-    """A vocabulary chunk (a path word): digitless and lowercase-leaning.
+    """A vocabulary chunk (a path word): all-lowercase letters, six of them at
+    least.
 
-    `controllers`, `tokens`, `api` are words; a crypto segment keeps a digit
-    (`SIIn3hucz0P4s`, `A0b`) or scatters its lowercase letters singly
-    (`KJmQwErTyUiOp`), and a digitless all-caps chunk (`NZD`) carries no run of
-    three lowercase letters either. The rescue in `_opaque_chunks` reads this
-    to tell a phrase from a chopped value.
+    `controllers`, `tokens`, `releases` are words; a crypto segment keeps a
+    digit (`SIIn3hucz0P4s`, `A0b`), shuffles case (`IlatOVdVhdwasWF`), or
+    stays under six letters — where a base64 fragment is indistinguishable
+    from a short word (`xyz`, `fcn`, `vwsw=`; Antigravity review on a77d504:
+    reading every digitless chunk of three lowercase letters as a word leaked
+    real 44-character keys). A path built only from shorter words
+    (`api/v1/users/getById/v2b1`) is ruled by the whole-candidate share of
+    `_opaque_slashed` before this rescue runs. The rescue in `_opaque_chunks`
+    reads this to tell a phrase from a chopped value.
     """
-    return not any(ch.isdigit() for ch in part) and _lower_run_share(part) >= 0.6
+    letters = part.rstrip("=")
+    return letters.isalpha() and letters.islower() and len(letters) >= 6
 
 
 def _opaque_run(token: str) -> bool:
@@ -315,10 +321,13 @@ def _opaque_chunks(parts: list[str]) -> bool:
 
     At least TWO blobs, or one blob when the other chunks read as the rest of
     a value rather than as a phrase: they carry a signal — a strong
-    letter-digit alternation (`k1l2=`) or a one-or-two character boundary
+    letter-digit alternation (`k1l2=`), a one-or-two character boundary
     segment (`A/…`, `…/p6`, Antigravity review on d2361cc, finding 1: such
-    chunks can never be blobs on their own) — and none of them is a word. A
-    path word beside an alternating tag is a route, not a value
+    chunks can never be blobs on their own), or a chunk that shuffles case
+    like a random draw (`IlatOVdVhdwasWF`, `q3QCEgcaHD6honHxcM`; Antigravity
+    review on a77d504: real 44-character keys leaked whole when every extra
+    chunk missed the first two arms) — and none of them is a word. A path
+    word beside an alternating tag is a route, not a value
     (`controllers/DevSecOps/v1a1`, Antigravity review on 5efcee9), while a
     digit-bearing crypto segment is not a word (`SIIn3hucz0P4s`, `NZD`;
     Antigravity review on 49b2fe0: requiring the signal on EVERY other chunk
@@ -334,7 +343,10 @@ def _opaque_chunks(parts: list[str]) -> bool:
         if not rest:
             return True
         carries_signal = any(
-            _alternating_chunk(part) or len(part) <= 2 for part in rest
+            _alternating_chunk(part)
+            or len(part) <= 2
+            or (_case_chaos(part) or 0) > 0.30
+            for part in rest
         )
         if carries_signal and not any(_word_chunk(part) for part in rest):
             return True
