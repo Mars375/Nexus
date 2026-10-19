@@ -1,6 +1,8 @@
 """Authentification par jeton porteur (#16, ADR-020) : lecture du jeton, 401 et 403 d'identité."""
 
 import logging
+import sqlite3
+import time
 from datetime import timedelta
 from typing import Annotated
 
@@ -164,6 +166,24 @@ def test_a_use_after_the_window_is_recorded_again(client):
     stamp = last_used_of(client, token_id)
     assert stamp is not None and stamp > old
     assert abs((stamp - now()).total_seconds()) < 5
+
+
+def test_a_locked_database_does_not_delay_an_authenticated_request(client):
+    token, token_id = issue(client, "codex")
+    locker = sqlite3.connect(client.app.state.settings.db_path)
+    locker.execute("BEGIN IMMEDIATE")  # holds the write lock: the diagnostic write cannot run
+    try:
+        start = time.perf_counter()
+        res = client.get("/api/tasks", headers=bearer(token))
+        elapsed = time.perf_counter() - start
+    finally:
+        locker.rollback()
+        locker.close()
+    assert res.status_code == 200
+    assert elapsed < 2.0  # the driver default would block ~5 s here
+    assert last_used_of(client, token_id) is None  # the touch was skipped, not the request
+    assert client.get("/api/tasks", headers=bearer(token)).status_code == 200
+    assert last_used_of(client, token_id) is not None  # the next request records it
 
 
 def test_a_revoked_token_is_refused_without_touching_its_last_use(client):

@@ -28,6 +28,9 @@ PREFIX = "nxt_"
 BODY_LENGTH = 43  # base64url of 32 bytes, without padding
 LABEL_MAX = 64
 TOUCH_WINDOW = timedelta(seconds=300)  # at most one last_used_at write per token per window
+# Seconds sqlite waits on a locked database for the diagnostic write: the driver default (5 s)
+# would delay every authenticated request; a failed touch is retried on the next one.
+TOUCH_BUSY_TIMEOUT = 0.25
 
 # ASCII alphabet spelled out: `\d` and `\w` accept other scripts' digits and letters.
 _FORMAT = re.compile(rf"nxt_[A-Za-z0-9_-]{{{BODY_LENGTH}}}")

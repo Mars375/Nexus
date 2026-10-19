@@ -73,7 +73,10 @@ def _list(factory, _args: argparse.Namespace) -> int:
     for row in rows:
         revoked = f"révoqué {row.revoked_at:%Y-%m-%d %H:%M}" if row.revoked_at else "actif"
         last_used = (
-            "jamais" if row.last_used_at is None else row.last_used_at.strftime("%Y-%m-%d %H:%M")
+            "jamais"
+            if row.last_used_at is None
+            # The offset disambiguates the repeated hour of the autumn fall-back.
+            else row.last_used_at.strftime("%Y-%m-%d %H:%M %z")
         )
         print(
             f"{row.ref}  {row.actor:<8}  {row.label}  créé {row.created_at:%Y-%m-%d %H:%M}"

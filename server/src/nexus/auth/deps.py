@@ -63,7 +63,7 @@ def authenticated_token(
             "code": "actor_mismatch",
             "message": "l'acteur de l'en-tête X-Nexus-Actor diffère de celui du jeton",
         })
-    tokens.touch_last_used(request.app.state.sessionmaker, row.id)
+    tokens.touch_last_used(request.app.state.touch_sessionmaker, row.id)
     return TokenIdentity(row.id, row.actor)
 
 
