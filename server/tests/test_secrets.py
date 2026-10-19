@@ -469,6 +469,36 @@ def test_slashed_key_behind_url_words_is_masked_to_its_tail():
     assert found == ["high_entropy"]
 
 
+def test_slashed_key_with_short_boundary_chunks_behind_path_words_is_masked():
+    # Antigravity review on cc0eeb3: the tail guard demanded TWO blobs while
+    # the whole guard also accepts one blob sided by boundary chunks — the
+    # frozen `<cle>`, `A/<cle>`, `<cle>/p6` and `A/<cle>/B` forms leaked whole
+    # behind `/etc/tokens/`, their boundary chunks included (`A/…/B` showed
+    # `A/` and `/B`). The tail now rules on the same chunks. Chains assembled
+    # at runtime from short pieces.
+    cas = (
+        # `A/<cle>`.
+        ("A/" + "1b2C3d4E5f6" + "K1l2M3n4O5p6", f"cat /etc/tokens/{REDACTED}"),
+        # `A1b/<cle>`: a three-character chunk whose letter-digit alternation
+        # makes it a signal on its own.
+        ("A1b/" + "2C3d4E5f6" + "K1l2M3n4" + "O5p6", f"cat /etc/{REDACTED}"),
+        # `<cle>/p6`.
+        (
+            "A1b2C3d4E5f6" + "K1l2M3n4O5" + "/p6",
+            f"cat /etc/tokens/{REDACTED}",
+        ),
+        # `A/<cle>/B`, both boundaries in the masked run.
+        (
+            "A/" + "F6g7H8i9J0" + "k1L2m3N4O5p6" + "Q7r8S9t0" + "/B",
+            f"cat /etc/tokens/{REDACTED}",
+        ),
+    )
+    for chaine, attendu in cas:
+        cleaned, found = redact(f"cat /etc/tokens/{chaine}")
+        assert cleaned == attendu, chaine
+        assert found == ["high_entropy"], chaine
+
+
 @pytest.mark.parametrize(
     "chaine",
     [

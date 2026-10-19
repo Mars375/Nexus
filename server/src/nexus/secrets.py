@@ -298,6 +298,27 @@ def _blobs_of(parts: list[str]) -> list[str]:
     return [part for part in parts if _blob_segment(part)]
 
 
+def _opaque_chunks(parts: list[str]) -> bool:
+    """Structural signal of a chopped value: its blobs and boundary chunks.
+
+    At least TWO blobs, or one blob when every other chunk is itself
+    signal-shaped: a strong letter-digit alternation (`k1l2=`) or a
+    one-or-two character boundary segment (`A/…`, `…/p6` — Antigravity review
+    on d2361cc, finding 1: such chunks can never be blobs on their own). The
+    whole-candidate guard and the tail guard rule on the same signal.
+    """
+    blobs = _blobs_of(parts)
+    if len(blobs) >= 2:
+        return True
+    if blobs:
+        rest = [part for part in parts if part not in blobs]
+        if any(_alternating_chunk(part) for part in rest) or all(
+            len(part) <= 2 for part in rest
+        ):
+            return True
+    return False
+
+
 def _opaque_tail(token: str) -> bool:
     """A chopped value sitting behind path words: the tail of a candidate.
 
@@ -305,10 +326,13 @@ def _opaque_tail(token: str) -> bool:
     path — the words ahead of the value push its lowercase share to 0.6 — and
     the whole candidate then failed the guard with the value in the clear
     (Antigravity review on 5b186c5; the leak exists on master too). The
-    case-shuffle arm is left out here: it rules a whole candidate, and a
-    name split on one slash, `DevSecOps/getById2`, reaches it alone (frozen
-    keep case, Antigravity review on c73aee9) — a tail must show the
-    structural signal instead, TWO blobs, as the whole-candidate guard does.
+    case-shuffle arm is left out here: it rules a whole candidate, and a name
+    split on one slash, `DevSecOps/getById2`, reaches it alone (frozen keep
+    case, Antigravity review on c73aee9). The tail must show the structural
+    signal instead — the same blobs and boundary chunks as the whole guard
+    (Antigravity review on cc0eeb3: a two-blob floor let `cat
+    /etc/tokens/A/1b2…` leak whole and left the boundary chunks of
+    `…/A/F6g7…/B` in the clear).
     """
     if len(token) < 24:
         return False
@@ -318,7 +342,7 @@ def _opaque_tail(token: str) -> bool:
         return False
     if _lower_run_share(token) >= 0.6:
         return False
-    return len(_blobs_of([part for part in token.split("/") if part])) >= 2
+    return _opaque_chunks([part for part in token.split("/") if part])
 
 
 def _opaque_slashed(token: str) -> bool:
@@ -347,26 +371,14 @@ def _opaque_slashed(token: str) -> bool:
     chaos = _case_chaos(token)
     if chaos is not None and chaos > 0.30:
         return True
-    # A chopped value also keeps the signature of its chunks: at least TWO of
-    # them are blobs (24-character floor instead of 40, Antigravity review on
-    # c73aee9: 24-to-39-character keys leaked). An all-lowercase slashed blob
-    # still reads as words to the guard: assumed limit, as with the hex
+    # A chopped value also keeps the signature of its chunks, worked out by
+    # `_opaque_chunks` (24-character floor instead of 40, Antigravity review on
+    # c73aee9: 24-to-39-character keys leaked). Two assumed limits stay, both
+    # carrying no signal for that rule: an all-lowercase slashed blob and a
+    # value whose every slash segment falls under the floor — as with the hex
     # segment of an asset path (#84).
     parts = [part for part in token.split("/") if part]
-    blobs = _blobs_of(parts)
-    if len(blobs) >= 2:
-        return True
-    # One blob is enough when every other chunk is itself signal-shaped: a
-    # strong letter-digit alternation (`k1l2=`) or a one-or-two character
-    # boundary segment (`A/…`, `…/p6` — Antigravity review on d2361cc,
-    # finding 1: such chunks can never be blobs on their own).
-    if blobs:
-        rest = [part for part in parts if part not in blobs]
-        if any(_alternating_chunk(part) for part in rest) or all(
-            len(part) <= 2 for part in rest
-        ):
-            return True
-    return False
+    return _opaque_chunks(parts)
 
 
 def redact(text: str) -> tuple[str, list[str]]:
