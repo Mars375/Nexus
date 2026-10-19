@@ -38,7 +38,12 @@ _FULL: list[tuple[str, re.Pattern[str]]] = [
 # the masked URL keeps its exact shape, including the colon of the empty username.
 # A URL with a username and no password (git clone https://git@host/org/tool) is not
 # a secret, and a host:port never matches (the password must end at an @).
-_URL_CREDENTIALS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://(?:[^\s:/@]+)?:)([^\s@/]+)(@)")
+# A `?` or `#` never belongs to the userinfo at all (issue #84: without the
+# restriction, `?redirect=mailto:alice@…` made the query's tail a « user » and
+# erased `alice`). The password part carries the same restriction — Antigravity
+# review on 6d78a6c: `host:port?q=…@…` read the port and the query head as a
+# password and erased them, while an unencoded `?`/`#` always ends the userinfo.
+_URL_CREDENTIALS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://(?:[^\s:/@?#]+)?:)([^\s@/?#]+)(@)")
 
 # En-tête HTTP d'identifiant écrit tel quel (« Authorization: Digest username="…", … »,
 # « Cookie: a=1; b=2 ») : sa valeur court jusqu'à la fin de la ligne, virgules et ; compris,
@@ -109,6 +114,25 @@ _ASSIGNMENT = re.compile(
 # characters — with the segment guard in mask_random_run keeping identifiers
 # (a short word between separators) and 4-character UUID groups out (issue #15).
 _ENTROPY_TOKEN = re.compile(r"[A-Za-z0-9+=_-]{24,}")
+# Unlabelled base64 split by slashes (issue #84): the class above has no `/`, so a
+# segmented value leaked — every flat sub-run stayed under the floor. This pattern
+# spans the whole value from its FIRST segment, however short (Antigravity review
+# on 6d78a6c: anchoring at 16 characters left the head in the clear; review on
+# c73aee9: `{2,}` still let a one-character head through — `A/F6g7…`), and the
+# lookbehind leaves `/` OUT so a value glued behind one is reached (`/etc/tokens/…`,
+# review on c73aee9). The match may then start on a path word ahead of the value:
+# `_opaque_slashed` rules on the whole candidate, and when the candidate reads as a
+# path `mask_slashed_run` masks from the head of an opaque tail instead (review on
+# 5b186c5: a real 24-to-39-character key behind `etc/tokens` leaked whole); when the
+# whole candidate is opaque, all of it goes (over-redaction, ADR-006).
+# `_` and `-` stay out of the class: a slashed standard-base64 value never
+# carries them, while paths and slugs do.
+# `=` is base64 padding: it only ever CLOSES a segment and stays out of the
+# lookbehind, so a value glued behind an unlabelled `=` is reached
+# (`payload=A1b2…/K1l2…`, `param=k1l2=/K1N7…` — Antigravity review on d2361cc:
+# with `=` in the lookbehind no match could start after the sign and the value
+# leaked whole).
+_SLASHED_TOKEN = re.compile(r"(?<![A-Za-z0-9+])[A-Za-z0-9+]{1,}={0,2}(?:/[A-Za-z0-9+]+={0,2})+")
 # Shannon entropy in bits per character: long natural words and repetitions sit
 # around 2-3 bits, a uniform 16-symbol hex run stays near log2(16) = 4 — the
 # threshold divides prose from opaque randomness (documented in issue #15).
@@ -118,6 +142,90 @@ _HIGH_ENTROPY_BITS = 3.5
 def _shannon_bits_per_char(token: str) -> float:
     n = len(token)
     return -sum((p / n) * log2(p / n) for p in Counter(token).values())
+
+
+def _lower_run_share(text: str) -> float:
+    """Share of lowercase letters sitting in runs of three or more.
+
+    A word scores near 1 (`utilisateur`, `deployments`); an opaque chunk,
+    whose lowercase letters sit alone between digits or capitals
+    (`N9vH4mKu`), scores near 0. Both slashed and underscore guards rule
+    « words » with it.
+    """
+    total = longs = 0
+    run = 0
+    for ch in text + "\x00":
+        if ch.islower():
+            run += 1
+            continue
+        if run >= 3:
+            longs += run
+        total += run
+        run = 0
+    return longs / total if total else 0.0
+
+
+def _case_chaos(token: str) -> float | None:
+    """Share of adjacent letter pairs that shuffle case, on eight pairs or more.
+
+    A random value shuffles case between neighbours; a name changes case at
+    word starts, and a word start is not a shuffle. The chain of three-letter
+    TitleCase words — `Dev/Ops/Tool/Run12345/Log6789` — holds two-character
+    lowercase runs, below the words veto, and reached 0.45 on word starts
+    alone: it was erased (Antigravity review on 5b186c5, a regression against
+    master). A token whose changes ONLY open words carries no shuffle: None.
+    None as well when the token holds too few letter pairs for the ratio to
+    mean anything.
+    """
+    changes = word_starts = pairs = 0
+    for index, (left, right) in enumerate(zip(token, token[1:], strict=False)):
+        if not (left.isalpha() and right.isalpha()):
+            continue
+        pairs += 1
+        if left.isupper() == right.isupper():
+            continue
+        changes += 1
+        preceding = token[index - 1] if index else ""
+        if left.isupper() and right.islower() and not preceding.isalpha():
+            word_starts += 1
+    if pairs < 8 or changes == word_starts:
+        # Every change opens a word: `Dev/Ops/Tool/Run12345/Log6789` shuffles
+        # nothing, a value that changes case only at word starts is a name.
+        return None
+    return changes / pairs
+
+
+def _alternating_chunk(segment: str) -> bool:
+    """Nearly every adjacent pair of a segment alternates a letter and a digit
+    (`k1l2=`, `A1b`): the signature of a short chopped piece."""
+    segment = segment.rstrip("=")
+    pairs = list(zip(segment, segment[1:], strict=False))
+    if len(pairs) < 2:
+        return False
+    boundaries = sum(
+        1
+        for left, right in pairs
+        if (left.isalpha() and right.isdigit()) or (left.isdigit() and right.isalpha())
+    )
+    return boundaries / len(pairs) >= 0.8
+
+
+def _word_chunk(part: str) -> bool:
+    """A vocabulary chunk (a path word): all-lowercase letters, six of them at
+    least.
+
+    `controllers`, `tokens`, `releases` are words; a crypto segment keeps a
+    digit (`SIIn3hucz0P4s`, `A0b`), shuffles case (`IlatOVdVhdwasWF`), or
+    stays under six letters — where a base64 fragment is indistinguishable
+    from a short word (`xyz`, `fcn`, `vwsw=`; Antigravity review on a77d504:
+    reading every digitless chunk of three lowercase letters as a word leaked
+    real 44-character keys). A path built only from shorter words
+    (`api/v1/users/getById/v2b1`) is ruled by the whole-candidate share of
+    `_opaque_slashed` before this rescue runs. The rescue in `_opaque_chunks`
+    reads this to tell a phrase from a chopped value.
+    """
+    letters = part.rstrip("=")
+    return letters.isalpha() and letters.islower() and len(letters) >= 6
 
 
 def _opaque_run(token: str) -> bool:
@@ -135,6 +243,23 @@ def _opaque_run(token: str) -> bool:
     parts = [part for part in re.split(r"[-_]", token) if part]
     if parts and min(map(len, parts)) >= 8:
         return True
+    # A short head segment is tolerated when EVERY following segment is full
+    # length (≥ 8), carries a digit, AND does not itself read as a word: «
+    # tok_Y7qP2rTx_… » is opaque (issue #84), while a snake_case identifier
+    # whose tail is plain words with a digit appended —
+    # v1_userprofile2_accountsettings3, db_connectionpool1_maxconnections2 —
+    # stays an identifier (Antigravity review on d2361cc: those digit-bearing
+    # word tails passed on length alone and masked five identifiers, a
+    # regression against master; a digit-free tail such as `database` was
+    # already ruled out on 6d78a6c). A tail of single lowercase letters
+    # between digits and capitals keeps scoring 0 and passes.
+    if len(parts) >= 2 and len(parts[0]) < 8 and all(
+        len(part) >= 8
+        and any(ch.isdigit() for ch in part)
+        and _lower_run_share(part) < 0.6
+        for part in parts[1:]
+    ):
+        return True
     # A short vendor prefix does not break a token that holds a flat 24+ run
     # behind it (« tok_Y7qP2rTx… »): the prefix belongs to the value it names
     # and the whole candidate is masked. The 4-character groups of a UUID and
@@ -143,6 +268,216 @@ def _opaque_run(token: str) -> bool:
         len(part) >= 24 and _shannon_bits_per_char(part) >= _HIGH_ENTROPY_BITS
         for part in parts
     )
+
+
+def _blob_segment(segment: str) -> bool:
+    """One chunk of an opaque slashed value, as opposed to a path word.
+
+    Opaque chunks interleave letters and digits (`A1b2C3d4E5`,
+    `K1N7xP9mQ2vL8jR3tY6`) or shuffle case without any word structure
+    (`G9woFbdKetaZSNxZWxL2`). Human names of the corpus — `AccountSettingsV2`,
+    `V1Release2026Build`, `deployments`, `build42` — keep letters and digits in
+    words, and change case at word starts instead of at random, so each part
+    stays far below one of the two signals (Antigravity and reviewer reviews on
+    c73aee9: this guard replaces the old « two segments mixing case and digits »,
+    which erased exactly those paths).
+    """
+    # A segment may end with base64 padding (`k1l2=`): the blob reads its data
+    # part, `=` never carries a signal.
+    segment = segment.rstrip("=")
+    pairs = list(zip(segment, segment[1:], strict=False))
+    # Letters and digits alternate: the signature of a chunked base64 value.
+    # Six pairs at least (seven characters): a shorter chunk is a version tag
+    # or an instance type (`v1rc1`, `v1a1`, `g4dn`, `c5ad`), whose alternation
+    # is the signature of a NAME at that scale (Antigravity review on d2361cc:
+    # those tags counted as blobs and erased release, k8s and Terraform paths).
+    boundaries = sum(
+        1
+        for left, right in pairs
+        if (left.isalpha() and right.isdigit()) or (left.isdigit() and right.isalpha())
+    )
+    if len(pairs) >= 6 and boundaries / len(pairs) >= 0.6:
+        return True
+    # Case changes at random rather than at word starts (letter pairs only).
+    # Short PascalCase names (`ApiV2`, `AppData`) stay out: a real value mixes
+    # case across many more letter pairs than a name holds. A camelCase method
+    # (`getById`) can reach the ratio alone, but it never makes a path: the
+    # words veto of `_opaque_slashed` rules the candidate before this arm.
+    letter_pairs = [(left, right) for left, right in pairs if left.isalpha() and right.isalpha()]
+    return (
+        len(letter_pairs) >= 6
+        and sum(1 for left, right in letter_pairs if left.isupper() != right.isupper())
+        / len(letter_pairs)
+        > 0.5
+    )
+
+
+def _blobs_of(parts: list[str]) -> list[str]:
+    return [part for part in parts if _blob_segment(part)]
+
+
+def _opaque_chunks(parts: list[str]) -> bool:
+    """Structural signal of a chopped value: its blobs and boundary chunks.
+
+    At least TWO blobs, or one blob when the other chunks read as the rest of
+    a value rather than as a phrase: they carry a signal — a strong
+    letter-digit alternation (`k1l2=`), a one-or-two character boundary
+    segment (`A/…`, `…/p6`, Antigravity review on d2361cc, finding 1: such
+    chunks can never be blobs on their own), or a chunk that shuffles case
+    like a random draw (`IlatOVdVhdwasWF`, `q3QCEgcaHD6honHxcM`; Antigravity
+    review on a77d504: real 44-character keys leaked whole when every extra
+    chunk missed the first two arms) — and none of them is a word. A path
+    word beside an alternating tag is a route, not a value
+    (`controllers/DevSecOps/v1a1`, Antigravity review on 5efcee9), while a
+    digit-bearing crypto segment is not a word (`SIIn3hucz0P4s`, `NZD`;
+    Antigravity review on 49b2fe0: requiring the signal on EVERY other chunk
+    leaked real keys whose extra segment misses the blob floor). A lone blob
+    with nothing beside it is a bare value. The whole-candidate guard and the
+    tail guard rule on the same signal.
+    """
+    blobs = _blobs_of(parts)
+    if len(blobs) >= 2:
+        return True
+    if blobs:
+        rest = [part for part in parts if part not in blobs]
+        if not rest:
+            return True
+        carries_signal = any(
+            _alternating_chunk(part)
+            or len(part) <= 2
+            or (_case_chaos(part) or 0) > 0.30
+            for part in rest
+        )
+        if carries_signal and not any(_word_chunk(part) for part in rest):
+            return True
+    return False
+
+
+def _opaque_tail_start(parts: list[str]) -> int | None:
+    """The lowest start whose tail is an opaque value, in one backward pass.
+
+    The words veto of `_opaque_slashed` reads `etc/tokens/A1b2…/K1l2…` as a
+    path — the words ahead of the value push its lowercase share to 0.6 — and
+    the whole candidate then failed the guard with the value in the clear
+    (Antigravity review on 5b186c5; the leak exists on master too). The
+    case-shuffle arm is left out here: it rules a whole candidate, and a name
+    split on one slash, `DevSecOps/getById2`, reaches it alone (frozen keep
+    case, Antigravity review on c73aee9). The tail must show the structural
+    signal instead — the same blobs and boundary chunks as the whole guard
+    (Antigravity review on cc0eeb3: a two-blob floor let `cat
+    /etc/tokens/A/1b2…` leak whole and left the boundary chunks of
+    `…/A/F6g7…/B` in the clear).
+
+    Every gate of that per-tail predicate reads quantities of the tail this
+    pass accumulates part by part — its length, a digit, the Shannon entropy
+    (kept as Σ c·log2(c), one step per character), the share of lowercase
+    letters in runs of three, and the flags `_opaque_chunks` reads — so the
+    lowest opaque start comes out of ONE pass and no tail is ever rebuilt:
+    `"/".join(parts[start:])` per start cost O(parts × length) and a comment
+    body carries no length bound (`CommentIn.body`), which handed a
+    synchronous worker minutes of CPU for one long slashed run (CodeRabbit
+    review on 7d8fdcd). The start found is the same the loop returned — the
+    first tail the gates accept — and every tail stays eligible: a length
+    bound would skip the head of a value longer than the bound and mask only
+    its end.
+    """
+    length = 0
+    has_digit = False
+    counts: dict[str, int] = {}
+    weighted = 0.0  # Σ c·log2(c) of the tail: entropy = log2(length) - weighted / length
+    lower_total = 0
+    lower_long = 0
+    blobs = 0
+    extra = 0
+    signals = 0
+    words = 0
+    start_found: int | None = None
+    first = True
+    for start in range(len(parts) - 1, 0, -1):
+        part = parts[start]
+        if first:
+            first = False
+        else:
+            length += 1  # the slash joining this part to the tail below it
+            before = counts.get("/", 0)
+            counts["/"] = after = before + 1
+            if before:
+                weighted += after * log2(after) - before * log2(before)
+        length += len(part)
+        run = 0
+        for ch in part:
+            before = counts.get(ch, 0)
+            counts[ch] = after = before + 1
+            if before:
+                weighted += after * log2(after) - before * log2(before)
+            if ch.isdigit():
+                has_digit = True
+            if ch.islower():
+                run += 1
+                continue
+            if run >= 3:
+                lower_long += run
+            lower_total += run
+            run = 0
+        if run >= 3:
+            lower_long += run
+        lower_total += run
+        if _blob_segment(part):
+            blobs += 1
+        else:
+            extra += 1
+            if _alternating_chunk(part) or len(part) <= 2 or (_case_chaos(part) or 0) > 0.30:
+                signals += 1
+            if _word_chunk(part):
+                words += 1
+        if length < 24 or not has_digit:
+            continue
+        if log2(length) - weighted / length < _HIGH_ENTROPY_BITS:
+            continue
+        if lower_total and lower_long / lower_total >= 0.6:
+            continue
+        # Same structural rule as `_opaque_chunks`, on counted flags: two
+        # blobs, or one blob whose other chunks carry a signal and none of
+        # them is a word (no other chunk at all keeps the bare value).
+        if blobs >= 2 or (blobs and (extra == 0 or (signals > 0 and words == 0))):
+            start_found = start
+    return start_found
+
+
+def _opaque_slashed(token: str) -> bool:
+    """Guard of the slashed pattern (issue #84): an opaque chopped value, not a path."""
+    if len(token) < 24:
+        return False
+    if not any(ch.isdigit() for ch in token):
+        return False
+    if _shannon_bits_per_char(token) < _HIGH_ENTROPY_BITS:
+        return False
+    # A path is made of words: when most lowercase letters sit in runs of
+    # three or more, the candidate names something and stays intact. The veto
+    # covers `serveur/src/nexus`, `/var/backups/…`, `deployments/20261018/…`,
+    # `C:/Users/Orion/AppData/…` and the camelCase routes
+    # (`api/v1/users/getById/v2b1` — Antigravity review on d2361cc: judging
+    # chunk by chunk alone erased them; every keep-corpus candidate that
+    # reaches the guard sits at 0.64 or above).
+    if _lower_run_share(token) >= 0.6:
+        return False
+    # A random value shuffles case between adjacent letters; a name changes
+    # case at word starts. The veto above rules the word paths, and among the
+    # candidates that reach this line 0.30 was the tightest floor that kept
+    # the whole corpus (Antigravity review on d2361cc, finding 1: whole-value
+    # signals do not depend on how the value happened to be chopped — real
+    # 32-byte base64 keys leaked 16.1 % whole and 70.5 % partly).
+    chaos = _case_chaos(token)
+    if chaos is not None and chaos > 0.30:
+        return True
+    # A chopped value also keeps the signature of its chunks, worked out by
+    # `_opaque_chunks` (24-character floor instead of 40, Antigravity review on
+    # c73aee9: 24-to-39-character keys leaked). Two assumed limits stay, both
+    # carrying no signal for that rule: an all-lowercase slashed blob and a
+    # value whose every slash segment falls under the floor — as with the hex
+    # segment of an asset path (#84).
+    parts = [part for part in token.split("/") if part]
+    return _opaque_chunks(parts)
 
 
 def redact(text: str) -> tuple[str, list[str]]:
@@ -181,12 +516,32 @@ def redact(text: str) -> tuple[str, list[str]]:
         found.append("high_entropy")
         return REDACTED
 
+    def mask_slashed_run(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if _opaque_slashed(token):
+            found.append("high_entropy")
+            return REDACTED
+        # The match starts on the FIRST segment, and a value written behind
+        # path words comes with them: the candidate then reads as a path and
+        # the value leaked whole (`cat /etc/tokens/A1b2…/K1l2…` — Antigravity
+        # review on 5b186c5). Mask from the head of the longest opaque tail
+        # and keep the path words ahead of it.
+        parts = token.split("/")
+        start = _opaque_tail_start(parts)
+        if start is not None:
+            found.append("high_entropy")
+            return "/".join(parts[:start]) + "/" + REDACTED
+        return token
+
     # Labelled values run FIRST: a value that is itself a URL holding credentials
     # is masked whole (one marker, no doubled [REDACTED]), then the URL and header
-    # layers clean up what is left, and the entropy pass runs last.
+    # layers clean up what is left. The slashed pass runs just before the entropy
+    # pass so a segmented value is masked whole (issue #84), and the entropy pass
+    # runs last.
     text = _ASSIGNMENT.sub(mask_value, text)
     text = _URL_CREDENTIALS.sub(mask_url, text)
     text = _HEADER_CREDENTIALS.sub(mask_header, text)
+    text = _SLASHED_TOKEN.sub(mask_slashed_run, text)
     text = _ENTROPY_TOKEN.sub(mask_random_run, text)
     return text, sorted(set(found))
 
