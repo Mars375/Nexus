@@ -353,8 +353,8 @@ def _opaque_chunks(parts: list[str]) -> bool:
     return False
 
 
-def _opaque_tail(token: str) -> bool:
-    """A chopped value sitting behind path words: the tail of a candidate.
+def _opaque_tail_start(parts: list[str]) -> int | None:
+    """The lowest start whose tail is an opaque value, in one backward pass.
 
     The words veto of `_opaque_slashed` reads `etc/tokens/A1b2…/K1l2…` as a
     path — the words ahead of the value push its lowercase share to 0.6 — and
@@ -367,16 +367,81 @@ def _opaque_tail(token: str) -> bool:
     (Antigravity review on cc0eeb3: a two-blob floor let `cat
     /etc/tokens/A/1b2…` leak whole and left the boundary chunks of
     `…/A/F6g7…/B` in the clear).
+
+    Every gate of that per-tail predicate reads quantities of the tail this
+    pass accumulates part by part — its length, a digit, the Shannon entropy
+    (kept as Σ c·log2(c), one step per character), the share of lowercase
+    letters in runs of three, and the flags `_opaque_chunks` reads — so the
+    lowest opaque start comes out of ONE pass and no tail is ever rebuilt:
+    `"/".join(parts[start:])` per start cost O(parts × length) and a comment
+    body carries no length bound (`CommentIn.body`), which handed a
+    synchronous worker minutes of CPU for one long slashed run (CodeRabbit
+    review on 7d8fdcd). The start found is the same the loop returned — the
+    first tail the gates accept — and every tail stays eligible: a length
+    bound would skip the head of a value longer than the bound and mask only
+    its end.
     """
-    if len(token) < 24:
-        return False
-    if not any(ch.isdigit() for ch in token):
-        return False
-    if _shannon_bits_per_char(token) < _HIGH_ENTROPY_BITS:
-        return False
-    if _lower_run_share(token) >= 0.6:
-        return False
-    return _opaque_chunks([part for part in token.split("/") if part])
+    length = 0
+    has_digit = False
+    counts: dict[str, int] = {}
+    weighted = 0.0  # Σ c·log2(c) of the tail: entropy = log2(length) - weighted / length
+    lower_total = 0
+    lower_long = 0
+    blobs = 0
+    extra = 0
+    signals = 0
+    words = 0
+    start_found: int | None = None
+    first = True
+    for start in range(len(parts) - 1, 0, -1):
+        part = parts[start]
+        if first:
+            first = False
+        else:
+            length += 1  # the slash joining this part to the tail below it
+            before = counts.get("/", 0)
+            counts["/"] = after = before + 1
+            if before:
+                weighted += after * log2(after) - before * log2(before)
+        length += len(part)
+        run = 0
+        for ch in part:
+            before = counts.get(ch, 0)
+            counts[ch] = after = before + 1
+            if before:
+                weighted += after * log2(after) - before * log2(before)
+            if ch.isdigit():
+                has_digit = True
+            if ch.islower():
+                run += 1
+                continue
+            if run >= 3:
+                lower_long += run
+            lower_total += run
+            run = 0
+        if run >= 3:
+            lower_long += run
+        lower_total += run
+        if _blob_segment(part):
+            blobs += 1
+        else:
+            extra += 1
+            if _alternating_chunk(part) or len(part) <= 2 or (_case_chaos(part) or 0) > 0.30:
+                signals += 1
+            if _word_chunk(part):
+                words += 1
+        if length < 24 or not has_digit:
+            continue
+        if log2(length) - weighted / length < _HIGH_ENTROPY_BITS:
+            continue
+        if lower_total and lower_long / lower_total >= 0.6:
+            continue
+        # Same structural rule as `_opaque_chunks`, on counted flags: two
+        # blobs, or one blob whose other chunks carry a signal and none of
+        # them is a word (no other chunk at all keeps the bare value).
+        if blobs >= 2 or (blobs and (extra == 0 or (signals > 0 and words == 0))):
+            start_found = start
+    return start_found
 
 
 def _opaque_slashed(token: str) -> bool:
@@ -462,10 +527,10 @@ def redact(text: str) -> tuple[str, list[str]]:
         # review on 5b186c5). Mask from the head of the longest opaque tail
         # and keep the path words ahead of it.
         parts = token.split("/")
-        for start in range(1, len(parts)):
-            if _opaque_tail("/".join(parts[start:])):
-                found.append("high_entropy")
-                return "/".join(parts[:start]) + "/" + REDACTED
+        start = _opaque_tail_start(parts)
+        if start is not None:
+            found.append("high_entropy")
+            return "/".join(parts[:start]) + "/" + REDACTED
         return token
 
     # Labelled values run FIRST: a value that is itself a URL holding credentials

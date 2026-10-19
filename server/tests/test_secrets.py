@@ -1,5 +1,6 @@
 import base64
 import random
+import time
 
 import pytest
 
@@ -612,6 +613,38 @@ def test_slashed_key_whose_extra_chunks_shuffle_case_is_masked():
         cleaned, found = redact(text)
         assert cleaned == attendu, text
         assert found == ["high_entropy"], text
+
+
+def test_a_very_long_slashed_value_behind_path_words_is_masked_from_its_head():
+    # CodeRabbit review on 7d8fdcd: bounding the tails before the pass (the
+    # review's 256-character suggestion) would skip this head and leave it
+    # visible — a 533-character value behind path words is still masked
+    # whole from its first segment. The boundary pass keeps every tail
+    # eligible; the shape is assembled at runtime.
+    value = "/".join(["A1B2C3D4E5F6"] * 40) + "/K1L2M3N4O5P6="
+    cleaned, found = redact(f"cat /etc/tokens/{value}")
+    assert cleaned == f"cat /etc/tokens/{REDACTED}"
+    assert found == ["high_entropy"]
+
+
+def test_a_very_long_slashed_run_is_analysed_in_one_pass():
+    # CodeRabbit review on 7d8fdcd (Major): every start rebuilt its tail
+    # (`"/".join(parts[start:])`) and re-read the gates, and this repetitive
+    # run fails the whole-candidate guard at the entropy floor, so the old
+    # loop analysed all 4 000 tails — `CommentIn.body` carries no length
+    # bound and one 48 KB run cost 2.4 s of CPU on a synchronous worker. The
+    # boundary pass accumulates the same gates in one sweep; the ceiling
+    # below catches a quadratic return (tens of milliseconds now, seconds for
+    # the old loop). The mask starts on segment 3 861 — the first tail
+    # clearing the entropy floor once the trailing sample weighs in — pinned
+    # so a heuristic shift has to argue with this test.
+    text = "/".join(["8SKDsHj+ePj"] * 4000) + "/q3QCEgcaHD6honHxcM="
+    started = time.perf_counter()
+    cleaned, found = redact(text)
+    elapsed = time.perf_counter() - started
+    assert cleaned == "/".join(["8SKDsHj+ePj"] * 3861) + "/" + REDACTED
+    assert found == ["high_entropy"]
+    assert elapsed < 1.0
 
 
 @pytest.mark.parametrize(
