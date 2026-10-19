@@ -124,7 +124,12 @@ _ENTROPY_TOKEN = re.compile(r"[A-Za-z0-9+=_-]{24,}")
 # `_opaque_slashed` rules on the whole candidate and an opaque run takes it all
 # (over-redaction, ADR-006). `_` and `-` stay out of the class: a slashed
 # standard-base64 value never carries them, while paths and slugs do.
-_SLASHED_TOKEN = re.compile(r"(?<![A-Za-z0-9+=])[A-Za-z0-9+=]{1,}(?:/[A-Za-z0-9+=]+)+")
+# `=` is base64 padding: it only ever CLOSES a segment and stays out of the
+# lookbehind, so a value glued behind an unlabelled `=` is reached
+# (`payload=A1b2…/K1l2…`, `param=k1l2=/K1N7…` — Antigravity review on d2361cc:
+# with `=` in the lookbehind no match could start after the sign and the value
+# leaked whole).
+_SLASHED_TOKEN = re.compile(r"(?<![A-Za-z0-9+])[A-Za-z0-9+]{1,}={0,2}(?:/[A-Za-z0-9+]+={0,2})+")
 # Shannon entropy in bits per character: long natural words and repetitions sit
 # around 2-3 bits, a uniform 16-symbol hex run stays near log2(16) = 4 — the
 # threshold divides prose from opaque randomness (documented in issue #15).
@@ -134,6 +139,61 @@ _HIGH_ENTROPY_BITS = 3.5
 def _shannon_bits_per_char(token: str) -> float:
     n = len(token)
     return -sum((p / n) * log2(p / n) for p in Counter(token).values())
+
+
+def _lower_run_share(text: str) -> float:
+    """Share of lowercase letters sitting in runs of three or more.
+
+    A word scores near 1 (`utilisateur`, `deployments`); an opaque chunk,
+    whose lowercase letters sit alone between digits or capitals
+    (`N9vH4mKu`), scores near 0. Both slashed and underscore guards rule
+    « words » with it.
+    """
+    total = longs = 0
+    run = 0
+    for ch in text + "\x00":
+        if ch.islower():
+            run += 1
+            continue
+        if run >= 3:
+            longs += run
+        total += run
+        run = 0
+    return longs / total if total else 0.0
+
+
+def _case_chaos(token: str) -> float | None:
+    """Share of adjacent letter pairs that change case, on eight pairs or more.
+
+    A random value shuffles case between neighbours; names and paths change
+    case at word starts, far below. None when the token holds too few letter
+    pairs for the ratio to mean anything.
+    """
+    letter_pairs = [
+        (left, right)
+        for left, right in zip(token, token[1:], strict=False)
+        if left.isalpha() and right.isalpha()
+    ]
+    if len(letter_pairs) < 8:
+        return None
+    return sum(
+        1 for left, right in letter_pairs if left.isupper() != right.isupper()
+    ) / len(letter_pairs)
+
+
+def _alternating_chunk(segment: str) -> bool:
+    """Nearly every adjacent pair of a segment alternates a letter and a digit
+    (`k1l2=`, `A1b`): the signature of a short chopped piece."""
+    segment = segment.rstrip("=")
+    pairs = list(zip(segment, segment[1:], strict=False))
+    if len(pairs) < 2:
+        return False
+    boundaries = sum(
+        1
+        for left, right in pairs
+        if (left.isalpha() and right.isdigit()) or (left.isdigit() and right.isalpha())
+    )
+    return boundaries / len(pairs) >= 0.8
 
 
 def _opaque_run(token: str) -> bool:
@@ -152,13 +212,20 @@ def _opaque_run(token: str) -> bool:
     if parts and min(map(len, parts)) >= 8:
         return True
     # A short head segment is tolerated when EVERY following segment is full
-    # length (≥ 8) AND carries a digit: « tok_Y7qP2rTx_… » is opaque (issue
-    # #84), while a snake_case identifier whose tail is plain words —
-    # get_database_connection1, id-utilisateur-authentification1 — stays an
-    # identifier even above the entropy threshold (Antigravity review on
-    # 6d78a6c: the digit-free `database` used to pass on length alone).
+    # length (≥ 8), carries a digit, AND does not itself read as a word: «
+    # tok_Y7qP2rTx_… » is opaque (issue #84), while a snake_case identifier
+    # whose tail is plain words with a digit appended —
+    # v1_userprofile2_accountsettings3, db_connectionpool1_maxconnections2 —
+    # stays an identifier (Antigravity review on d2361cc: those digit-bearing
+    # word tails passed on length alone and masked five identifiers, a
+    # regression against master; a digit-free tail such as `database` was
+    # already ruled out on 6d78a6c). A tail of single lowercase letters
+    # between digits and capitals keeps scoring 0 and passes.
     if len(parts) >= 2 and len(parts[0]) < 8 and all(
-        len(part) >= 8 and any(ch.isdigit() for ch in part) for part in parts[1:]
+        len(part) >= 8
+        and any(ch.isdigit() for ch in part)
+        and _lower_run_share(part) < 0.6
+        for part in parts[1:]
     ):
         return True
     # A short vendor prefix does not break a token that holds a flat 24+ run
@@ -183,18 +250,27 @@ def _blob_segment(segment: str) -> bool:
     c73aee9: this guard replaces the old « two segments mixing case and digits »,
     which erased exactly those paths).
     """
+    # A segment may end with base64 padding (`k1l2=`): the blob reads its data
+    # part, `=` never carries a signal.
+    segment = segment.rstrip("=")
     pairs = list(zip(segment, segment[1:], strict=False))
     # Letters and digits alternate: the signature of a chunked base64 value.
+    # Six pairs at least (seven characters): a shorter chunk is a version tag
+    # or an instance type (`v1rc1`, `v1a1`, `g4dn`, `c5ad`), whose alternation
+    # is the signature of a NAME at that scale (Antigravity review on d2361cc:
+    # those tags counted as blobs and erased release, k8s and Terraform paths).
     boundaries = sum(
         1
         for left, right in pairs
         if (left.isalpha() and right.isdigit()) or (left.isdigit() and right.isalpha())
     )
-    if len(pairs) >= 3 and boundaries / len(pairs) >= 0.6:
+    if len(pairs) >= 6 and boundaries / len(pairs) >= 0.6:
         return True
     # Case changes at random rather than at word starts (letter pairs only).
     # Short PascalCase names (`ApiV2`, `AppData`) stay out: a real value mixes
-    # case across many more letter pairs than a name holds.
+    # case across many more letter pairs than a name holds. A camelCase method
+    # (`getById`) can reach the ratio alone, but it never makes a path: the
+    # words veto of `_opaque_slashed` rules the candidate before this arm.
     letter_pairs = [(left, right) for left, right in pairs if left.isalpha() and right.isalpha()]
     return (
         len(letter_pairs) >= 6
@@ -212,15 +288,44 @@ def _opaque_slashed(token: str) -> bool:
         return False
     if _shannon_bits_per_char(token) < _HIGH_ENTROPY_BITS:
         return False
-    # A chopped value keeps the signature of its chunks: at least TWO of them
-    # are blobs (24-character floor instead of 40, Antigravity review on
-    # c73aee9: 24-to-39-character keys leaked). Paths of words
-    # (`deployments/20261018/releases/build42/output`), case-mixed deployment
-    # names (`Apps/V2Prod2026/Release42Build`) and source paths
-    # (`src/views/AccountSettingsV2/OAuth2Callback`) reach zero or one blob and
-    # stay intact. An all-lowercase slashed blob still reads as words to the
-    # guard: assumed limit, as with the hex segment of an asset path (#84).
-    return sum(1 for part in token.split("/") if part and _blob_segment(part)) >= 2
+    # A path is made of words: when most lowercase letters sit in runs of
+    # three or more, the candidate names something and stays intact. The veto
+    # covers `serveur/src/nexus`, `/var/backups/…`, `deployments/20261018/…`,
+    # `C:/Users/Orion/AppData/…` and the camelCase routes
+    # (`api/v1/users/getById/v2b1` — Antigravity review on d2361cc: judging
+    # chunk by chunk alone erased them; every keep-corpus candidate that
+    # reaches the guard sits at 0.64 or above).
+    if _lower_run_share(token) >= 0.6:
+        return False
+    # A random value shuffles case between adjacent letters; a name changes
+    # case at word starts. The veto above rules the word paths, and among the
+    # candidates that reach this line 0.30 was the tightest floor that kept
+    # the whole corpus (Antigravity review on d2361cc, finding 1: whole-value
+    # signals do not depend on how the value happened to be chopped — real
+    # 32-byte base64 keys leaked 16.1 % whole and 70.5 % partly).
+    chaos = _case_chaos(token)
+    if chaos is not None and chaos > 0.30:
+        return True
+    # A chopped value also keeps the signature of its chunks: at least TWO of
+    # them are blobs (24-character floor instead of 40, Antigravity review on
+    # c73aee9: 24-to-39-character keys leaked). An all-lowercase slashed blob
+    # still reads as words to the guard: assumed limit, as with the hex
+    # segment of an asset path (#84).
+    parts = [part for part in token.split("/") if part]
+    blobs = [part for part in parts if _blob_segment(part)]
+    if len(blobs) >= 2:
+        return True
+    # One blob is enough when every other chunk is itself signal-shaped: a
+    # strong letter-digit alternation (`k1l2=`) or a one-or-two character
+    # boundary segment (`A/…`, `…/p6` — Antigravity review on d2361cc,
+    # finding 1: such chunks can never be blobs on their own).
+    if blobs:
+        rest = [part for part in parts if part not in blobs]
+        if any(_alternating_chunk(part) for part in rest) or all(
+            len(part) <= 2 for part in rest
+        ):
+            return True
+    return False
 
 
 def redact(text: str) -> tuple[str, list[str]]:

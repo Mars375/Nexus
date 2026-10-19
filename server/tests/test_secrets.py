@@ -1,3 +1,6 @@
+import base64
+import random
+
 import pytest
 
 from nexus.secrets import REDACTED, is_blank_reference, redact, redact_value
@@ -475,6 +478,93 @@ def test_slashed_keys_from_24_to_39_characters_are_masked_whole():
         assert found == ["high_entropy"]
 
 
+def test_slashed_key_with_a_short_boundary_segment_is_masked_whole():
+    # Antigravity review on d2361cc (F1): a single-slash key whose body
+    # touches a one-or-two character segment could never bring two blobs
+    # together and the flat floor stayed out of reach — all three shapes
+    # leaked whole. A short boundary segment is now read as what it is: a
+    # chopped piece, not a chunk that has to pass a blob test.
+    for chaine in (
+        "A/1b2C3d4E5f6" + "K1l2M3n4O5p6",
+        "A1b/2C3d4E5f6" + "K1l2M3n4O5p6",
+        "A1b2C3d4E5f6" + "K1l2M3n4O5/p6",
+    ):
+        cleaned, found = redact(f"cle {chaine} ici")
+        assert cleaned == f"cle {REDACTED} ici"
+        assert found == ["high_entropy"]
+
+
+def test_slashed_key_sided_by_one_character_segments_is_masked_whole():
+    # Antigravity review on d2361cc (F1): `A/F6g7…` kept its head and
+    # `A/F6g7…/B` both boundary letters in the clear — a one-character
+    # segment can never be a blob, so the single-body shapes fell out of the
+    # two-blob rule.
+    for chaine in (
+        "A/" + "F6g7H8i9J0k1L2m3N4" + "O5p6Q7r8S9t0U1v2W3",
+        "A/" + "F6g7H8i9J0k1L2m3N4" + "O5p6Q7r8S9t0" + "/B",
+    ):
+        cleaned, found = redact(f"cle {chaine} ici")
+        assert cleaned == f"cle {REDACTED} ici"
+        assert found == ["high_entropy"]
+
+
+def test_real_cryptographic_key_with_a_slash_is_masked_whole():
+    # Antigravity review on d2361cc (F1): the exact key of the report — a
+    # uniform 32-byte base64 draw — leaked its head (`OLTmUuRNp/` in the
+    # clear) before the whole-value signals replaced the per-chunk test.
+    chaine = "OLTmUuRNp/" + "I3DZ4mDicTZVCko6bQf1wMMy+LEiQIP9I="
+    cleaned, found = redact(f"cle {chaine} ici")
+    assert cleaned == f"cle {REDACTED} ici"
+    assert found == ["high_entropy"]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "payload=" + "A1b2C3d4E5f6/K1l2M3n4O5p6 ok",
+            "payload=" + REDACTED + " ok",
+        ),
+        (
+            "https://example.com/oauth?payload=" + "A1b2C3d4E5f6/K1l2M3n4O5p6 ok",
+            "https://example.com/oauth?payload=" + REDACTED + " ok",
+        ),
+        (
+            "param=k1l2=/" + "K1N7xP+9mQ2vL8jR3tY6" + "wA0bC4dE5fG7h8i9j0 ok",
+            "param=" + REDACTED + " ok",
+        ),
+    ],
+)
+def test_slashed_value_glued_behind_an_equals_sign_is_masked_whole(text, expected):
+    # Antigravity review on d2361cc (F2): with `=` in the lookbehind the
+    # engine could not start after the sign — the first two shapes leaked
+    # whole and the third kept its short head (`k1l2=/`) in the clear.
+    # Base64 padding only ever CLOSES a segment.
+    cleaned, found = redact(text)
+    assert cleaned == expected
+    assert found == ["high_entropy"]
+
+
+def test_random_32_byte_keys_with_a_slash_are_masked_whole():
+    # Antigravity review on d2361cc (F1 and F5): real 32-byte base64 keys
+    # holding a `/` leaked 16.1 % whole and 70.5 % partly on a 5 000-key draw
+    # of the report; the whole-value signals leave 2.1 % whole and 11.3 %
+    # partly on a 3 000-key draw of the same shape. The sample below comes
+    # from a fixed seed, so its outcome is stable: the measured coverage
+    # (92 of 100) is pinned as a floor, and the residual stays the documented
+    # limit of a boundary-free value (#84).
+    rng = random.Random(20261018)
+    keys = []
+    while len(keys) < 100:
+        key = base64.b64encode(bytes(rng.getrandbits(8) for _ in range(32))).decode()
+        if "/" in key:
+            keys.append(key)
+    masked = sum(
+        1 for key in keys if redact(f"cle {key} ici")[0] == f"cle {REDACTED} ici"
+    )
+    assert masked >= 85
+
+
 def test_slashed_run_under_the_length_floor_stays_untouched():
     # 23 characters: under the slashed and flat floors alike, no candidate.
     text = "cle A1b2C3d4E5f6/K1l2M3n4O5 fin"
@@ -516,6 +606,29 @@ def test_case_mixed_paths_and_names_stay_untouched(text):
     # path part merely for mixing case and digits (`Deployments/V1Release…`,
     # `…AccountSettingsV2/OAuth2Callback`). A path names its parts: neither
     # signal of `_blob_segment` fires on a word or a version number.
+    assert redact(text) == (text, [])
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "https://github.com/org/repo/releases/v1rc1/v2rc2",
+        "kubernetes/crds/v1a1/v1b1",
+        "download/ubuntu/v1rc1/v2rc2",
+        "terraform/modules/compute/g4dn/c5ad",
+        "git checkout refs/heads/release/v1rc1/g4dn",
+        "api/v1/users/getById/v2b1",
+        "src/controllers/users/getById/v2rc1",
+        "endpoints/tasks/toDoList/v1b1",
+        "controllers/DevSecOps/getById2",
+    ],
+)
+def test_release_tags_and_camel_case_routes_stay_untouched(text):
+    # Antigravity review on d2361cc (F3): a four-to-five character version tag
+    # (`v1rc1`, `g4dn`) alternates letters and digits at the scale of a name,
+    # and a camelCase method shuffles case between its short words. The blob
+    # floor (six pairs) and the words veto of the guard keep both families
+    # intact.
     assert redact(text) == (text, [])
 
 
@@ -677,6 +790,26 @@ def test_identifier_with_one_short_head_and_plain_tail_stays_untouched(text):
     # Antigravity review on 6d78a6c (second disposition): full length alone did
     # not protect a snake_case tail of plain words — every segment behind the
     # short head must carry a digit too, so only generated-looking tails pass.
+    assert redact(text) == (text, [])
+
+
+@pytest.mark.parametrize(
+    "identifiant",
+    [
+        "v1_userprofile2_accountsettings3",
+        "id_transaction2026_confirmation2026",
+        "db_connectionpool1_maxconnections2",
+        "app_configuration2026_environment2026",
+        "job_dataprocessing2026_batchworker2",
+    ],
+)
+def test_identifier_with_digit_bearing_word_tails_stays_untouched(identifiant):
+    # Antigravity review on d2361cc (F4): a digit-bearing tail of eight
+    # characters or more passed on length alone, so a word with an index
+    # (`userprofile2`) made the whole identifier opaque — five cases masked, a
+    # regression against master. The tail must not read as a word either
+    # (`tok_Y7qP2rTx_…`, whose tails hold no lowercase run, still passes).
+    text = f"clé {identifiant} notée"
     assert redact(text) == (text, [])
 
 
