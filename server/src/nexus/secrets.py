@@ -304,17 +304,19 @@ def _opaque_chunks(parts: list[str]) -> bool:
     At least TWO blobs, or one blob when every other chunk is itself
     signal-shaped: a strong letter-digit alternation (`k1l2=`) or a
     one-or-two character boundary segment (`A/…`, `…/p6` — Antigravity review
-    on d2361cc, finding 1: such chunks can never be blobs on their own). The
-    whole-candidate guard and the tail guard rule on the same signal.
+    on d2361cc, finding 1: such chunks can never be blobs on their own). A word
+    beside a single alternating chunk is a phrase, not a value: the rescue
+    needs the signal on EVERY other chunk (Antigravity review on 5efcee9: one
+    alternating chunk sufficed and masked real routes,
+    `controllers/DevSecOps/v1a1`). The whole-candidate guard and the tail
+    guard rule on the same signal.
     """
     blobs = _blobs_of(parts)
     if len(blobs) >= 2:
         return True
     if blobs:
         rest = [part for part in parts if part not in blobs]
-        if any(_alternating_chunk(part) for part in rest) or all(
-            len(part) <= 2 for part in rest
-        ):
+        if all(_alternating_chunk(part) or len(part) <= 2 for part in rest):
             return True
     return False
 

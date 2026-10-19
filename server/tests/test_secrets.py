@@ -480,8 +480,8 @@ def test_slashed_key_with_short_boundary_chunks_behind_path_words_is_masked():
         # `A/<cle>`.
         ("A/" + "1b2C3d4E5f6" + "K1l2M3n4O5p6", f"cat /etc/tokens/{REDACTED}"),
         # `A1b/<cle>`: a three-character chunk whose letter-digit alternation
-        # makes it a signal on its own.
-        ("A1b/" + "2C3d4E5f6" + "K1l2M3n4" + "O5p6", f"cat /etc/{REDACTED}"),
+        # makes it a signal on its own (the path word `tokens` stays visible).
+        ("A1b/" + "2C3d4E5f6" + "K1l2M3n4" + "O5p6", f"cat /etc/tokens/{REDACTED}"),
         # `<cle>/p6`.
         (
             "A1b2C3d4E5f6" + "K1l2M3n4O5" + "/p6",
@@ -700,6 +700,25 @@ def test_release_tags_and_camel_case_routes_stay_untouched(text):
     # and a camelCase method shuffles case between its short words. The blob
     # floor (six pairs) and the words veto of the guard keep both families
     # intact.
+    assert redact(text) == (text, [])
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "GET /api/v1/controllers/DevSecOps/v1a1",
+        "https://example.com/api/v1/controllers/DevSecOps/v1a1",
+        "src/controllers/DevSecOps/v1a1",
+        "controllers/DevSecOps/v1a1",
+    ],
+)
+def test_route_with_a_mixed_case_name_and_a_version_tag_stays_untouched(text):
+    # Antigravity review on 5efcee9: the rescue arm accepted a single
+    # signal-shaped chunk (`any`) while the same shape reads as a phrase — a
+    # word beside an alternating segment (`controllers` beside `v1a1`) no
+    # longer lets its blob (the mixed-case name) mask the run. The bare route
+    # was already masked on cc0eeb3 (the `any` arm of the whole guard); the
+    # three prefixed forms were regressions against it.
     assert redact(text) == (text, [])
 
 
