@@ -763,7 +763,7 @@ def test_random_32_byte_keys_with_a_slash_are_masked_whole():
     masked = sum(
         1 for key in keys if redact(f"cle {key} ici")[0] == f"cle {REDACTED} ici"
     )
-    assert masked >= 85
+    assert masked >= 92
 
 
 def test_slashed_run_under_the_length_floor_stays_untouched():
