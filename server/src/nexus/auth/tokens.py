@@ -14,7 +14,7 @@ import logging
 import re
 import secrets
 import unicodedata
-from datetime import timedelta
+from datetime import UTC, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -82,15 +82,19 @@ def touch_last_used(factory, token_id: int) -> None:
     once, and the others see a rowcount of zero.
     """
     try:
+        moment = now()
+        # Subtracting on the UTC timeline keeps the window a real duration: wall-clock
+        # arithmetic in Europe/Paris crosses the DST change an hour off.
+        cutoff = moment.astimezone(UTC) - TOUCH_WINDOW
         with factory() as session:
             session.execute(
                 update(ActorToken)
                 .where(
                     ActorToken.id == token_id,
                     (ActorToken.last_used_at.is_(None))
-                    | (ActorToken.last_used_at < now() - TOUCH_WINDOW),
+                    | (ActorToken.last_used_at < cutoff),
                 )
-                .values(last_used_at=now())
+                .values(last_used_at=moment)
             )
             session.commit()
     except Exception:

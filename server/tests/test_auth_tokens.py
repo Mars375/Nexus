@@ -3,7 +3,7 @@
 import hashlib
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.orm import sessionmaker
@@ -235,16 +235,44 @@ def test_a_failed_touch_never_fails_the_request(caplog):
 
 def test_the_window_holds_across_the_autumn_fall_back(session, factory, monkeypatch):
     # 2026-10-25: 03:00 CEST becomes 02:00 CET, so this local time exists twice (fold=1).
+    # 02:15+01:00 is 01:15Z: values are built on the UTC timeline, as real instants are.
     fixed = datetime(2026, 10, 25, 2, 15, tzinfo=TZ, fold=1)
     monkeypatch.setattr(tokens, "now", lambda: fixed)
     row, _ = tokens.issue(session, "helios", "poste")
-    row.last_used_at = fixed - timedelta(seconds=299)
+
+    inside = (fixed.astimezone(UTC) - timedelta(seconds=299)).astimezone(TZ)
+    row.last_used_at = inside
     session.commit()
     tokens.touch_last_used(factory, row.id)
     session.expire(row)
-    assert row.last_used_at == fixed - timedelta(seconds=299)  # still inside the window
-    row.last_used_at = fixed - timedelta(seconds=301)
+    assert row.last_used_at == inside  # still inside the window
+
+    # 45 minutes is beyond the window; wall-clock subtraction would call it recent (00:30Z).
+    stale = (fixed.astimezone(UTC) - timedelta(minutes=45)).astimezone(TZ)
+    row.last_used_at = stale
     session.commit()
     tokens.touch_last_used(factory, row.id)
     session.expire(row)
     assert row.last_used_at == fixed
+
+    outside = (fixed.astimezone(UTC) - timedelta(seconds=301)).astimezone(TZ)
+    row.last_used_at = outside
+    session.commit()
+    tokens.touch_last_used(factory, row.id)
+    session.expire(row)
+    assert row.last_used_at == fixed
+
+
+def test_the_window_holds_across_the_spring_forward(session, factory, monkeypatch):
+    # 2026-03-29: 02:00 CET becomes 03:00 CEST. At 03:02+02:00 (01:02Z), wall-clock
+    # subtraction lands on 02:57, an hour that does not exist, i.e. 01:57Z: the future.
+    fixed = datetime(2026, 3, 29, 3, 2, tzinfo=TZ)
+    monkeypatch.setattr(tokens, "now", lambda: fixed)
+    row, _ = tokens.issue(session, "helios", "poste")
+
+    recent = (fixed.astimezone(UTC) - timedelta(minutes=2)).astimezone(TZ)
+    row.last_used_at = recent
+    session.commit()
+    tokens.touch_last_used(factory, row.id)
+    session.expire(row)
+    assert row.last_used_at == recent  # still inside the window
