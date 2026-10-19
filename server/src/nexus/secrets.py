@@ -210,6 +210,18 @@ def _alternating_chunk(segment: str) -> bool:
     return boundaries / len(pairs) >= 0.8
 
 
+def _word_chunk(part: str) -> bool:
+    """A vocabulary chunk (a path word): digitless and lowercase-leaning.
+
+    `controllers`, `tokens`, `api` are words; a crypto segment keeps a digit
+    (`SIIn3hucz0P4s`, `A0b`) or scatters its lowercase letters singly
+    (`KJmQwErTyUiOp`), and a digitless all-caps chunk (`NZD`) carries no run of
+    three lowercase letters either. The rescue in `_opaque_chunks` reads this
+    to tell a phrase from a chopped value.
+    """
+    return not any(ch.isdigit() for ch in part) and _lower_run_share(part) >= 0.6
+
+
 def _opaque_run(token: str) -> bool:
     """Does a high-entropy candidate read as an opaque token or an identifier?"""
     if _shannon_bits_per_char(token) < _HIGH_ENTROPY_BITS:
@@ -301,22 +313,30 @@ def _blobs_of(parts: list[str]) -> list[str]:
 def _opaque_chunks(parts: list[str]) -> bool:
     """Structural signal of a chopped value: its blobs and boundary chunks.
 
-    At least TWO blobs, or one blob when every other chunk is itself
-    signal-shaped: a strong letter-digit alternation (`k1l2=`) or a
-    one-or-two character boundary segment (`A/…`, `…/p6` — Antigravity review
-    on d2361cc, finding 1: such chunks can never be blobs on their own). A word
-    beside a single alternating chunk is a phrase, not a value: the rescue
-    needs the signal on EVERY other chunk (Antigravity review on 5efcee9: one
-    alternating chunk sufficed and masked real routes,
-    `controllers/DevSecOps/v1a1`). The whole-candidate guard and the tail
-    guard rule on the same signal.
+    At least TWO blobs, or one blob when the other chunks read as the rest of
+    a value rather than as a phrase: they carry a signal — a strong
+    letter-digit alternation (`k1l2=`) or a one-or-two character boundary
+    segment (`A/…`, `…/p6`, Antigravity review on d2361cc, finding 1: such
+    chunks can never be blobs on their own) — and none of them is a word. A
+    path word beside an alternating tag is a route, not a value
+    (`controllers/DevSecOps/v1a1`, Antigravity review on 5efcee9), while a
+    digit-bearing crypto segment is not a word (`SIIn3hucz0P4s`, `NZD`;
+    Antigravity review on 49b2fe0: requiring the signal on EVERY other chunk
+    leaked real keys whose extra segment misses the blob floor). A lone blob
+    with nothing beside it is a bare value. The whole-candidate guard and the
+    tail guard rule on the same signal.
     """
     blobs = _blobs_of(parts)
     if len(blobs) >= 2:
         return True
     if blobs:
         rest = [part for part in parts if part not in blobs]
-        if all(_alternating_chunk(part) or len(part) <= 2 for part in rest):
+        if not rest:
+            return True
+        carries_signal = any(
+            _alternating_chunk(part) or len(part) <= 2 for part in rest
+        )
+        if carries_signal and not any(_word_chunk(part) for part in rest):
             return True
     return False
 

@@ -499,6 +499,51 @@ def test_slashed_key_with_short_boundary_chunks_behind_path_words_is_masked():
         assert found == ["high_entropy"], chaine
 
 
+def test_slashed_key_with_a_crypto_segment_beside_its_blob_is_masked():
+    # Antigravity review on 49b2fe0: the rescue then demanded the signal on
+    # EVERY other chunk, so a real key whose remaining segment is a
+    # digit-bearing crypto chunk (no word shape: `SIIn3hucz0P4s`, `NZD`)
+    # leaked wholly — naked in a sentence, or behind a path when the
+    # whole-token guard stays silent (the tail guard read the same `all`).
+    # The rescue now pairs the signal with a word veto per chunk. Chains
+    # assembled at runtime from short pieces.
+    cas = (
+        # Naked in a sentence: one blob, one alternating chunk and one
+        # digit-bearing segment that is neither.
+        (
+            "cle " + "J5PHA+i9s8X" + "93R4P4TJ/tk6W0L/" + "tavrOV3TVE" + "8YJaZWP ici",
+            f"cle {REDACTED} ici",
+        ),
+        # Behind a path: the path words hold the whole candidate under its
+        # words floor, and the digit-bearing segment is no word.
+        (
+            "cat /etc/tokens/" + "SIIn3hucz0P4s" + "/A0b/" + "nIrNiDHFU8O48=",
+            f"cat /etc/tokens/{REDACTED}",
+        ),
+        # A digitless all-caps segment (`NZD`) has no run of three lowercase
+        # letters: not a word, so the rescue fires.
+        (
+            "cat /etc/tokens/" + "NZD/" + "3GdKQgov3o/rIlI9wynQZe/" + "N5Q==",
+            f"cat /etc/tokens/{REDACTED}",
+        ),
+        (
+            "cat /etc/tokens/" + "6R8Z/" + "8Dy2EbS6FWyaH/" + "LsWZ2cA==",
+            f"cat /etc/tokens/{REDACTED}",
+        ),
+        # The constructed form of `reviewer` r7 (P3): every chunk under the
+        # 24-character floor, one blob, one alternating segment and one
+        # version-shaped segment — no word, so the rescue fires.
+        (
+            "cle " + "A1b2C3d4E5f6" + "/k1l2=/" + "v1rc1" + " ici",
+            f"cle {REDACTED} ici",
+        ),
+    )
+    for text, attendu in cas:
+        cleaned, found = redact(text)
+        assert cleaned == attendu, text
+        assert found == ["high_entropy"], text
+
+
 @pytest.mark.parametrize(
     "chaine",
     [
