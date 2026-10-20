@@ -318,7 +318,10 @@ def test_the_python_window_holds_across_the_fall_back_instants(monkeypatch):
 def test_a_naive_last_use_is_left_to_the_update(session, factory):
     row, _ = tokens.issue(session, "helios", "poste")
     session.commit()
-    tokens.touch_last_used(factory, row.id, last_used_at=datetime(2026, 1, 1))
+    # Recent on the machine's clock: without the `utcoffset()` guard, `astimezone` would read it
+    # as local time, find it inside the window and skip the write.
+    naive_recent = datetime.now() - timedelta(seconds=10)
+    tokens.touch_last_used(factory, row.id, last_used_at=naive_recent)
     session.expire(row)
     assert row.last_used_at is not None
 
