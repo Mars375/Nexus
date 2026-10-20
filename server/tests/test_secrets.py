@@ -1163,13 +1163,31 @@ def test_prefixed_secrets_stay_masked_beside_generated_identifiers(chaine):
 
 @pytest.mark.parametrize(
     "chaine",
+    [
+        # Mailgun-, Shopify- and Postman-shaped keys: a long single-case hex tail whose
+        # entropy sits under the flat-run floor (3.3-3.5 bits) was masked by the
+        # short-prefix branch on master; reviewer finding on 5df9637 (P1).
+        "key-" + "8c291f2fc8b5f208" + "99203fad89d9b0ef",
+        "shpat_" + "9a50f8a8e9bb8bdb" + "5eba456bf92d5d98",
+        "PMAK-" + "fc2e2894e7af7c49" + "c3e30acb-" + "01ef4faa5f9dc25f" + "d5da5323091acff3ce",
+    ],
+)
+def test_long_hexadecimal_tail_behind_a_short_prefix_stays_masked(chaine):
+    cleaned, found = redact(f"cle {chaine} ici")
+    assert cleaned == f"cle {REDACTED} ici"
+    assert found == ["high_entropy"]
+
+
+@pytest.mark.parametrize(
+    "chaine",
     ["key_4f3a9b2c_1d7e8f90_a1b2c3d4_e5f60718", "key_k3x9m2p7q1zt_w8v4n6b2c5yr"],
 )
 def test_single_case_short_prefixed_segments_stay_untouched_as_assumed(chaine):
     # Price of the #93 fix, assumed: a short-prefixed value whose segments are all
     # single-case (hex, base36) and each under 24 characters is indistinguishable
-    # from a generated identifier. Vendors emit base62; a long flat run is still
-    # masked. Pinned so a later widening has to argue with this test.
+    # from a generated identifier (vendors mostly emit base62; a few emit short hex
+    # keys, such as `NRJS-<hex19>`). A 24+ segment stays masked, see above. Pinned
+    # so a later widening has to argue with this test.
     text = f"cle {chaine} ici"
     assert redact(text) == (text, [])
 
