@@ -206,7 +206,10 @@ def test_a_recent_use_never_waits_for_the_write_lock(client, caplog):
         locker.rollback()
         locker.close()
     assert res.status_code == 200
-    assert elapsed < 0.05  # waiting on the lock would cost the whole 0.25 s busy timeout
+    # Asking for the lock costs at least the whole busy timeout (measured 0.36 s on the old
+    # code). A fixed 50 ms flaked at 66-85 ms when the suite ran loaded: the deterministic proof
+    # is the spy test below, this one only checks the request does not wait.
+    assert elapsed < tokens.TOUCH_BUSY_TIMEOUT
     assert "dernière utilisation" not in caplog.text
     assert last_used_of(client, token_id) == recent
 

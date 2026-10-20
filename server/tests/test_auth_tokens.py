@@ -339,8 +339,9 @@ def test_the_python_window_holds_across_the_fall_back_instants(session, factory,
     tokens.touch_last_used(opened, new_row.id, last_used_at=recent)
     assert opened.calls == 1
     session.expire_all()
-    assert old_row.last_used_at == fixed  # the UPDATE really ran
-    assert new_row.last_used_at == recent
+    # Instants, not wall clocks: equal-zone datetimes compare by displayed time and ignore fold.
+    assert old_row.last_used_at.astimezone(UTC) == fixed.astimezone(UTC)  # the UPDATE ran
+    assert new_row.last_used_at.astimezone(UTC) == recent.astimezone(UTC)
 
 
 def test_a_naive_last_use_is_left_to_the_update(session, factory):
