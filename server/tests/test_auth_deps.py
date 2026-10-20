@@ -186,6 +186,47 @@ def test_a_locked_database_does_not_delay_an_authenticated_request(client):
     assert last_used_of(client, token_id) is not None  # the next request records it
 
 
+def test_a_recent_use_never_waits_for_the_write_lock(client, caplog):
+    # #94: inside the window nothing is due, so the request must not even ask for the lock
+    # (an UPDATE matching no row still takes it) nor log a misleading warning.
+    token, token_id = issue(client, "codex")
+    recent = now() - timedelta(seconds=10)
+    with client.app.state.sessionmaker() as s:
+        s.get(ActorToken, token_id).last_used_at = recent
+        s.commit()
+    assert client.get("/api/tasks", headers=bearer(token)).status_code == 200  # warm-up
+    caplog.set_level(logging.WARNING, logger="nexus")
+    locker = sqlite3.connect(client.app.state.settings.db_path)
+    locker.execute("BEGIN IMMEDIATE")
+    try:
+        start = time.perf_counter()
+        res = client.get("/api/tasks", headers=bearer(token))
+        elapsed = time.perf_counter() - start
+    finally:
+        locker.rollback()
+        locker.close()
+    assert res.status_code == 200
+    assert elapsed < 0.05  # waiting on the lock would cost the whole 0.25 s busy timeout
+    assert "dernière utilisation" not in caplog.text
+    assert last_used_of(client, token_id) == recent
+
+
+def test_a_recent_use_opens_no_touch_session(client, monkeypatch):
+    token, token_id = issue(client, "codex")
+    with client.app.state.sessionmaker() as s:
+        s.get(ActorToken, token_id).last_used_at = now() - timedelta(seconds=10)
+        s.commit()
+    opened = []
+
+    def spy():
+        opened.append(1)
+        raise AssertionError("no touch session expected inside the window")
+
+    monkeypatch.setattr(client.app.state, "touch_sessionmaker", spy)
+    assert client.get("/api/tasks", headers=bearer(token)).status_code == 200
+    assert opened == []
+
+
 def test_a_revoked_token_is_refused_without_touching_its_last_use(client):
     token, token_id = issue(client)
     old = now() - timedelta(seconds=301)
