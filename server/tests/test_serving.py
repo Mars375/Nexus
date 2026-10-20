@@ -588,6 +588,20 @@ def test_ipv6_tailnet_address_is_confirmed(launch, records):
     assert_accepts(run.tail_port)
 
 
+def test_a_served_tailnet_address_stays_bound_across_five_confirmed_rounds(launch, records):
+    """D9: every round checks a served address, but a confirmation never rebinds it."""
+    run = launch(rounds=Rounds())
+    for index in range(5):
+        run.rounds.next_end()  # round `index + 1` has checked the address
+        if index < 4:
+            run.rounds.go()
+    assert run.runner.count == 5
+    assert run.bind.tail_count == 1
+    assert run.on_loop(lambda: run.tail.state) == serving.SERVED
+    assert_accepts(run.tail_port)
+    assert records.serving(level=logging.WARNING) == []
+
+
 def test_a_served_tailnet_address_no_longer_confirmed_is_closed(launch, records):
     run = launch(rounds=Rounds(), script=[CONFIRM, STOPPED, CONFIRM])
     run.rounds.next_end()  # round 1: opened
