@@ -40,14 +40,16 @@ _FULL: list[tuple[str, re.Pattern[str]]] = [
 # a secret, and a host:port never matches (the password must end at an @).
 # A `?` or `#` never belongs to the *username* (issue #84: without the restriction,
 # `?redirect=mailto:alice@…` made the query's tail a « user » and erased `alice`), so a
-# password behind a username that holds one is a known limit (issue #92). The password
+# password behind a username that holds one is a known limit (PR #97). The password
 # may hold them — a connection URL with an unencoded `#` is common — and only a host
-# followed by a port and a query or fragment is left alone (`host:8080?q=…@…`, Antigravity
-# review on 6d78a6c, which read the port and the query head as a password): at most five
-# digits and a `?`/`#`, behind a non-empty host. `redis://:123#ab@…` has no host and
-# `alice:123456#ab@…` is no port, so both stay masked.
+# followed by a port and a query or fragment that carries a `key=value` pair is left
+# alone (`host:8080?email=alice@…`, Antigravity review on 6d78a6c, which read the port
+# and the query head as a password): at most five digits, a `?`/`#` and an `=` before
+# the `@`, behind a non-empty host. Anything else stays masked, ADR-006 preferring too
+# much to too little: `redis://:123#ab@…` has no host, `alice:2024#Paris@…` has no `=`.
+# Known limit: a password of up to five digits, then `?`/`#`, then an `=`.
 _URL_CREDENTIALS = re.compile(
-    r"(?i)\b([a-z][a-z0-9+.-]*://(?:[^\s:/@?#]+:(?!\d{1,5}[?#])|:))([^\s@/]+)(@)"
+    r"(?i)\b([a-z][a-z0-9+.-]*://(?:[^\s:/@?#]+:(?!\d{1,5}[?#][^\s@/]*=)|:))([^\s@/]+)(@)"
 )
 
 # En-tête HTTP d'identifiant écrit tel quel (« Authorization: Digest username="…", … »,

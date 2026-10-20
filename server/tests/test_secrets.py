@@ -294,7 +294,7 @@ def test_url_credentials_before_a_query_are_still_masked():
 def test_url_with_a_port_and_a_query_is_kept():
     # Antigravity review on 6d78a6c (same disposition as above): `host:port` in
     # front of a query read as a password and the port and query head were
-    # erased. An unencoded ? or # always ends the userinfo, never a password.
+    # erased. Only a port followed by a key=value query or fragment is exempt (#92).
     for text in (
         "http://localhost:3000?email=alice@example.com",
         "https://example.org:443?redirect=mailto:alice@example.net",
@@ -303,7 +303,7 @@ def test_url_with_a_port_and_a_query_is_kept():
 
 
 def test_url_credentials_before_a_port_and_a_query_stay_masked():
-    # The password restriction leaves real credentials masked, port included.
+    # A real password followed by a host:port and a query stays masked.
     cleaned, found = redact("https://alice:hunter2@host:8443/x?y=1")
     assert cleaned == f"https://alice:{REDACTED}@host:8443/x?y=1"
     assert found == ["url_credentials"]
@@ -330,16 +330,17 @@ def test_url_password_with_a_hash_or_a_question_mark_is_masked(template, separat
 
 
 @pytest.mark.parametrize(
-    "template",
+    "template, head",
     [
-        "redis://:{}@localhost/0",  # no host before the colon: never a port
-        "postgresql://alice:{}@db.example/nexus",  # more than five digits: not a port
+        ("redis://:{}@localhost/0", "1234#ab"),  # no host before the colon: never a port
+        ("postgresql://alice:{}@db.example/nexus", "123456#ab"),  # over five digits
+        ("postgresql://nexus:{}@db:5432/nexus", "2024#Pa" + "ris"),  # no key=value
+        ("amqp://guest:{}@rabbit:5672/vhost", "123?ab" + "c"),
     ],
 )
-def test_url_password_starting_with_digits_then_a_hash_is_masked(template):
+def test_url_password_starting_with_digits_then_a_hash_is_masked(template, head):
     # The « port + query » exemption of #87 must not swallow a numeric password head.
-    password = ("1234" if template.startswith("redis") else "123456") + "#" + "ab"
-    cleaned, found = redact(template.format(password))
+    cleaned, found = redact(template.format(head))
     assert cleaned == template.format(REDACTED)
     assert found == ["url_credentials"]
 
@@ -348,7 +349,7 @@ def test_url_with_a_port_and_a_fragment_is_kept():
     # Same exemption as the query case above, for the fragment: `host:port#…@…`.
     for text in (
         "http://localhost:3000#mail=alice@example.com",
-        "https://example.org:8080#section:bob@example.net",
+        "https://example.org:8080#redirect=mailto:bob@example.net",
     ):
         assert redact(text) == (text, [])
 
@@ -356,16 +357,16 @@ def test_url_with_a_port_and_a_fragment_is_kept():
 def test_url_username_holding_a_hash_is_a_known_limit():
     # The username keeps the `?#` restriction (issue #84: `?redirect=mailto:alice@…`
     # would otherwise erase `alice`), so a password behind a username that holds a
-    # `#` is not recognised by this pattern. Documented limit, see issue #92.
+    # `#` is not recognised by this pattern. Documented limit (PR #97).
     password = "s3" + "cr3t"
     text = "ftp://us#er:" + password + "@host/x"
     assert redact(text) == (text, [])
 
 
 def test_url_password_that_reads_as_a_port_and_a_query_is_a_known_limit():
-    # `alice:12#ab@db` and `host:8080#ab@…` are the same string shape; the port
-    # exemption of #87 wins (at most five digits, then `?`/`#`). Documented limit.
-    text = "postgresql://alice:" + "12" + "#" + "ab@db/nexus"
+    # `alice:12#a=b@db` and `host:8080#a=b@…` are the same string shape; the port
+    # exemption of #87 wins (at most five digits, `?`/`#`, then a `key=value`).
+    text = "postgresql://alice:" + "12" + "#" + "a=b@db/nexus"
     assert redact(text) == (text, [])
 
 
