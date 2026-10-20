@@ -62,6 +62,59 @@ def test_run_reference_containing_a_secret_is_refused(client, fields):
     assert SECRET not in res.text and "alpha" not in res.text and "beta" not in res.text
     assert client.get("/api/events", params={"task": ref}).json() == []
 
+@pytest.mark.parametrize(
+    "event_id",
+    [
+        "evt_20261018143022_a1b2c3d4",
+        "evt_1729260000_a1b2c3d4e5f6",
+        "build_20261018123456_ab12cd34",
+        "pr87_c532761947a5_f745827e",
+        "evt_20260928_helios_0007",
+    ],
+)
+def test_generated_event_id_is_not_taken_for_a_secret(client, event_id):
+    # Issue #93: `prefix_timestamp_hex` identifiers are what agents generate; the
+    # scanner used to refuse them with a 409 `secret_in_event_id`.
+    ref = task(client, next_action="x")
+    res = publish(client, "claimed", task=ref, id=event_id)
+
+    assert res.status_code == 201, res.text
+    assert res.json()["actor_event_id"] == event_id
+    assert res.json()["redacted"] == []
+
+@pytest.mark.parametrize(
+    "run",
+    ["run_1729260000123_4f3a9b2c", "job_20261018_4f3a9b2c1d7e", "helios_20261018143022_9f8e7d6c"],
+)
+def test_generated_run_reference_is_not_taken_for_a_secret(client, run):
+    ref = task(client, next_action="x")
+    res = publish(client, "working", task=ref, run=run, payload={"run_ref": run})
+
+    assert res.status_code == 201, res.text
+    assert res.json()["run"] == run
+    assert res.json()["redacted"] == []
+
+def test_vendor_token_shaped_id_and_run_are_still_refused(client):
+    # Issue #93 narrowed the short-prefix rule; a mixed-case base62 tail stays a secret.
+    token = "Y7qP2rTx_" + "N9vH4mKu_" + "C6wJ8sZa_" + "R5dE3fGh"
+    ref = task(client, next_action="x")
+
+    by_id = publish(client, "claimed", task=ref, id="tok_" + token)
+    by_run = publish(client, "working", task=ref, run="tok_" + token)
+
+    assert by_id.json()["detail"]["code"] == "secret_in_event_id"
+    assert by_run.json()["detail"]["code"] == "secret_in_run_ref"
+    assert token not in by_id.text + by_run.text
+    assert client.get("/api/events", params={"task": ref}).json() == []
+
+def test_generated_event_id_resend_returns_the_original(client):
+    ref = task(client, next_action="x")
+    first = publish(client, "claimed", task=ref, id="evt_20261018143022_a1b2c3d4")
+    again = publish(client, "claimed", task=ref, id="evt_20261018143022_a1b2c3d4")
+
+    assert first.status_code == 201
+    assert again.status_code == 200 and again.json()["id"] == first.json()["id"]
+
 def test_non_string_run_ref_is_refused_not_500(client):
     ref = task(client)
     res = publish(client, "progress", task=ref, payload={"percent": 40, "run_ref": {}})
