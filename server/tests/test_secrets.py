@@ -309,6 +309,66 @@ def test_url_credentials_before_a_port_and_a_query_stay_masked():
     assert found == ["url_credentials"]
 
 
+@pytest.mark.parametrize(
+    "template",
+    [
+        "postgresql://alice:{}@db.example/nexus",
+        "DATABASE_URL=postgresql://nexus:{}@db:5432/nexus",
+        "mysql://root:{}@localhost:3306/app",
+        "redis://:{}@localhost/0",
+        "amqp://guest:{}@rabbit:5672/vhost",
+    ],
+)
+@pytest.mark.parametrize("separator", ["#", "?", "#a?b"])
+def test_url_password_with_a_hash_or_a_question_mark_is_masked(template, separator):
+    # issue #92 (regression of #87): a `?` or `#` inside an unencoded password ended
+    # the match before the `@` and the password came out in the clear. Built at run time.
+    password = "hunt" + separator + "er2"
+    cleaned, found = redact(template.format(password))
+    assert cleaned == template.format(REDACTED)
+    assert found == ["url_credentials"]
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "redis://:{}@localhost/0",  # no host before the colon: never a port
+        "postgresql://alice:{}@db.example/nexus",  # more than five digits: not a port
+    ],
+)
+def test_url_password_starting_with_digits_then_a_hash_is_masked(template):
+    # The « port + query » exemption of #87 must not swallow a numeric password head.
+    password = ("1234" if template.startswith("redis") else "123456") + "#" + "ab"
+    cleaned, found = redact(template.format(password))
+    assert cleaned == template.format(REDACTED)
+    assert found == ["url_credentials"]
+
+
+def test_url_with_a_port_and_a_fragment_is_kept():
+    # Same exemption as the query case above, for the fragment: `host:port#…@…`.
+    for text in (
+        "http://localhost:3000#mail=alice@example.com",
+        "https://example.org:8080#section:bob@example.net",
+    ):
+        assert redact(text) == (text, [])
+
+
+def test_url_username_holding_a_hash_is_a_known_limit():
+    # The username keeps the `?#` restriction (issue #84: `?redirect=mailto:alice@…`
+    # would otherwise erase `alice`), so a password behind a username that holds a
+    # `#` is not recognised by this pattern. Documented limit, see issue #92.
+    password = "s3" + "cr3t"
+    text = "ftp://us#er:" + password + "@host/x"
+    assert redact(text) == (text, [])
+
+
+def test_url_password_that_reads_as_a_port_and_a_query_is_a_known_limit():
+    # `alice:12#ab@db` and `host:8080#ab@…` are the same string shape; the port
+    # exemption of #87 wins (at most five digits, then `?`/`#`). Documented limit.
+    text = "postgresql://alice:" + "12" + "#" + "ab@db/nexus"
+    assert redact(text) == (text, [])
+
+
 def test_multi_word_passphrase_is_masked_to_end_of_line():
     # issue #15: only the first word used to survive (« correct »).
     cleaned, found = redact("mot de passe : correct horse battery staple")
