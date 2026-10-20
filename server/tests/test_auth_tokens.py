@@ -244,6 +244,18 @@ class _NoSession:
         raise AssertionError("no session expected")
 
 
+class _CountedFactory:
+    """Delegates to a real factory and counts the sessions opened: a due write must open one."""
+
+    def __init__(self, factory):
+        self.factory = factory
+        self.calls = 0
+
+    def __call__(self):
+        self.calls += 1
+        return self.factory()
+
+
 def test_a_known_recent_use_opens_no_session(caplog):
     spy = _NoSession()
     caplog.set_level(logging.WARNING, logger="nexus")
@@ -288,31 +300,47 @@ def test_a_future_last_use_counts_as_inside_the_window():
     assert spy.calls == 0
 
 
-def test_the_python_window_boundary_matches_the_sql(monkeypatch):
+def test_the_python_window_boundary_matches_the_sql(session, factory, monkeypatch):
     fixed = datetime(2026, 9, 28, 9, 5, tzinfo=TZ)
     monkeypatch.setattr(tokens, "now", lambda: fixed)
-    cutoff = fixed.astimezone(UTC) - tokens.TOUCH_WINDOW
-    on_cutoff, before = _NoSession(), _NoSession()
-    tokens.touch_last_used(on_cutoff, 1, last_used_at=cutoff.astimezone(TZ))
-    assert on_cutoff.calls == 0  # `last_used_at < cutoff` is false: the UPDATE writes nothing
-    just_before = (cutoff - timedelta(microseconds=1)).astimezone(TZ)
-    tokens.touch_last_used(before, 1, last_used_at=just_before)
-    assert before.calls == 1
+    cutoff = (fixed.astimezone(UTC) - tokens.TOUCH_WINDOW).astimezone(TZ)
+    just_before = (fixed.astimezone(UTC) - tokens.TOUCH_WINDOW - timedelta(microseconds=1))
+    just_before = just_before.astimezone(TZ)
+    on_cutoff, _ = tokens.issue(session, "helios", "poste")
+    before, _ = tokens.issue(session, "helios", "autre")
+    on_cutoff.last_used_at, before.last_used_at = cutoff, just_before
+    session.commit()
+
+    opened = _CountedFactory(factory)
+    tokens.touch_last_used(opened, on_cutoff.id, last_used_at=cutoff)
+    assert opened.calls == 0  # `last_used_at < cutoff` is false: nothing is due
+    tokens.touch_last_used(opened, before.id, last_used_at=just_before)
+    assert opened.calls == 1
+    session.expire_all()
+    assert on_cutoff.last_used_at == cutoff
+    assert before.last_used_at == fixed  # the UPDATE really ran
 
 
-def test_the_python_window_holds_across_the_fall_back_instants(monkeypatch):
+def test_the_python_window_holds_across_the_fall_back_instants(session, factory, monkeypatch):
     # Same wall-clock zone on both sides would compare 02:30+02:00 as before 02:15+01:00
     # (PEP 495 ignores fold): compare instants. 02:30+02:00 is 45 minutes older: due.
     fixed = datetime(2026, 10, 25, 2, 15, tzinfo=TZ, fold=1)
     monkeypatch.setattr(tokens, "now", lambda: fixed)
     stale = (fixed.astimezone(UTC) - timedelta(minutes=45)).astimezone(TZ)
-    spy = _NoSession()
-    tokens.touch_last_used(spy, 1, last_used_at=stale)
-    assert spy.calls == 1
-    inside = _NoSession()
     recent = (fixed.astimezone(UTC) - timedelta(seconds=299)).astimezone(TZ)
-    tokens.touch_last_used(inside, 1, last_used_at=recent)
-    assert inside.calls == 0
+    old_row, _ = tokens.issue(session, "helios", "poste")
+    new_row, _ = tokens.issue(session, "helios", "autre")
+    old_row.last_used_at, new_row.last_used_at = stale, recent
+    session.commit()
+
+    opened = _CountedFactory(factory)
+    tokens.touch_last_used(opened, old_row.id, last_used_at=stale)
+    assert opened.calls == 1
+    tokens.touch_last_used(opened, new_row.id, last_used_at=recent)
+    assert opened.calls == 1
+    session.expire_all()
+    assert old_row.last_used_at == fixed  # the UPDATE really ran
+    assert new_row.last_used_at == recent
 
 
 def test_a_naive_last_use_is_left_to_the_update(session, factory):
