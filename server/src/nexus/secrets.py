@@ -41,7 +41,8 @@ _FULL: list[tuple[str, re.Pattern[str]]] = [
 # A `?` or `#` never belongs to the *username* (issue #84: without the restriction,
 # `?redirect=mailto:alice@…` made the query's tail a « user » and erased `alice`).
 # The password may hold them — a connection URL with an unencoded `#` is common
-# (issue #92) — so it runs up to the `@`, whatever it looks like. Dans le doute, on
+# (issue #92) — so it runs up to the first `@`, never past a `/` or whitespace (a `/` inside a
+# password is a known limit, tracked in #95). Dans le doute, on
 # masque (Loïc, 2026-10-20; ADR-006: too much rather than too little): there is no
 # « port + query » exemption, because `postgresql://alice:12#a=b@db` (a password) and
 # `http://localhost:8080#a=b@example.com` (no credentials) are the same string shape
