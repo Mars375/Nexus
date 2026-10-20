@@ -291,15 +291,21 @@ def test_url_credentials_before_a_query_are_still_masked():
     assert found == ["url_credentials"]
 
 
-def test_url_with_a_port_and_a_query_is_kept():
-    # Antigravity review on 6d78a6c (same disposition as above): `host:port` in
-    # front of a query read as a password and the port and query head were
-    # erased. Only a port followed by a key=value query or fragment is exempt (#92).
-    for text in (
-        "http://localhost:3000?email=alice@example.com",
-        "https://example.org:443?redirect=mailto:alice@example.net",
+def test_url_with_a_port_and_a_query_is_masked_by_choice():
+    # « Masqué à tort, assumé » (Loïc, 2026-10-20: dans le doute, on masque). Without
+    # credentials, `host:8080?email=alice@…` has the exact shape of a connection URL
+    # whose password is `8080?email=alice`: no rule tells them apart without risking
+    # a password in the clear (Antigravity, PR #97), so the lookalike is masked and
+    # only the port and query head are lost.
+    for text, expected in (
+        ("http://localhost:8080?email=alice@example.com", "http://localhost:{}@example.com"),
+        ("https://example.org:8080#redirect=mailto:bob@example.net", "https://example.org:{}@example.net"),
+        ("http://localhost:8080#top@example.com", "http://localhost:{}@example.com"),
+        ("https://example.org:8080?lang=fr@example.net", "https://example.org:{}@example.net"),
     ):
-        assert redact(text) == (text, [])
+        cleaned, found = redact(text)
+        assert cleaned == expected.format(REDACTED)
+        assert found == ["url_credentials"]
 
 
 def test_url_credentials_before_a_port_and_a_query_stay_masked():
@@ -339,35 +345,31 @@ def test_url_password_with_a_hash_or_a_question_mark_is_masked(template, separat
     ],
 )
 def test_url_password_starting_with_digits_then_a_hash_is_masked(template, head):
-    # The « port + query » exemption of #87 must not swallow a numeric password head.
+    # A numeric password head is masked, with or without a `key=value` after it.
     cleaned, found = redact(template.format(head))
     assert cleaned == template.format(REDACTED)
     assert found == ["url_credentials"]
 
 
-def test_url_with_a_port_and_a_fragment_is_kept():
-    # Same exemption as the query case above, for the fragment: `host:port#…@…`.
-    for text in (
-        "http://localhost:3000#mail=alice@example.com",
-        "https://example.org:8080#redirect=mailto:bob@example.net",
-    ):
-        assert redact(text) == (text, [])
-
-
-def test_url_username_holding_a_hash_is_a_known_limit():
-    # The username keeps the `?#` restriction (issue #84: `?redirect=mailto:alice@…`
-    # would otherwise erase `alice`), so a password behind a username that holds a
-    # `#` is not recognised by this pattern. Documented limit (PR #97).
-    password = "s3" + "cr3t"
-    text = "ftp://us#er:" + password + "@host/x"
-    assert redact(text) == (text, [])
-
-
-def test_url_password_that_reads_as_a_port_and_a_query_is_a_known_limit():
-    # `alice:12#a=b@db` and `host:8080#a=b@…` are the same string shape; the port
-    # exemption of #87 wins (at most five digits, `?`/`#`, then a `key=value`).
-    text = "postgresql://alice:" + "12" + "#" + "a=b@db/nexus"
-    assert redact(text) == (text, [])
+@pytest.mark.parametrize(
+    "head", ["12#a=b", "12?a=b", "123?env=prod", "2024#build=7", "8080#a=b", "12345?k=v&x"]
+)
+@pytest.mark.parametrize(
+    "template",
+    [
+        "postgresql://alice:{}@db/nexus",
+        "mysql://root:{}@localhost:3306/app",
+        "amqp://guest:{}@rabbit:5672/vhost",
+        "redis://:{}@cache.example",
+    ],
+)
+def test_url_password_that_reads_as_a_port_and_a_query_is_masked(template, head):
+    # Antigravity, PR #97 (P1): a real password made of digits, `?`/`#` and `=` looks
+    # like `host:port?key=value`. A secret never stays in the clear, whatever it looks
+    # like (ADR-006, Loïc 2026-10-20): the lookalike is masked.
+    cleaned, found = redact(template.format(head))
+    assert cleaned == template.format(REDACTED)
+    assert found == ["url_credentials"]
 
 
 def test_multi_word_passphrase_is_masked_to_end_of_line():
