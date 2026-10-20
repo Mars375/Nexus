@@ -24,7 +24,7 @@ export const screens = (c: HTMLElement) => c.querySelectorAll('.desk .screen').l
 
 export const setupFloorTest = () => {
   beforeEach(() => { resetFloorRotation(); resetFloorLevel(); vi.stubGlobal('PointerEvent', TestPointerEvent); vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('reduce'), media: q })) })
-  afterEach(() => { vi.unstubAllGlobals() })
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
 }
 
 export const twelve = (over: Record<string, NodeState['status']> = {}) => ['cortex', 'synapse', 'artemis', 'helios', 'n5', 'n6', 'n7', 'n8', 'n9', 'n10', 'n11', 'n12'].map((id) => node(id, over[id] ?? 'online'))
