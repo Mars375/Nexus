@@ -1,9 +1,16 @@
+/*
+ * Server rooms on the upper floors (#36): the plan of a room (racks, aisles, cooling units, cable
+ * tray, floor markings), the « ÉTAGE n » mark and the full layout, reusing floor 1's frame. The rack
+ * count follows the real nodes; only the decor (cooling units, cable tray, floor markings) is static
+ * dressing, never anything that looks like a measurement.
+ */
 import {
   AISLE_DEPTH,
   COOLING,
   END_GAP,
   NORMALS,
   RACK,
+  RACK_MARGIN,
   RACK_PITCH,
   ROOM_MAX_RACKS,
   TRAY,
@@ -53,7 +60,8 @@ export function serverRoom(width: number, depth: number, rackCount: number) {
   const zone = { x: units[0].x, w: units[1].x + COOLING.w - units[0].x }
   const aisles = { hot: { x: zone.x, y: cy - RACK.d / 2 - AISLE_DEPTH, w: zone.w, d: AISLE_DEPTH }, cold: { x: zone.x, y: cy + RACK.d / 2, w: zone.w, d: AISLE_DEPTH } }
   const tray = { x: zone.x, y: cy - TRAY.d / 2, w: zone.w, d: TRAY.d, z: RACK.h + TRAY.lift, h: TRAY.h }
-  const [y0, y1] = [aisles.hot.y - 0.5, aisles.cold.y + aisles.cold.d + 0.5]
+  // Working zone around the row: the markings extend RACK_MARGIN past each aisle, the margin the racks leave before the back edge.
+  const [y0, y1] = [aisles.hot.y - RACK_MARGIN, aisles.cold.y + aisles.cold.d + RACK_MARGIN]
   const markings: [Pt, Pt][] = [[[zone.x, y0], [zone.x + zone.w, y0]], [[zone.x, y1], [zone.x + zone.w, y1]], [[zone.x, y0], [zone.x, y1]], [[zone.x + zone.w, y0], [zone.x + zone.w, y1]]]
   return { room, racks, aisles, units, tray, markings }
 }

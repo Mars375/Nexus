@@ -1,3 +1,8 @@
+/*
+ * Shared harness for the Floor test files split by theme (#91): a snapshot and a node fixture, the
+ * pointer-event stub, and the setup that resets rotation and level between tests. Kept out of the
+ * specs so each file stays about its own subject and the helpers are written once.
+ */
 import { afterEach, beforeEach, vi } from 'vitest'
 import { screen } from '@testing-library/react'
 import type { NodeState, NowSnapshot } from '@/api'
