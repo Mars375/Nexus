@@ -2,7 +2,7 @@
 
 **Version :** 0.2 (refonte : application autonome — ADR-011)
 **Date :** 2026-09-28
-**Mise à jour d'état :** 2026-10-21
+**Mise à jour d'état :** 2026-10-22
 
 ---
 
@@ -48,18 +48,18 @@
 
 **Critère de sortie :** Loïc gère ses tâches dans Nexus au quotidien ; un agent lancé à la main déclare `claimed` → `done` + preuve via l'API ; « retrouver l'état d'une tâche < 30 s ».
 
-### État au 2026-10-21
+### État au 2026-10-22
 
-Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un ensemble cohérent — dernier fusionné : `cd1cb2c` (#105, découpage de `iso.ts`), après #103 (`47b4560`, TaskPane) et #98 (`cfa3b91`, cinq rondes tailnet confirmées sans rebind).
+Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un ensemble cohérent : découpage de `iso.ts` (#105) et de `TaskPane.tsx` (#103), cinq rondes tailnet confirmées sans rebind (#98), origine de la WebView autorisée côté serveur pour Tauri, REST et WebSocket (#112, qui ferme #47), seuil indicatif de taille des fichiers inscrit dans `AGENTS.md` (#108, qui ferme #39).
 
 - **Tableau (Travail) :** thème « Salle orbitale » de bout en bout, focus de la première carte, fin du saut à l'ouverture des dialogues, police des toasts, agent principal affiché sur la carte, tâche terminée non modifiable + preuves jointes + tâche « suite » (PR #50, #51, #70, #71).
 - **Vue Maintenant :** vue complète (PR #29) puis paysage d'étages/baies de 4 nœuds par étage, rotation, finitions, et trois temps de demandes reçues (modèle → réponses → répondre/valider/refuser depuis Maintenant) (PR #33, #35, #37, #52, #53, #54).
 - **Temps réel (WebSocket) :** rafales, premier hello, validation par type, journal des requêtes sans valeur reçue, identifiant d'instance pour une base restaurée, URL de base de l'API côté front, handoff réel testé + refus 403, ticket avant tout flux, casse de l'en-tête Origin (PR #31, #38, #46, #48, #64, #68, #72, #75).
 - **Service / API et sécurité :** durcissement des appels directs (types, longueurs), authentification par jeton d'acteur exigée partout + écran « Nexus verrouillé » + matrice de permissions (ADR-020) (PR #41, #43, #44, #55, #56, #60, #62).
-- **Process agents :** conventions de branches/PR/langue, fusion automatique quand les relectures sont OK (sauf une PR touchant une migration, `DECISIONS.md` ou `AGENTS.md` : fusion par Loïc), routage de modèles (sonnet principal, architect/reviewer en Opus) (PR #34, #45, #73).
-- **Découpage (#39) :** tests de l'API des événements (#89) et de `Floor` (#91) scindés par thème, `TaskPane.tsx` (#103) et `iso.ts` (#105) séparés par sous-modules, sans changer un test ni l'API publique ; services `events`/`tasks` jugés cohésifs, non découpés (décision dans l'issue) ; seuil indicatif 400/600 à inscrire dans `AGENTS.md`.
+- **Process agents :** conventions de branches/PR/langue, fusion automatique quand les relectures sont OK, routage de modèles (sonnet principal, architect/reviewer en Opus) (PR #34, #45, #73, #96, #120).
+- **Découpage (#39) :** tests de l'API des événements (#89) et de `Floor` (#91) scindés par thème, `TaskPane.tsx` (#103) et `iso.ts` (#105) séparés par sous-modules, sans changer un test ni l'API publique ; services `events`/`tasks` jugés cohésifs, non découpés (décision dans l'issue) ; seuil indicatif 400/600 inscrit dans `AGENTS.md` (#108).
 
-**Reste pour la sortie de Phase 1 :** #39 (seuil indicatif à inscrire dans `AGENTS.md`, PR à valider par Loïc) ; #86 point 1 couvert par #98, point 2 conservé tel quel (dérogation documentée, ADR-021), point 3 (`SO_REUSEADDR` sous Windows, vérification opérationnelle sur Helios) encore ouvert ; #15, #17, #57, #58 et #59 sont faits (PR #80, #85, #74, #88 et #76) ; #47 (Tauri) attend le go de Loïc.
+**Reste pour la sortie de Phase 1 :** #95 (suivi P3 partiellement traité : #121 et #122 fusionnées, restent les points scanner de #87 et les points `change_status` et doc 422 de #85) ; #101 (faux positifs du scanner de secrets sur des identifiants générés, plus quelques faiblesses de détection, `ready-for-human`) ; #104 et #106 (fuites du scanner de secrets) et #107 (ticket WebSocket qui survit à la suppression de son jeton), `ready-for-agent` ; sont faits : #15, #17, #57, #58 et #59 (PR #80, #85, #74, #88 et #76), #39 (seuil de taille dans `AGENTS.md`, PR #108), #47 (origine de la WebView, PR #112) et #86 (P3 de #74 : point 1 couvert par #98, point 2 conservé sous dérogation ADR-021, point 3 vérifié sur Helios).
 
 ## Phase 2 — Exécution
 
@@ -136,7 +136,7 @@ Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un 
 
 ## Prochaine action immédiate
 
-**Phase 1 :** clore #39 (seuil `AGENTS.md`, PR à valider par Loïc) et #86 (vérification `SO_REUSEADDR` sur Helios) ; #47 (Tauri) attend le go de Loïc. Les PR ouvertes se fusionnent quand leurs relectures sont complètes (rappel : une PR touchant une migration, `DECISIONS.md` ou `AGENTS.md` se fusionne par Loïc).
+**Phase 1 :** suivre les corrections du scanner de secrets (#101, #104, #106) et du ticket WebSocket #107 ; poursuivre le suivi P3 de #95 (points scanner de #87, `change_status` et doc 422 de #85). Les PR ouvertes se fusionnent quand leurs relectures sont complètes.
 
 ---
 
