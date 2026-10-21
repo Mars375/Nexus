@@ -1,0 +1,206 @@
+"""Quotes and apostrophes inside a credential value (issue #106).
+
+Every label and value is assembled at runtime: a credential-shaped literal in
+this file would be rewritten to `[REDACTED]` by the pre-commit hook (or flagged
+by gitleaks), which silently turns an assertion into a no-op.
+"""
+
+import random
+import time
+
+import pytest
+
+from nexus.secrets import REDACTED, redact
+
+PW = "pass" + "word"
+MDP = "mot de " + "passe"
+TK = "tok" + "en"
+SEC = "sec" + "ret"
+AK = "api" + "_key"
+VALUE = "LesChats" + "2026"
+
+
+def assert_masked(text: str, expected: str) -> None:
+    """One credential is masked whole, and a second pass changes nothing."""
+    cleaned, found = redact(text)
+
+    assert cleaned == expected
+    assert found == ["credential"]
+    assert redact(cleaned) == (cleaned, [])
+
+
+# 1. An apostrophe inside a bare value does not end it.
+def test_apostrophe_inside_a_bare_value_is_masked_whole():
+    assert_masked(MDP + " : j'aime" + VALUE + " tous", MDP + " : " + REDACTED)
+
+
+# 2. The same with an accent after the apostrophe.
+def test_accented_apostrophe_value_is_masked_whole():
+    assert_masked(PW + ": l'étéZq7 brûlant", PW + ": " + REDACTED)
+
+
+# 3. An escaped quote inside a double-quoted JSON value.
+def test_escaped_double_quote_inside_a_json_value_is_masked_whole():
+    text = '{"' + PW + '": "pa\\"ss' + "Zq7Wx" + '"}'
+
+    assert_masked(text, '{"' + PW + '": "' + REDACTED + '"}')
+
+
+# 4. An escaped apostrophe inside a single-quoted value.
+def test_escaped_single_quote_inside_a_quoted_value_is_masked_whole():
+    text = "{'" + TK + "': 'it\\'s" + "Zq7'}"
+
+    assert_masked(text, "{'" + TK + "': '" + REDACTED + "'}")
+
+
+# 5. A doubled backslash before the closing quote (already green on master).
+def test_doubled_backslash_before_the_closing_quote_is_masked_whole():
+    text = '{"' + SEC + '": "Zq7' + "\\\\" + '", "note": "ok"}'
+
+    assert_masked(text, '{"' + SEC + '": "' + REDACTED + '", "note": "ok"}')
+
+
+# 6. JSON nested inside JSON: the inner value stays escaped.
+def test_json_inside_json_is_masked_whole():
+    text = '{"body": "{\\"' + PW + '\\": \\"hunter2Zq\\"}"}'
+
+    assert_masked(text, '{"body": "{\\"' + PW + '\\": ' + REDACTED + '"}"}')
+
+
+# 7. A quoted value that is never closed stops at the end of its line.
+@pytest.mark.parametrize("quote", ['"', "'"])
+def test_unterminated_quoted_value_is_closed_at_end_of_line(quote):
+    text = "DB_" + PW.upper() + "=" + quote + "hunZq7Wx"
+
+    assert_masked(text, "DB_" + PW.upper() + "=" + quote + REDACTED + quote)
+
+
+# 8. A multi-word value between quotes, never closed, is masked whole.
+def test_multi_word_unterminated_quoted_value_is_masked_whole():
+    assert_masked(AK + ': "abc def ' + "Zq7 ghi", AK + ': "' + REDACTED + '"')
+
+
+# 9. A value that opens a quote on its line, followed by another assignment.
+def test_unterminated_value_does_not_swallow_the_next_assignment():
+    text = "DB_" + PW.upper() + '="abcZq7\nAPI_KEY="Zq9def"'
+
+    assert_masked(
+        text,
+        "DB_" + PW.upper() + '="' + REDACTED + '"\nAPI_KEY="' + REDACTED + '"',
+    )
+
+
+# 10. A well-closed value spanning two lines stays masked whole (non-regression).
+def test_well_closed_quoted_value_spanning_two_lines_is_masked_whole():
+    text = PW + ': "Zq7 multi\nligneZq8"'
+
+    assert_masked(text, PW + ': "' + REDACTED + '"')
+
+
+# 11. Shell-style escaped apostrophe glued after the closing quote.
+def test_shell_escaped_apostrophe_value_is_masked_whole():
+    text = "export DB_" + PW.upper() + "='j'\\''aime" + "Zq7'"
+
+    assert_masked(text, "export DB_" + PW.upper() + "='" + REDACTED + "'")
+
+
+# 12. Plain apostrophe glued after the closing quote.
+def test_apostrophe_glued_after_the_closing_quote_is_masked_whole():
+    text = MDP + " : 'j'aime les chats" + "Zq7'"
+
+    assert_masked(text, MDP + " : '" + REDACTED + "'")
+
+
+# 13. Quotes inside a value, quoted or bare, in each combination.
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (PW + '="pa"ss' + "Zq7", PW + '="' + REDACTED + '"'),
+        (PW + ": 'it''s" + "Zq7'", PW + ": '" + REDACTED + "'"),
+        (TK + ": ''" + "Zq7glued", TK + ": '" + REDACTED + "'"),
+        (PW + '="Zq7"x\'', PW + '="' + REDACTED + '"'),
+    ],
+)
+def test_quotes_inside_a_value_are_masked_whole(text, expected):
+    assert_masked(text, expected)
+
+
+# 14. Prose around a quoted value keeps its closing quote and the rest of the line.
+def test_closing_quote_and_the_prose_after_it_stay_in_place():
+    text = 'Il a dit "' + PW + ': voir Bitwarden" dans le canal.'
+
+    assert_masked(text, 'Il a dit "' + PW + ': ' + REDACTED + '" dans le canal.')
+
+
+# 15. Prose without a separator is left untouched.
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Le " + MDP + " d'Alice expire demain.",
+        "Ton " + MDP + " n'est pas assez long.",
+        "L'option --" + PW + " n'est plus acceptée.",
+        'Voir "' + MDP + '" dans le glossaire.',
+    ],
+)
+def test_prose_without_a_separator_is_untouched(text):
+    assert redact(text) == (text, [])
+
+
+# 16. The mask is idempotent on random combinations of hostile pieces.
+def test_masking_is_idempotent_on_random_input():
+    pieces = [
+        PW + "=",
+        MDP + " : ",
+        '"',
+        "'",
+        "\\",
+        " ",
+        "\n",
+        "\r\n",
+        "j'aime",
+        "[",
+        "]",
+        ",",
+        ";",
+        "}",
+        REDACTED,
+        "é",
+        "`",
+        ")",
+    ]
+    rng = random.Random(106)
+    for _ in range(2000):
+        text = "".join(rng.choice(pieces) for _ in range(rng.randint(1, 12)))
+        cleaned, _found = redact(text)
+        assert redact(cleaned) == (cleaned, [])
+
+
+# 17. Hostile 100 KB inputs stay linear. Short ids: pytest exports the node id
+# in `PYTEST_CURRENT_TEST`, which Windows caps at 32767 characters.
+@pytest.mark.parametrize(
+    "text",
+    [
+        PW + '="' + '\\"' * (100_000 // 2),
+        PW + '="' + "\\" * 100_000,
+        PW + ": " + "a'" * (100_000 // 2),
+        PW + '="' + "\n" * 100_000,
+        PW + '="' + ("\n" + PW) * (100_000 // (len(PW) + 1)),
+        (PW + '="a ') * (100_000 // (len(PW) + 4)),
+        MDP + " : " + ("j'aime " * (100_000 // 7)),
+    ],
+    ids=[
+        "escaped_quotes",
+        "backslashes",
+        "apostrophes",
+        "newlines",
+        "labels_per_line",
+        "repeated_assignment",
+        "passphrase_words",
+    ],
+)
+def test_hostile_100k_inputs_stay_linear(text):
+    started = time.perf_counter()
+    redact(text)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 1.0

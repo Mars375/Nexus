@@ -105,32 +105,40 @@ _LABEL = (
 # Clé JSON qui nomme un identifiant : {"password": "…"} — sa valeur est un secret.
 _CREDENTIAL_KEY = re.compile(rf"(?i){_LABEL}")
 
+# Characters that end a bare value: whitespace, comma, semicolon, closing brace.
+_STOP = r"\t \r\n,;}"
+# One character of a bare value after its first: a quote belongs to the value only
+# when the value goes on after it (j'aime, pa"ss); a quote that ends the run stays
+# outside, so `"password: x" dans le canal` keeps its closing quote and its prose.
+_RUN_CHAR = rf"(?:[^{_STOP}\"']|[\"'](?=[^{_STOP}]))"
+# A further space-separated word of a passphrase, unless it opens another labelled value.
+_NEXT_WORD = rf"[ \t]+(?!(?:{_LABEL})\s*[=:])[^{_STOP}]{_RUN_CHAR}*"
+# Same, after a quoted value whose closing quote did not end it: up to the next stop.
+_GLUED_WORD = rf"[ \t]+(?!(?:{_LABEL})\s*[=:])[^{_STOP}]+"
+# A line that opens another labelled value: a quoted value never runs across it.
+_NEW_ASSIGNMENT_LINE = rf"[ \t]*(?:export[ \t]+)?[\"']?(?:{_LABEL})\\?[\"']?[ \t]*[:=]"
+
+
+def _quoted(q: str) -> str:
+    """A value between quotes `q`, backslash escapes honoured. It spans lines up to
+    its closing quote unless a line in between opens another labelled value; with
+    no closing quote it runs to the end of its line (issue #106)."""
+    return (
+        rf"{q}((?:[^{q}\\\r\n]|\\[\s\S]|[\r\n](?!{_NEW_ASSIGNMENT_LINE}))*(?={q})"
+        rf"|(?:[^{q}\\\r\n]|\\[^\r\n])*\\?(?=[\r\n]|\Z)){q}?"
+    )
+
+
+_DQ = _quoted('"')
+_SQ = _quoted("'")
+
 _ASSIGNMENT = re.compile(
     rf"(?i)(?<![\w.-])({_LABEL})"
-    r"([\"']?\s*[:=]\s*)"
-    # Bare value: one run, or several space-separated runs, up to the end of
-    # the line — a multi-word passphrase (« mot de passe : correct horse battery
-    # staple ») is masked whole (issue #15). The first run starts at a character
-    # that is not a space, comma, semicolon, brace, quote or line break, and
-    # bracket fragments glued to the run stay inside the value: a value
-    # starting at `[` goes through the bracket shell FIRST (alternation order), a
-    # value that starts at an existing [REDACTED] therefore never reaches the
-    # naked-run chain, so the prose after the shell stays prose and the shell
-    # value comes back unchanged through mask_value's short circuit. A word
-    # followed by `=` or `:`, IF it is one of the recognised labels, ends the
-    # sweep instead of joining it (the label-aware lookahead pulls it back
-    # out): the resumed scan then masks it under its own label, the tail
-    # [REDACTED] is never doubled, and a passphrase word that merely carries
-    # an `=` (« battery=staple ») stays inside the value. A wrapped value
-    # (`password=[hunter2]`) is captured with its whole shell, spaces
-    # included, and the code glued right after the shell
-    # (`password=[hunter2]abc123`) joins the same value; a shell that is
-    # never closed is captured up to the end of the line — nothing is left
-    # in the clear. An auth scheme (Basic xyz) is part of the value.
-    r"(?:\"([^\"]*)\"|'([^']*)'"
+    r"(\\?[\"']?\s*[:=]\s*)"
+    rf"(?:(?:{_DQ}|{_SQ})"
+    rf"((?=[\w\\\"'])[^{_STOP}]+(?:{_GLUED_WORD})*)?"
     r"|((?:(?:basic|bearer|digest|negotiate|ntlm)\s+)?"
-    rf"(?:\[[^\]\r\n]*\]?[^\t \r\n,;}}\"']*|[^\t \r\n,;}}\"']+(?:[ \t]+(?!(?:{_LABEL})\s*[=:])"
-    r"[^\t \r\n,;}}\"']+)*)))"
+    rf"(?:\[[^\]\r\n]*\]?{_RUN_CHAR}*|[^{_STOP}\"']{_RUN_CHAR}*(?:{_NEXT_WORD})*)))"
 )
 
 # Long opaque runs: random-looking tokens that matched no format above (third-party
@@ -528,9 +536,10 @@ def redact(text: str) -> tuple[str, list[str]]:
             found.append(kind)
 
     def mask_value(match: re.Match[str]) -> str:
-        label, separator, double, single, bare = match.groups()
+        label, separator, double, single, glued, bare = match.groups()
         value = next(v for v in (double, single, bare) if v is not None)
-        if not value or value == REDACTED:
+        # Text glued after the closing quote means the quote did not end the value.
+        if not glued and (not value or value == REDACTED):
             return match.group(0)
         found.append("credential")
         quote = '"' if double is not None else "'" if single is not None else ""
