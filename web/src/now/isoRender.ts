@@ -1,3 +1,7 @@
+/*
+ * SVG primitives for the Now floor: boxes, rack LEDs, draw order and angle
+ * helpers, independent of the plan layout.
+ */
 import {
   DESK,
   NORMALS,

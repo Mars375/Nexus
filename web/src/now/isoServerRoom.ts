@@ -1,3 +1,7 @@
+/*
+ * Server-room floors above the office: rack row, cold and hot aisles,
+ * cooling units, cable tray and floor markings, on the office footprint.
+ */
 import {
   AISLE_DEPTH,
   COOLING,

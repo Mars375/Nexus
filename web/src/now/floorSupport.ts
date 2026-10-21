@@ -1,3 +1,7 @@
+/*
+ * Shared fixtures and DOM helpers for the Now floor tests: keeps each test
+ * file focused on behavior instead of repeating snapshot and pointer setup.
+ */
 import { afterEach, beforeEach, vi } from 'vitest'
 import { screen } from '@testing-library/react'
 import type { NodeState, NowSnapshot } from '@/api'

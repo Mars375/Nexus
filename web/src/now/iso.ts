@@ -1,3 +1,7 @@
+/*
+ * Public assembly of the Now floor: composes the office plan from isoCore,
+ * the upper floors from isoServerRoom and the SVG primitives from isoRender.
+ */
 import {
   A,
   B,
