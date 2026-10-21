@@ -11,6 +11,7 @@ from secrets import token_hex  # not `nexus.secrets`
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
@@ -133,6 +134,19 @@ def create_app(
     app = FastAPI(title="Nexus", version=version("nexus"), lifespan=lifespan)
     # Journal d'accès sans valeur reçue (ADR-006) : gabarit de route, jamais le chemin réel.
     app.add_middleware(AccessLogMiddleware)
+    # CORS for the REST API (#47): the exact NEXUS_ALLOWED_ORIGINS list, never `*`;
+    # no credentials (the token travels in Authorization). Added before the Host check
+    # so that HostCheck stays outermost: a foreign Host is refused before a preflight
+    # can be answered (ADR-020, D6).
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=tuple(sorted(settings.allowed_origins)),
+        allow_methods=("GET", "POST", "PATCH", "PUT", "DELETE"),
+        allow_headers=("authorization", "content-type", "x-nexus-actor"),
+        allow_credentials=False,
+        allow_private_network=True,
+        max_age=600,
+    )
     # Added after the log so that it is outermost: a foreign Host (DNS rebinding) reaches nothing,
     # neither a route nor the database (ADR-020, D6). The log then does not see its refusals.
     # The IP addresses of NEXUS_HOST are admitted as `Host` without being declared twice

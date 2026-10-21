@@ -136,7 +136,8 @@ def changes_since(session: Session, cursor: Cursor) -> tuple[list[dict], Cursor]
 
 
 def origin_allowed(origin: str | None, extra: frozenset[str]) -> bool:
-    """Un WebSocket échappe à CORS : seule une origine locale (ou déclarée) peut écouter."""
+    """Un WebSocket échappe à CORS : seule une origine locale (ou déclarée dans
+    NEXUS_ALLOWED_ORIGINS, aussi utilisée par le CORS du REST) peut écouter."""
     if origin is None:
         return True  # non-browser client: it still needs a ticket
     if origin in extra:

@@ -84,7 +84,8 @@ class Settings:
     port: int = 8765
     tailscale_bin: str = "tailscale"
     nodes_refresh_seconds: float = 60.0
-    # Origines admises en plus de la boucle locale pour le WebSocket (ex. Tauri plus tard).
+    # Origines admises pour le CORS du REST et la poignée de main du WebSocket
+    # (ex. l'origine de la WebView Tauri).
     allowed_origins: frozenset[str] = frozenset()
     # Noms d'hôte admis en plus de la boucle locale dans l'en-tête Host (ADR-020, D6).
     allowed_hosts: frozenset[str] = frozenset()
