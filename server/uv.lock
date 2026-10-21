@@ -247,6 +247,7 @@ dependencies = [
     { name = "alembic" },
     { name = "fastapi" },
     { name = "sqlalchemy" },
+    { name = "starlette" },
     { name = "tzdata" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -263,6 +264,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.20.0" },
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "sqlalchemy", specifier = ">=2.1.1" },
+    { name = "starlette", specifier = ">=0.51.0" },
     { name = "tzdata", specifier = ">=2026.4" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.54.0" },
 ]
