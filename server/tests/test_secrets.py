@@ -1114,6 +1114,84 @@ def test_identifier_with_digit_bearing_word_tails_stays_untouched(identifiant):
     assert redact(text) == (text, [])
 
 
+@pytest.mark.parametrize(
+    "identifiant",
+    [
+        "evt_20261018143022_a1b2c3d4",
+        "run_1729260000123_4f3a9b2c",
+        "evt_1729260000_a1b2c3d4e5f6",
+        "job_20261018_4f3a9b2c1d7e",
+        "build_20261018123456_ab12cd34",
+        "helios_20261018143022_9f8e7d6c",
+        "pr87_c532761947a5_f745827e",
+        "evt_20260928_helios_0007",
+        "evt_20261018143022_A1B2C3D4",
+        "run-1729260000123-4f3a9b2c",
+        "evt_1729260000123_4f3a9b2c1d7e8f90",
+        "span_4f3a9b2c1d7e8f90_a1b2c3d4",
+        "ci_20261018_c5327619_f745827e",
+        "run_20261018143022_k3x9m2p7q1",
+        "evt_k3x9m2p7q1zt_w8v4n6b2c5yr",
+        "run_20261018143022_A1B2C3D4E5F6",
+        "job_20261018T143022_4f3a9b2c",
+    ],
+)
+def test_generated_identifiers_stay_untouched(identifiant):
+    # Issue #93: `prefix_timestamp_hex` identifiers (event ids, run references)
+    # drawn from decimal, hexadecimal or base36 alphabets carry no mixed case —
+    # the base62 signature of a vendor token tail. They were masked, and the
+    # API refused the event with a 409.
+    text = f"réf {identifiant} notée"
+    assert redact(text) == (text, [])
+
+
+@pytest.mark.parametrize(
+    "chaine",
+    [
+        "tok-" + "Y7qP2rTx-N9vH4mKu-C6wJ8sZa-R5dE3fGh",
+        "key_" + "A7x9QzW2Ry5N" + "_t8Kv4Jm6Pa1C",
+        # A real run behind a timestamp prefix stays masked by the flat 24+ rule.
+        "evt_20261018143022_" + "A7x9QzW2Ry5Nt8Kv4Jm6Pa1C",
+        "key_" + "4f3a9b2c1d7e8f90" + "a1b2c3d4e5f60718",
+    ],
+)
+def test_prefixed_secrets_stay_masked_beside_generated_identifiers(chaine):
+    cleaned, found = redact(f"cle {chaine} ici")
+    assert cleaned == f"cle {REDACTED} ici"
+    assert found == ["high_entropy"]
+
+
+@pytest.mark.parametrize(
+    "chaine",
+    [
+        # Mailgun-, Shopify- and Postman-shaped keys: a long single-case hex tail whose
+        # entropy sits under the flat-run floor (3.3-3.5 bits) was masked by the
+        # short-prefix branch on master; reviewer finding on 5df9637 (P1).
+        "key-" + "8c291f2fc8b5f208" + "99203fad89d9b0ef",
+        "shpat_" + "9a50f8a8e9bb8bdb" + "5eba456bf92d5d98",
+        "PMAK-" + "fc2e2894e7af7c49" + "c3e30acb-" + "01ef4faa5f9dc25f" + "d5da5323091acff3ce",
+    ],
+)
+def test_long_hexadecimal_tail_behind_a_short_prefix_stays_masked(chaine):
+    cleaned, found = redact(f"cle {chaine} ici")
+    assert cleaned == f"cle {REDACTED} ici"
+    assert found == ["high_entropy"]
+
+
+@pytest.mark.parametrize(
+    "chaine",
+    ["key_4f3a9b2c_1d7e8f90_a1b2c3d4_e5f60718", "key_k3x9m2p7q1zt_w8v4n6b2c5yr"],
+)
+def test_single_case_short_prefixed_segments_stay_untouched_as_assumed(chaine):
+    # Price of the #93 fix, assumed: a short-prefixed value whose segments are all
+    # single-case (hex, base36) and each under 24 characters is indistinguishable
+    # from a generated identifier (vendors mostly emit base62; a few emit short hex
+    # keys, such as `NRJS-<hex19>`). A 24+ segment stays masked, see above. Pinned
+    # so a later widening has to argue with this test.
+    text = f"cle {chaine} ici"
+    assert redact(text) == (text, [])
+
+
 def test_title_case_slug_with_short_word_stays_untouched():
     # A candidate with one short segment is only opaque when a flat 24+ run
     # hides behind it; title-case words (3.545 bits joined) have none.

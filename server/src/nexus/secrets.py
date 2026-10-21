@@ -250,18 +250,30 @@ def _opaque_run(token: str) -> bool:
     if parts and min(map(len, parts)) >= 8:
         return True
     # A short head segment is tolerated when EVERY following segment is full
-    # length (≥ 8), carries a digit, AND does not itself read as a word: «
-    # tok_Y7qP2rTx_… » is opaque (issue #84), while a snake_case identifier
-    # whose tail is plain words with a digit appended —
-    # v1_userprofile2_accountsettings3, db_connectionpool1_maxconnections2 —
+    # length (≥ 8), carries a digit, mixes upper- and lowercase letters, AND
+    # does not itself read as a word: « tok_Y7qP2rTx_… » is opaque (issue #84),
+    # while a snake_case identifier whose tail is plain words with a digit
+    # appended — v1_userprofile2_accountsettings3, db_connectionpool1_maxconnections2 —
     # stays an identifier (Antigravity review on d2361cc: those digit-bearing
     # word tails passed on length alone and masked five identifiers, a
     # regression against master; a digit-free tail such as `database` was
     # already ruled out on 6d78a6c). A tail of single lowercase letters
     # between digits and capitals keeps scoring 0 and passes.
+    # Mixed case is the base62 signature of a vendor tail (issue #93): generated
+    # identifiers draw theirs from single-case alphabets — decimal timestamps,
+    # hex digests, base36 — and `evt_20261018143022_a1b2c3d4` was refused with a
+    # 409. A segment of 24+ characters is exempt: a long hex tail is the shape of
+    # real vendor keys (`key-<hex32>`, `shpat_<hex32>`) and no generated
+    # identifier of this family carries one next to a decimal timestamp (that
+    # segment still fails the case test). Assumed price: a short-prefixed value
+    # made only of single-case segments under 24 characters is no longer masked.
     if len(parts) >= 2 and len(parts[0]) < 8 and all(
         len(part) >= 8
         and any(ch.isdigit() for ch in part)
+        and (
+            len(part) >= 24
+            or (any(ch.isupper() for ch in part) and any(ch.islower() for ch in part))
+        )
         and _lower_run_share(part) < 0.6
         for part in parts[1:]
     ):
