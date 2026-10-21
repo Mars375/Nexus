@@ -228,14 +228,14 @@ test('▲ puis ▼ presque aussitôt : la couche de l\'étage 1 reste le même n
   // baseline is captured synchronously here instead of read back from samples[0]
   // (one less paint-vs-click race in the test itself).
   const baseline = await page.evaluate(() => {
-    type Probe = { samples: { same: boolean; opacity: number; role: string | null }[]; run: boolean }
+    type Probe = { samples: { same: boolean; opacity: number; role: string | null; animation: boolean }[]; run: boolean }
     const w = window as unknown as { __probe: Probe; __layer: Element }
     w.__layer = document.querySelector('.level[data-level="1"]')!
     w.__layer.setAttribute('data-probe', '1')
     w.__probe = { samples: [], run: true }
     const tick = () => {
       const el = document.querySelector('.level[data-level="1"]')
-      if (el) w.__probe.samples.push({ same: el === w.__layer && w.__layer.isConnected, opacity: Number(getComputedStyle(el).opacity), role: el.getAttribute('data-role') })
+      if (el) w.__probe.samples.push({ same: el === w.__layer && w.__layer.isConnected, opacity: Number(getComputedStyle(el).opacity), role: el.getAttribute('data-role'), animation: el.getAnimations().some((a) => a instanceof CSSAnimation) })
       if (w.__probe.run) requestAnimationFrame(tick)
     }
     requestAnimationFrame(tick)
@@ -247,22 +247,26 @@ test('▲ puis ▼ presque aussitôt : la couche de l\'étage 1 reste le même n
   await page.getByRole('button', { name: /^Descendre d'un étage/ }).click()
   await expect(page.locator('[data-stage]')).toHaveAttribute('data-floor', '1')
   await page.waitForTimeout(600)
-  const samples = await page.evaluate(() => { const w = window as unknown as { __probe: { samples: { same: boolean; opacity: number; role: string | null }[]; run: boolean } }; w.__probe.run = false; return w.__probe.samples })
+  const samples = await page.evaluate(() => { const w = window as unknown as { __probe: { samples: { same: boolean; opacity: number; role: string | null; animation: boolean }[]; run: boolean } }; w.__probe.run = false; return w.__probe.samples })
   expect(samples.length).toBeGreaterThan(20)
   expect(samples.every((q) => q.same), 'le nœud de l\'étage 1 a été remplacé').toBe(true)
   expect(baseline, 'avant le mouvement, la couche est opaque').toBe(1)
-  // La profondeur du départ dépend du moment exact où le clic retour est tombé (du timing, pas
-  // du design : le seuil « jamais sous 0,3 » de la première version a flotté, et le « jamais 0 »
-  // tombait dès que le départ allait au bout — issue #59). Ce qui tient à toute vitesse : la
-  // couche reste le même nœud, la reprise ne replonge pas, et elle finit opaque.
-  // La comparaison des reprises démarre après le dernier échantillon « leaving » : au
-  // basculement, la transition reprend depuis la valeur en cours (le creux de fin de départ)
-  // et l'écart avec le premier échantillon lu dépend de la latence du clic ; l'invariant
-  // « la couche ne repart pas de zéro » reste garanti à toute vitesse par le même nœud.
+  // How deep the leaving fade gets depends on when the return click lands (timing, not design: the
+  // "never under 0.3" threshold of the first version drifted, and "never 0" failed as soon as the
+  // leaving ran to the end — issue #59). What holds at any speed: the layer stays the same node, the
+  // reprise never drops, and it ends opaque.
+  // The reprise is read from the first sample after the last "leaving" one. At the switch the
+  // transition reverses from the value it had reached; with `ease` over 350 ms, one frame (16.7 ms)
+  // lowers the opacity by ~0.11 at most, well inside the 0.15 tolerance below. That tolerance cannot
+  // catch a restart from 0 once the leaving already fell under 0.15, so each sample also records
+  // whether a CSS animation runs on the layer: none may during the reprise, because being the same
+  // node does not forbid an animation from replaying its entry from 0 (issue #109).
   const dernierDepart = samples.findLastIndex((q) => q.role === 'leaving')
   expect(dernierDepart, 'l\'étage 1 est passé par l\'état leaving').toBeGreaterThanOrEqual(0)
   const reprise = samples.slice(dernierDepart + 1)
   expect(reprise.length, 'la reprise a été vue').toBeGreaterThanOrEqual(2)
+  expect(reprise.every((q) => !q.animation), 'la reprise rejoue une animation CSS sur le même nœud').toBe(true)
+  expect(reprise[0].opacity, 'la reprise repart de zéro').toBeGreaterThanOrEqual(samples[dernierDepart].opacity - 0.15)
   for (let i = 1; i < reprise.length; i++) {
     expect(reprise[i].opacity, 'la reprise replonge au lieu de remonter').toBeGreaterThanOrEqual(reprise[i - 1].opacity)
   }
