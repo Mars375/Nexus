@@ -72,9 +72,15 @@ def lookup(session: Session, token: str) -> str | None:
     return row.actor if row is not None else None
 
 
-def is_live(session: Session, token_id: int) -> bool:
-    """Whether the token row still exists and is not revoked; an absent row counts as revoked."""
-    row = session.get(ActorToken, token_id)
+def is_live(session: Session, token_hash: str) -> bool:
+    """Whether the token row still exists and is not revoked; an absent row counts as revoked.
+
+    The row is looked up by digest, never by id: SQLite hands a freed id to the next inserted
+    row, so a reused id would revive a deleted token (#107).
+    """
+    row = session.scalars(
+        select(ActorToken).where(ActorToken.token_hash == token_hash)
+    ).first()
     return row is not None and row.revoked_at is None
 
 

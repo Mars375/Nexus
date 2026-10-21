@@ -40,6 +40,8 @@ class TokenIdentity(NamedTuple):
 
     token_id: int
     actor: str
+    # Binds a WebSocket ticket to this token; never logged.
+    token_hash: str
 
 
 def authenticated_token(
@@ -66,7 +68,7 @@ def authenticated_token(
     tokens.touch_last_used(
         request.app.state.touch_sessionmaker, row.id, last_used_at=row.last_used_at
     )
-    return TokenIdentity(row.id, row.actor)
+    return TokenIdentity(row.id, row.actor, row.token_hash)
 
 
 def authenticated_actor(identity: Annotated[TokenIdentity, Depends(authenticated_token)]) -> str:

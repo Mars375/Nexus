@@ -15,7 +15,7 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from nexus.auth import tokens
 
@@ -36,13 +36,14 @@ def is_well_formed(value: object) -> bool:
 class Grant:
     """What a consumed ticket stands for: the token that asked for it and that token's actor."""
 
-    token_id: int
+    # The digest identifies the token across id reuse; kept out of `repr` (never logged).
+    token_hash: str = field(repr=False)
     actor: str
 
 
 @dataclass(frozen=True)
 class _Entry:
-    token_id: int
+    token_hash: str
     actor: str
     monotonic_at: float
     wall_at: float
@@ -71,8 +72,8 @@ class TicketStore:
         self._wall = wall
         self._lock = threading.Lock()
         self._entries: dict[str, _Entry] = {}
-        # Digests per token, in issue order (oldest first).
-        self._by_token: dict[int, OrderedDict[str, None]] = {}
+        # Ticket digests per token digest, in issue order (oldest first).
+        self._by_token: dict[str, OrderedDict[str, None]] = {}
 
     def _expired(self, entry: _Entry, monotonic: float, wall: float) -> bool:
         return (
@@ -85,18 +86,18 @@ class TicketStore:
         entry = self._entries.pop(key, None)
         if entry is None:
             return
-        bucket = self._by_token.get(entry.token_id)
+        bucket = self._by_token.get(entry.token_hash)
         if bucket is not None:
             bucket.pop(key, None)
             if not bucket:
-                del self._by_token[entry.token_id]
+                del self._by_token[entry.token_hash]
 
     def _purge(self, monotonic: float, wall: float) -> None:
         """Drop every expired entry (caller holds the lock)."""
         for key in [k for k, e in self._entries.items() if self._expired(e, monotonic, wall)]:
             self._forget(key)
 
-    def issue(self, token_id: int, actor: str) -> str:
+    def issue(self, token_hash: str, actor: str) -> str:
         """A new ticket for this token; the oldest one of the token goes beyond 16 pending."""
         body = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode("ascii")
         ticket = PREFIX + body
@@ -104,11 +105,11 @@ class TicketStore:
         with self._lock:
             monotonic, wall = self._monotonic(), self._wall()
             self._purge(monotonic, wall)
-            bucket = self._by_token.setdefault(token_id, OrderedDict())
+            bucket = self._by_token.setdefault(token_hash, OrderedDict())
             while len(bucket) >= MAX_PENDING_PER_TOKEN:
                 self._forget(next(iter(bucket)))
-                bucket = self._by_token.setdefault(token_id, OrderedDict())
-            self._entries[key] = _Entry(token_id, actor, monotonic, wall)
+                bucket = self._by_token.setdefault(token_hash, OrderedDict())
+            self._entries[key] = _Entry(token_hash, actor, monotonic, wall)
             bucket[key] = None
         return ticket
 
@@ -128,10 +129,10 @@ class TicketStore:
             self._purge(monotonic, wall)
         if entry is None or self._expired(entry, monotonic, wall):
             return None
-        return Grant(entry.token_id, entry.actor)
+        return Grant(entry.token_hash, entry.actor)
 
-    def pending(self, token_id: int) -> int:
+    def pending(self, token_hash: str) -> int:
         """Number of tickets waiting for this token (test accessor; expired ones not counted)."""
         with self._lock:
             self._purge(self._monotonic(), self._wall())
-            return len(self._by_token.get(token_id, ()))
+            return len(self._by_token.get(token_hash, ()))

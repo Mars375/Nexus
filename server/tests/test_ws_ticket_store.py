@@ -244,3 +244,10 @@ def test_concurrent_consumes_never_grant_twice(fast_switching):
     tickets_granted = [ticket for ticket, _ in granted]
     assert len(tickets_granted) == len(set(tickets_granted))
     assert store.pending(1) <= 16
+
+
+def test_a_grant_never_shows_the_token_digest():
+    store = TicketStore()
+    digest = "d" * 64
+    grant = store.consume(store.issue(digest, "loic"))
+    assert grant.token_hash == digest and digest not in repr(grant)
