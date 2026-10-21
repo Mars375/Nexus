@@ -38,12 +38,18 @@ _FULL: list[tuple[str, re.Pattern[str]]] = [
 # the masked URL keeps its exact shape, including the colon of the empty username.
 # A URL with a username and no password (git clone https://git@host/org/tool) is not
 # a secret, and a host:port never matches (the password must end at an @).
-# A `?` or `#` never belongs to the userinfo at all (issue #84: without the
-# restriction, `?redirect=mailto:alice@…` made the query's tail a « user » and
-# erased `alice`). The password part carries the same restriction — Antigravity
-# review on 6d78a6c: `host:port?q=…@…` read the port and the query head as a
-# password and erased them, while an unencoded `?`/`#` always ends the userinfo.
-_URL_CREDENTIALS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://(?:[^\s:/@?#]+)?:)([^\s@/?#]+)(@)")
+# A `?` or `#` never belongs to the *username* (issue #84: without the restriction,
+# `?redirect=mailto:alice@…` made the query's tail a « user » and erased `alice`).
+# The password may hold them — a connection URL with an unencoded `#` is common
+# (issue #92) — so it runs up to the first `@`, never past a `/` or whitespace (a `/` inside a
+# password is a known limit, tracked in #95). Dans le doute, on
+# masque (Loïc, 2026-10-20; ADR-006: too much rather than too little): there is no
+# « port + query » exemption, because `postgresql://alice:12#a=b@db` (a password) and
+# `http://localhost:8080#a=b@example.com` (no credentials) are the same string shape
+# and no rule tells them apart without leaving a password in the clear (Antigravity,
+# PR #97). The accepted false positive: such a URL without credentials loses its
+# port and query head (`http://localhost:[REDACTED]@example.com`).
+_URL_CREDENTIALS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://(?:[^\s:/@?#]+)?:)([^\s@/]+)(@)")
 
 # En-tête HTTP d'identifiant écrit tel quel (« Authorization: Digest username="…", … »,
 # « Cookie: a=1; b=2 ») : sa valeur court jusqu'à la fin de la ligne, virgules et ; compris,
