@@ -233,6 +233,128 @@ def test_a_failed_touch_never_fails_the_request(caplog):
     assert "base indisponible" not in caplog.text
 
 
+class _NoSession:
+    """A factory that must never be called: inside the window nothing is written (#94)."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self):
+        self.calls += 1
+        raise AssertionError("no session expected")
+
+
+class _CountedFactory:
+    """Delegates to a real factory and counts the sessions opened: a due write must open one."""
+
+    def __init__(self, factory):
+        self.factory = factory
+        self.calls = 0
+
+    def __call__(self):
+        self.calls += 1
+        return self.factory()
+
+
+def test_a_known_recent_use_opens_no_session(caplog):
+    spy = _NoSession()
+    caplog.set_level(logging.WARNING, logger="nexus")
+    tokens.touch_last_used(spy, 1, last_used_at=now() - timedelta(seconds=10))
+    assert spy.calls == 0
+    assert caplog.text == ""
+
+
+def test_a_known_use_beyond_the_window_still_writes(session, factory):
+    row, _ = tokens.issue(session, "helios", "poste")
+    old = now() - timedelta(seconds=301)
+    row.last_used_at = old
+    session.commit()
+    tokens.touch_last_used(factory, row.id, last_used_at=old)
+    session.expire(row)
+    assert abs((row.last_used_at - now()).total_seconds()) < 5
+
+
+def test_a_known_never_used_token_still_writes(session, factory):
+    row, _ = tokens.issue(session, "helios", "poste")
+    session.commit()
+    tokens.touch_last_used(factory, row.id, last_used_at=None)
+    session.expire(row)
+    assert row.last_used_at is not None
+
+
+def test_the_update_stays_the_arbiter_for_a_stale_row(session, factory):
+    # Another request touched the token after this one loaded its row: Python sees a stale
+    # value, the conditional UPDATE matches nothing and keeps the recent one.
+    row, _ = tokens.issue(session, "helios", "poste")
+    recent = now() - timedelta(seconds=10)
+    row.last_used_at = recent
+    session.commit()
+    tokens.touch_last_used(factory, row.id, last_used_at=now() - timedelta(seconds=301))
+    session.expire(row)
+    assert row.last_used_at == recent
+
+
+def test_a_future_last_use_counts_as_inside_the_window():
+    spy = _NoSession()
+    tokens.touch_last_used(spy, 1, last_used_at=now() + timedelta(hours=1))
+    assert spy.calls == 0
+
+
+def test_the_python_window_boundary_matches_the_sql(session, factory, monkeypatch):
+    fixed = datetime(2026, 9, 28, 9, 5, tzinfo=TZ)
+    monkeypatch.setattr(tokens, "now", lambda: fixed)
+    cutoff = (fixed.astimezone(UTC) - tokens.TOUCH_WINDOW).astimezone(TZ)
+    just_before = (fixed.astimezone(UTC) - tokens.TOUCH_WINDOW - timedelta(microseconds=1))
+    just_before = just_before.astimezone(TZ)
+    on_cutoff, _ = tokens.issue(session, "helios", "poste")
+    before, _ = tokens.issue(session, "helios", "autre")
+    on_cutoff.last_used_at, before.last_used_at = cutoff, just_before
+    session.commit()
+
+    opened = _CountedFactory(factory)
+    tokens.touch_last_used(opened, on_cutoff.id, last_used_at=cutoff)
+    assert opened.calls == 0  # `last_used_at < cutoff` is false: nothing is due
+    tokens.touch_last_used(opened, before.id, last_used_at=just_before)
+    assert opened.calls == 1
+    session.expire_all()
+    assert on_cutoff.last_used_at == cutoff
+    assert before.last_used_at == fixed  # the UPDATE really ran
+
+
+def test_the_python_window_holds_across_the_fall_back_instants(session, factory, monkeypatch):
+    # Same wall-clock zone on both sides would compare 02:30+02:00 as before 02:15+01:00
+    # (PEP 495 ignores fold): compare instants. 02:30+02:00 is 45 minutes older: due.
+    fixed = datetime(2026, 10, 25, 2, 15, tzinfo=TZ, fold=1)
+    monkeypatch.setattr(tokens, "now", lambda: fixed)
+    stale = (fixed.astimezone(UTC) - timedelta(minutes=45)).astimezone(TZ)
+    recent = (fixed.astimezone(UTC) - timedelta(seconds=299)).astimezone(TZ)
+    old_row, _ = tokens.issue(session, "helios", "poste")
+    new_row, _ = tokens.issue(session, "helios", "autre")
+    old_row.last_used_at, new_row.last_used_at = stale, recent
+    session.commit()
+
+    opened = _CountedFactory(factory)
+    tokens.touch_last_used(opened, old_row.id, last_used_at=stale)
+    assert opened.calls == 1
+    tokens.touch_last_used(opened, new_row.id, last_used_at=recent)
+    assert opened.calls == 1
+    session.expire_all()
+    # Instants, not wall clocks: equal-zone datetimes compare by displayed time and ignore fold.
+    assert old_row.last_used_at.astimezone(UTC) == fixed.astimezone(UTC)  # the UPDATE ran
+    assert new_row.last_used_at.astimezone(UTC) == recent.astimezone(UTC)
+
+
+def test_a_naive_last_use_is_left_to_the_update(session, factory):
+    row, _ = tokens.issue(session, "helios", "poste")
+    session.commit()
+    # Recent on the machine's clock: without the `utcoffset()` guard, `astimezone` would read it
+    # as local time, find it inside the window and skip the write.
+    naive_recent = datetime.now() - timedelta(seconds=10)
+    tokens.touch_last_used(factory, row.id, last_used_at=naive_recent)
+    session.expire(row)
+    assert row.last_used_at is not None
+
+
 def test_the_window_holds_across_the_autumn_fall_back(session, factory, monkeypatch):
     # 2026-10-25: 03:00 CEST becomes 02:00 CET, so this local time exists twice (fold=1).
     # 02:15+01:00 is 01:15Z: values are built on the UTC timeline, as real instants are.

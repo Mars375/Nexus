@@ -14,7 +14,7 @@ import logging
 import re
 import secrets
 import unicodedata
-from datetime import UTC, timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -77,8 +77,12 @@ def is_live(session: Session, token_id: int) -> bool:
     return row is not None and row.revoked_at is None
 
 
-def touch_last_used(factory, token_id: int) -> None:
+def touch_last_used(factory, token_id: int, *, last_used_at: datetime | None = None) -> None:
     """Record that a token was used, at most once per window; never fails the caller.
+
+    `last_used_at` is the value the caller already loaded: inside the window nothing is due and
+    no session is opened, because even an UPDATE that matches no row takes SQLite's write lock
+    (#94). Unknown, absent or naive values fall through to the UPDATE, which stays the arbiter.
 
     A separate short session keeps a failure (locked database, disk full) away from the
     request's own transaction. The conditional UPDATE is atomic: simultaneous requests write
@@ -89,6 +93,14 @@ def touch_last_used(factory, token_id: int) -> None:
         # Subtracting on the UTC timeline keeps the window a real duration: wall-clock
         # arithmetic in Europe/Paris crosses the DST change an hour off.
         cutoff = moment.astimezone(UTC) - TOUCH_WINDOW
+        # Same strict comparison as the UPDATE, on instants: two values in the same zone would
+        # compare by wall clock and ignore `fold`.
+        if (
+            last_used_at is not None
+            and last_used_at.utcoffset() is not None
+            and last_used_at.astimezone(UTC) >= cutoff
+        ):
+            return
         with factory() as session:
             session.execute(
                 update(ActorToken)
