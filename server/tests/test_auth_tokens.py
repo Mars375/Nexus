@@ -3,9 +3,11 @@
 import hashlib
 import logging
 import re
+import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
 from nexus import migrate
@@ -223,14 +225,28 @@ def test_touch_last_used_ignores_an_unknown_token(factory):
 
 
 def test_a_failed_touch_never_fails_the_request(caplog):
+    error = sqlite3.OperationalError("database is locked")
+    error.sqlite_errorname = "SQLITE_BUSY"
+
     class Broken:
         def __call__(self):
-            raise RuntimeError("base indisponible")
+            raise OperationalError("UPDATE actor_tokens SET ...", {}, error)
 
     caplog.set_level(logging.WARNING, logger="nexus")
     tokens.touch_last_used(Broken(), 1)
     assert "dernière utilisation" in caplog.text
-    assert "base indisponible" not in caplog.text
+    assert "SQLITE_BUSY" in caplog.text
+    assert "database is locked" not in caplog.text
+    assert "UPDATE actor_tokens" not in caplog.text
+
+
+def test_an_unexpected_touch_error_surfaces():
+    class Broken:
+        def __call__(self):
+            raise RuntimeError("bug inattendue")
+
+    with pytest.raises(RuntimeError, match="bug inattendue"):
+        tokens.touch_last_used(Broken(), 1)
 
 
 class _NoSession:
@@ -292,6 +308,53 @@ def test_the_update_stays_the_arbiter_for_a_stale_row(session, factory):
     tokens.touch_last_used(factory, row.id, last_used_at=now() - timedelta(seconds=301))
     session.expire(row)
     assert row.last_used_at == recent
+
+
+def test_a_revocation_between_lookup_and_touch_keeps_last_used_intact(session, factory):
+    # The dependency loaded the row while it was still live; another request revokes it
+    # before this touch runs. The UPDATE must not stamp a revoked token.
+    row, token = tokens.issue(session, "helios", "poste")
+    old = now() - timedelta(seconds=301)
+    row.last_used_at = old
+    session.commit()
+    loaded = tokens.lookup_row(session, token)
+    assert loaded is not None
+    token_id, last_used = loaded.id, loaded.last_used_at
+
+    row.revoked_at = now()
+    session.commit()
+    tokens.touch_last_used(factory, token_id, last_used_at=last_used)
+
+    session.expire(row)
+    assert row.last_used_at == old
+
+
+def test_a_revocation_before_a_first_touch_keeps_last_used_none(session, factory):
+    row, token = tokens.issue(session, "helios", "poste")
+    session.commit()
+    loaded = tokens.lookup_row(session, token)
+    assert loaded is not None
+    token_id = loaded.id
+
+    row.revoked_at = now()
+    session.commit()
+    tokens.touch_last_used(factory, token_id, last_used_at=None)
+
+    session.expire(row)
+    assert row.last_used_at is None
+
+
+def test_an_operational_error_without_a_sqlite_name_uses_the_fallback(caplog):
+    error = sqlite3.OperationalError("disk I/O error")
+
+    class Broken:
+        def __call__(self):
+            raise OperationalError("UPDATE actor_tokens SET ...", {}, error)
+
+    caplog.set_level(logging.WARNING, logger="nexus")
+    tokens.touch_last_used(Broken(), 1)
+    assert "erreur SQLite" in caplog.text
+    assert "disk I/O error" not in caplog.text
 
 
 def test_a_future_last_use_counts_as_inside_the_window():
