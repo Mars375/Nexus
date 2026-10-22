@@ -111,6 +111,23 @@ def test_list_tells_the_two_hours_of_the_autumn_fall_back_apart(env, capsys):
     assert "02:15 +0100" in second  # CET side (01:15Z), an hour later
 
 
+def test_list_shows_the_offset_of_created_and_revoked_timestamps(env, capsys):
+    run(capsys, "issue", "loic", "--label", "navigateur")
+    conn = sqlite3.connect(env.db_path)
+    # 2026-10-25: 02:15 exists twice in Europe/Paris, one hour apart on the UTC timeline.
+    conn.execute(
+        "UPDATE actor_tokens SET created_at = '2026-10-25T00:15:00+00:00', "
+        "revoked_at = '2026-10-25T01:15:00+00:00' WHERE id = 1"
+    )
+    conn.commit()
+    conn.close()
+    code, out, _ = run(capsys, "list")
+    assert code == 0
+    line = next(line for line in out.splitlines() if "nx-tok-1" in line)
+    assert "créé 2026-10-25 02:15 +0200" in line
+    assert "révoqué 2026-10-25 02:15 +0100" in line
+
+
 def test_list_never_shows_the_token_or_its_digest_after_a_use(env, capsys):
     _, issued, _ = run(capsys, "issue", "loic", "--label", "navigateur")
     token = issued.strip()
