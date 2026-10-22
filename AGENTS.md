@@ -11,6 +11,12 @@
 - Product docs and user-facing text are in French (ADR-009); identifiers, code comments and docstrings stay in English: new ones and the ones a change touches; no mass translation of existing French comments.
 - Before opening a PR, walk through `docs/agents/review-checklist.md` (secrets, validation, concurrency, invariants, provenance, UI with changing data) and note in the PR body what was checked. Plan edge cases first and write their tests before the code.
 
+## Taille des fichiers
+
+- Seuil indicatif : **400 lignes** pour un fichier de code source, **600** pour un fichier de test (lignes physiques, hors verrous et images). Ce n'est pas un blocage automatique.
+- Au-delà du seuil, découper une fois par sujet, sans changer un test ni son nom, avec les mêmes résultats avant/après (`pnpm test`, `pnpm lint`, e2e pour le web). Si aucun seam lisible n'existe, noter la raison dans l'issue #39 plutôt que de forcer un découpage.
+- Une PR par fichier ou par sujet ; les plans historiques de `docs/superpowers/plans/` ne se découpent pas.
+
 ## Branches et PR
 
 - Une branche par issue ou par sujet, jamais deux sujets sur une même branche. Elle part de `master` à jour ; une PR ne dépend jamais d'une autre PR (règle de Loïc, 2026-10-17 : pas de PR empilée — chaque sujet sur sa propre branche depuis `master` à jour, et la règle se recopie avec la checklist qui la contraint). Noms : `feat/<n>-<sujet>`, `fix/<n>-<sujet>`, `docs/<sujet>`, `chore/<sujet>` (le numéro d'issue quand il y en a une) ; une session cloud qui impose `claude/<…>` garde ce nom.
