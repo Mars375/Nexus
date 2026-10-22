@@ -11,6 +11,7 @@ import re
 import sqlite3
 import sys
 from collections.abc import Sequence
+from datetime import datetime
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import OperationalError
@@ -64,6 +65,11 @@ def _issue(factory, args: argparse.Namespace) -> int:
     return 0
 
 
+def _format_instant(value: datetime) -> str:
+    """The offset disambiguates the repeated hour of the autumn fall-back."""
+    return value.strftime("%Y-%m-%d %H:%M %z")
+
+
 def _list(factory, _args: argparse.Namespace) -> int:
     with factory() as session:
         rows = session.scalars(select(ActorToken).order_by(ActorToken.id)).all()
@@ -71,15 +77,12 @@ def _list(factory, _args: argparse.Namespace) -> int:
         print("Aucun jeton émis.")
         return 0
     for row in rows:
-        revoked = f"révoqué {row.revoked_at:%Y-%m-%d %H:%M}" if row.revoked_at else "actif"
+        revoked = f"révoqué {_format_instant(row.revoked_at)}" if row.revoked_at else "actif"
         last_used = (
-            "jamais"
-            if row.last_used_at is None
-            # The offset disambiguates the repeated hour of the autumn fall-back.
-            else row.last_used_at.strftime("%Y-%m-%d %H:%M %z")
+            "jamais" if row.last_used_at is None else _format_instant(row.last_used_at)
         )
         print(
-            f"{row.ref}  {row.actor:<8}  {row.label}  créé {row.created_at:%Y-%m-%d %H:%M}"
+            f"{row.ref}  {row.actor:<8}  {row.label}  créé {_format_instant(row.created_at)}"
             f"  dernière utilisation {last_used}  {revoked}"
         )
     return 0
