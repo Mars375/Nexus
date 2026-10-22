@@ -36,11 +36,15 @@ def bearer_token(authorization: str) -> str | None:
 
 
 class TokenIdentity(NamedTuple):
-    """Who a presented token is: its row (to check it is still live later) and its actor."""
+    """Who a presented token is: its row id, its actor, and the digest that keeps it live.
+
+    The row id only names the row for `touch_last_used`; liveness is checked by digest, which
+    SQLite never reassigns. The digest is not a secret (SECURITY §1), but it must never be
+    written to a log or returned in a response: no code path logs an `identity`.
+    """
 
     token_id: int
     actor: str
-    # Binds a WebSocket ticket to this token; never logged.
     token_hash: str
 
 
@@ -50,8 +54,8 @@ def authenticated_token(
     authorization: Annotated[str | None, Header()] = None,
     x_nexus_actor: Annotated[str | None, Header()] = None,
 ) -> TokenIdentity:
-    """The token row id and actor of the presented token; 401 without a valid one, 403 on a header
-    mismatch. A successful authentication records the token's last use."""
+    """The token row id, actor and digest of the presented token; 401 without a valid one, 403 on
+    a header mismatch. A successful authentication records the token's last use."""
     token = None if authorization is None else bearer_token(authorization)
     if token is None:
         raise _unauthorized(
