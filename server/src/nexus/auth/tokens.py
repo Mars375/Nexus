@@ -17,6 +17,7 @@ import unicodedata
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from nexus import secrets as redaction
@@ -78,15 +79,18 @@ def is_live(session: Session, token_id: int) -> bool:
 
 
 def touch_last_used(factory, token_id: int, *, last_used_at: datetime | None = None) -> None:
-    """Record that a token was used, at most once per window; never fails the caller.
+    """Record that a token was used, at most once per window; a database failure never fails
+    the caller.
 
     `last_used_at` is the value the caller already loaded: inside the window nothing is due and
     no session is opened, because even an UPDATE that matches no row takes SQLite's write lock
-    (#94). Unknown, absent or naive values fall through to the UPDATE, which stays the arbiter.
+    (#94). Unknown, absent or naive values fall through to the UPDATE, which stays the arbiter,
+    and so does a revocation that happened after the lookup.
 
-    A separate short session keeps a failure (locked database, disk full) away from the
+    A separate short session keeps a database failure (locked database, disk full) away from the
     request's own transaction. The conditional UPDATE is atomic: simultaneous requests write
-    once, and the others see a rowcount of zero.
+    once, and the others see a rowcount of zero. An unexpected error is not swallowed: it is a
+    bug and must surface.
     """
     try:
         moment = now()
@@ -106,15 +110,17 @@ def touch_last_used(factory, token_id: int, *, last_used_at: datetime | None = N
                 update(ActorToken)
                 .where(
                     ActorToken.id == token_id,
+                    ActorToken.revoked_at.is_(None),
                     (ActorToken.last_used_at.is_(None))
                     | (ActorToken.last_used_at < cutoff),
                 )
                 .values(last_used_at=moment)
             )
             session.commit()
-    except Exception:
-        # The request keeps working: a missed timestamp only delays the next write.
-        log.warning("dernière utilisation du jeton %s non enregistrée", token_id)
+    except OperationalError as exc:
+        # The exception text carries the SQL and its parameters: log only the SQLite code.
+        name = getattr(exc.orig, "sqlite_errorname", None) or "erreur SQLite"
+        log.warning("dernière utilisation du jeton %s non enregistrée (%s)", token_id, name)
 
 
 def clean_label(label: str) -> str:
