@@ -293,3 +293,42 @@ def test_only_the_socket_of_the_revoked_token_closes(client, monkeypatch):
                               headers=headers)
             assert res.status_code == 201
             assert _next_real_message(second)["type"] == "task_changed"
+
+
+# --- #107: a reused row id must not revive a ticket or a socket ---
+
+def _replace_with_reused_id(client, token_id):
+    """Delete the token row and issue a codex token in the same transaction; SQLite (no
+    AUTOINCREMENT) gives the new row the freed id when it was the highest one."""
+    with client.app.state.sessionmaker() as session:
+        session.delete(session.get(ActorToken, token_id))
+        session.flush()
+        row, _ = tokens.issue(session, "codex", "réemploi")
+        session.commit()
+        assert row.id == token_id  # precondition: the id was reused
+
+
+def test_a_ticket_of_a_deleted_token_is_refused_when_its_row_id_is_reused(client):
+    ticket = _ticket(client)
+    _replace_with_reused_id(client, _token_id(client))
+    _refused(client, [P, ticket])
+
+
+def test_a_socket_of_a_deleted_token_closes_when_its_row_id_is_reused(client, monkeypatch):
+    monkeypatch.setattr(live, "POLL_SECONDS", 0.01)
+    token_id = _token_id(client)
+    with ws_connect(client) as ws:
+        assert ws.receive_json()["type"] == "hello"
+        _replace_with_reused_id(client, token_id)
+        # A change to send: before the fix the socket forwards it instead of closing. The
+        # writer token is issued after the replacement, so that the freed id was the highest.
+        with client.app.state.sessionmaker() as session:
+            _, writer = tokens.issue(session, "loic", "écriture")
+            session.commit()
+        res = client.post("/api/tasks", json={"title": "t", "objective": "o"},
+                          headers={"Authorization": f"Bearer {writer}"})
+        assert res.status_code == 201
+        with pytest.raises(WebSocketDisconnect) as closed:
+            _next_real_message(ws)
+    assert closed.value.code == 4401
+    assert closed.value.reason == "jeton révoqué"

@@ -168,14 +168,14 @@ def test_is_live_is_false_for_a_revoked_or_deleted_row(session):
     row, _ = tokens.issue(session, "loic", "navigateur")
     other, _ = tokens.issue(session, "codex", "cli")
     session.commit()
-    assert tokens.is_live(session, row.id) is True
+    assert tokens.is_live(session, row.token_hash) is True
     row.revoked_at = now()
     session.commit()
-    assert tokens.is_live(session, row.id) is False
+    assert tokens.is_live(session, row.token_hash) is False
     session.delete(other)  # an absent row counts as a revocation (D6)
     session.commit()
-    assert tokens.is_live(session, other.id) is False
-    assert tokens.is_live(session, 987654) is False
+    assert tokens.is_live(session, other.token_hash) is False
+    assert tokens.is_live(session, "0" * 64) is False
 
 
 def test_touch_last_used_sets_it_on_the_first_use(session, factory):

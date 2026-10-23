@@ -173,7 +173,7 @@ def issue_ws_ticket(
 ) -> dict:
     """A single-use WebSocket ticket for the presented token (#57); never cached."""
     response.headers["Cache-Control"] = "no-store"
-    ticket = request.app.state.ws_tickets.issue(identity.token_id, identity.actor)
+    ticket = request.app.state.ws_tickets.issue(identity.token_hash, identity.actor)
     return {"ticket": ticket, "protocol": LIVE_PROTOCOL, "expires_in": TTL_SECONDS}
 
 
@@ -211,7 +211,7 @@ async def live_updates(websocket: WebSocket) -> None:
 
     def token_live() -> bool:
         with make() as session:
-            return tokens.is_live(session, grant.token_id)
+            return tokens.is_live(session, grant.token_hash)
 
     def read_changes(cursor: Cursor) -> tuple[list[dict], Cursor] | None:
         """The changes beyond the cursor, or None once the token is revoked or deleted.
@@ -219,7 +219,7 @@ async def live_updates(websocket: WebSocket) -> None:
         The token is checked first, in the same session: nothing is sent after a revocation.
         """
         with make() as session:
-            if not tokens.is_live(session, grant.token_id):
+            if not tokens.is_live(session, grant.token_hash):
                 return None
             return changes_since(session, cursor)
 
