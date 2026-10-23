@@ -107,25 +107,53 @@ _CREDENTIAL_KEY = re.compile(rf"(?i){_LABEL}")
 
 # Characters that end a bare value: whitespace, comma, semicolon, closing brace.
 _STOP = r"\t \r\n,;}"
+# A label that opens another value behind a quote, bare or escaped (`"<label>":`,
+# `'<label>'=`, `\"<label>\":`). Master ended every bare value at a quote, so its scan
+# resumed there and masked that label's own value; a value that now runs across
+# quotes stops in front of such a label instead (issue #106).
+_QUOTED_LABEL = rf"\\?[\"'](?:{_LABEL})\\?[\"']?\s*[=:]"
+# The same, quote optional: a further word that opens another labelled value.
+_NEXT_LABEL = rf"\\?[\"']?(?:{_LABEL})\\?[\"']?\s*[=:]"
+# A label inside a value, at the end of its line, whose own value sits on the next
+# line (`<label>: x#<label>:` then `y`): the value runs on across the line break and
+# the next line is masked too. Without it the value stopped at the break and the
+# next line stayed in the clear.
+_LABEL_AT_LINE_END = (
+    rf"(?<![\w.-])(?:{_LABEL})\\?[\"']?[ \t]*[=:][ \t]*\r?\n\s*(?=[^{_STOP}])"
+)
 # One character of a bare value after its first: a quote belongs to the value only
-# when the value goes on after it (j'aime, pa"ss); a quote that ends the run stays
-# outside, so `"password: x" dans le canal` keeps its closing quote and its prose.
-_RUN_CHAR = rf"(?:[^{_STOP}\"']|[\"'](?=[^{_STOP}]))"
+# when the value goes on after it (j'aime, pa"ss) and does not open another label;
+# a quote that ends the run stays outside, so `"<label>: voir Bitwarden" dans le
+# canal` keeps its closing quote and its prose.
+_RUN_CHAR = (
+    rf"(?:{_LABEL_AT_LINE_END}"
+    rf"|(?!{_QUOTED_LABEL})(?:[^{_STOP}\"']|[\"'](?=[^{_STOP}])))"
+)
 # A further space-separated word of a passphrase, unless it opens another labelled value.
-_NEXT_WORD = rf"[ \t]+(?!(?:{_LABEL})\s*[=:])[^{_STOP}]{_RUN_CHAR}*"
-# Same, after a quoted value whose closing quote did not end it: up to the next stop.
-_GLUED_WORD = rf"[ \t]+(?!(?:{_LABEL})\s*[=:])[^{_STOP}]+"
+_NEXT_WORD = rf"[ \t]+(?!{_NEXT_LABEL})[^{_STOP}]{_RUN_CHAR}*"
+# Text glued after a closing quote that did not end the value: up to the next stop.
+_GLUE_CHAR = rf"(?:{_LABEL_AT_LINE_END}|(?!{_QUOTED_LABEL})[^{_STOP}])"
+_GLUED_WORD = rf"[ \t]+(?!{_NEXT_LABEL}){_GLUE_CHAR}+"
+# A value never starts on a label between quotes (`<label>: "<label>": x`): the scan
+# resumes on that label and masks its own value.
+_NOT_A_LABEL = rf"(?!\\?\"(?:{_LABEL})\\?\"\s*[=:]|\\?'(?:{_LABEL})\\?'\s*[=:])"
 # A line that opens another labelled value: a quoted value never runs across it.
 _NEW_ASSIGNMENT_LINE = rf"[ \t]*(?:export[ \t]+)?[\"']?(?:{_LABEL})\\?[\"']?[ \t]*[:=]"
+# A value made only of [REDACTED] markers, quotes and separators is already masked:
+# when the scan stops in front of a label, the entropy pass may mask that label
+# too and leave `[REDACTED]'[REDACTED]:` behind; masking it again on a second pass
+# would break idempotence.
+_ONLY_MARKERS = re.compile(r"[\"':=]*(?:\[REDACTED\][\"':=]*)+")
 
 
 def _quoted(q: str) -> str:
     """A value between quotes `q`, backslash escapes honoured. It spans lines up to
     its closing quote unless a line in between opens another labelled value; with
-    no closing quote it runs to the end of its line (issue #106)."""
+    no closing quote it runs to the end of its line, or of the next one when its
+    line ends on a label (issue #106)."""
     return (
         rf"{q}((?:[^{q}\\\r\n]|\\[\s\S]|[\r\n](?!{_NEW_ASSIGNMENT_LINE}))*(?={q})"
-        rf"|(?:[^{q}\\\r\n]|\\[^\r\n])*\\?(?=[\r\n]|\Z)){q}?"
+        rf"|(?:{_LABEL_AT_LINE_END}|[^{q}\\\r\n]|\\[^\r\n])*\\?(?=[\r\n]|\Z)){q}?"
     )
 
 
@@ -135,10 +163,26 @@ _SQ = _quoted("'")
 _ASSIGNMENT = re.compile(
     rf"(?i)(?<![\w.-])({_LABEL})"
     r"(\\?[\"']?\s*[:=]\s*)"
-    rf"(?:(?:{_DQ}|{_SQ})"
-    rf"((?=[\w\\\"'])[^{_STOP}]+(?:{_GLUED_WORD})*)?"
+    rf"{_NOT_A_LABEL}(?:(?:{_DQ}|{_SQ})"
+    rf"((?=[\w\\\"'])(?!{_NEXT_LABEL}){_GLUE_CHAR}+(?:{_GLUED_WORD})*)?"
     r"|((?:(?:basic|bearer|digest|negotiate|ntlm)\s+)?"
-    rf"(?:\[[^\]\r\n]*\]?{_RUN_CHAR}*|[^{_STOP}\"']{_RUN_CHAR}*(?:{_NEXT_WORD})*)))"
+    # Bare value: one run, or several space-separated runs, up to the end of the
+    # line — a multi-word passphrase is masked whole (issue #15). A value that
+    # starts on a label whose own value sits on the next line takes that line too.
+    # Text glued after a bracket shell joins the value unless it opens another
+    # label (`[REDACTED]"<label>": x`). Bracket fragments glued to the run stay
+    # inside the value: a value starting
+    # at `[` goes through the bracket shell FIRST (alternation order), so a value
+    # that starts at an existing [REDACTED] never reaches the naked-run chain, the
+    # prose after the shell stays prose, and the shell value comes back unchanged
+    # through mask_value's short circuit (idempotence). A further word that opens
+    # a recognised label ends the sweep instead of joining it: the resumed scan
+    # masks it under its own label, so [REDACTED] is never doubled, while a
+    # passphrase word that merely carries an `=` (« battery=staple ») stays inside
+    # the value. An auth scheme (Basic xyz) is part of the value.
+    rf"(?:{_LABEL_AT_LINE_END}{_RUN_CHAR}*(?:{_NEXT_WORD})*"
+    rf"|\[(?:{_LABEL_AT_LINE_END}|[^\]\r\n])*\]?(?:(?!{_NEXT_LABEL}){_RUN_CHAR}+)?"
+    rf"|[^{_STOP}\"']{_RUN_CHAR}*(?:{_NEXT_WORD})*)))"
 )
 
 # Long opaque runs: random-looking tokens that matched no format above (third-party
@@ -539,7 +583,7 @@ def redact(text: str) -> tuple[str, list[str]]:
         label, separator, double, single, glued, bare = match.groups()
         value = next(v for v in (double, single, bare) if v is not None)
         # Text glued after the closing quote means the quote did not end the value.
-        if not glued and (not value or value == REDACTED):
+        if not glued and (not value or _ONLY_MARKERS.fullmatch(value)):
             return match.group(0)
         found.append("credential")
         quote = '"' if double is not None else "'" if single is not None else ""
