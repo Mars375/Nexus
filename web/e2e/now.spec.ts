@@ -262,18 +262,19 @@ test('▲ puis ▼ presque aussitôt : la couche de l\'étage 1 reste le même n
   // leaving ran to the end — issue #59). What holds at any speed: the layer stays the same node, the
   // reprise never drops, and it ends opaque.
   // The reprise is read from the first sample after the last "leaving" one. At the switch the
-  // transition reverses from the value it had reached, so the first reprise frame sits below the last
-  // "leaving" sample by at most the drop of the frames that elapsed between the two. With `ease` over
-  // 350 ms that drop is ~0.11 per 16.7 ms frame, hence ~0.22 over two frames (33.3 ms, a loaded CI
-  // skipping a frame plus the click/React latency): the 0.25 tolerance below covers it without
-  // letting a restart from 0 through when the click lands early (last leaving well above 0.25). The
-  // return click is therefore sent 40 ms after the lift, and measured runs put the last leaving
-  // sample between 0.34 and 0.62, so both tolerances keep their teeth.
-  // The tolerance alone cannot catch a replay from 0 once the leaving got low, so two direct guards
-  // run alongside it: no CSS animation may run on the layer during the reprise (issue #109), and no
-  // fade transition may start below the in-flight value. Being the same node forbids neither: a CSS
-  // animation replays a keyframe entry, and an @starting-style or an inline opacity reset followed by
-  // the `.level` transition produces a CSSTransition, which the animation flag never sees.
+  // transition reverses from the value it had reached (Chromium starts it exactly at the last computed
+  // opacity), so the first reprise frame normally sits at or above the last "leaving" sample. The
+  // tolerance below only absorbs a loaded CI that skips frames: with `ease` over 350 ms the fade drops
+  // ~0.11 per 16.7 ms frame, ~0.22 over two frames, hence 0.25. The return click is sent 40 ms after
+  // the lift, and measured runs put the last leaving sample between 0.34 and 0.62, so a restart from
+  // 0 fails the opacity assertion.
+  // The tolerance cannot catch a replay from 0 once the leaving got low (a slow machine: threshold
+  // <= 0), so two direct guards run alongside it. No CSS animation may run on the layer during the
+  // reprise (issue #109): it is independent of the depth. And no fade transition may start below the
+  // in-flight value, nor at exactly 0 while the leaving was still visible: the second clause keeps the
+  // guard sharp at any depth. Being the same node forbids neither: a CSS animation replays a keyframe
+  // entry, and an @starting-style or an inline opacity reset followed by the `.level` transition
+  // produces a CSSTransition, which the animation flag never sees.
   const tolerance = 0.25
   const dernierDepart = samples.findLastIndex((q) => q.role === 'leaving')
   expect(dernierDepart, 'l\'étage 1 est passé par l\'état leaving').toBeGreaterThanOrEqual(0)
@@ -281,7 +282,7 @@ test('▲ puis ▼ presque aussitôt : la couche de l\'étage 1 reste le même n
   expect(reprise.length, 'la reprise a été vue').toBeGreaterThanOrEqual(2)
   const laisse = samples[dernierDepart].opacity
   expect(reprise.every((q) => !q.animation), 'la reprise rejoue une animation CSS sur le même nœud').toBe(true)
-  expect(reprise.every((q) => q.transitionFrom === null || q.transitionFrom >= laisse - tolerance), 'la reprise rejoue son entrée depuis zéro par une transition').toBe(true)
+  expect(reprise.every((q) => q.transitionFrom === null || (q.transitionFrom >= laisse - tolerance && !(q.transitionFrom === 0 && laisse > 0))), 'la reprise rejoue son entrée depuis zéro par une transition').toBe(true)
   expect(reprise[0].opacity, 'la reprise repart de zéro').toBeGreaterThanOrEqual(laisse - tolerance)
   for (let i = 1; i < reprise.length; i++) {
     expect(reprise[i].opacity, 'la reprise replonge au lieu de remonter').toBeGreaterThanOrEqual(reprise[i - 1].opacity)
@@ -311,7 +312,7 @@ test('un étage disparaît pendant l\'ascenseur : le repli est instantané, la c
     requestAnimationFrame(tick)
   })
   await upButton.click(); await page.waitForTimeout(40); await upButton.click() // 1 → 2 → 3, floor 2 is leaving
-  await page.waitForTimeout(150)
+  await page.waitForTimeout(40)
   count = 6 // floor 3 disappears: the read that says so arrives within the lift
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange', { bubbles: true })))
   await expect(page.locator('[data-stage]')).toHaveAttribute('data-floor-count', '2')
