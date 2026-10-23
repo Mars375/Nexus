@@ -1,7 +1,8 @@
 /*
- * Géométrie de l'étage (#6, #30) : rotation puis projection isométrique, et placement des
- * postes, en fonctions pures. Unités de sol : un bureau fait 3 × 1,5. L'écran ne fait que lire
- * ce plan ; l'angle ne change que la projection, jamais le plan au sol.
+ * Shared floor types, dimensions and label geometry (#6, #30): the rotation helper, the label
+ * descriptors (seatItems, rackItems) and the label placement/spread. The floor plans themselves live
+ * in iso.ts (layoutFloor, office floor) and isoServerRoom.ts (serverRoom). Floor units: a desk is
+ * 3 x 1.5. The screen only reads the plan; the angle changes the projection, never the ground plan.
  */
 export type Pt = readonly [number, number]
 export type Dir = '+x' | '-x' | '+y' | '-y'

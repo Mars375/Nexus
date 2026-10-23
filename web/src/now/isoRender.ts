@@ -1,3 +1,8 @@
+/*
+ * SVG drawing helpers for the floor: boxes, rack LEDs, painter's order, quarter-turn rounding and
+ * percentage conversion. Consumed through ./iso by Floor.tsx and ServerRoom.tsx, Rack.tsx (box,
+ * ledQuad) and useFloorRotation.ts (nearestQuarter, which takes an angle rather than a Layout).
+ */
 import {
   DESK,
   NORMALS,
