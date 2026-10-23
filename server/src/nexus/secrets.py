@@ -38,18 +38,39 @@ _FULL: list[tuple[str, re.Pattern[str]]] = [
 # the masked URL keeps its exact shape, including the colon of the empty username.
 # A URL with a username and no password (git clone https://git@host/org/tool) is not
 # a secret, and a host:port never matches (the password must end at an @).
-# A `?` or `#` never belongs to the *username* (issue #84: without the restriction,
-# `?redirect=mailto:alice@…` made the query's tail a « user » and erased `alice`).
-# The password may hold them — a connection URL with an unencoded `#` is common
-# (issue #92) — so it runs up to the first `@`, never past a `/` or whitespace (a `/` inside a
-# password is a known limit, tracked in #95). Dans le doute, on
-# masque (Loïc, 2026-10-20; ADR-006: too much rather than too little): there is no
-# « port + query » exemption, because `postgresql://alice:12#a=b@db` (a password) and
-# `http://localhost:8080#a=b@example.com` (no credentials) are the same string shape
-# and no rule tells them apart without leaving a password in the clear (Antigravity,
-# PR #97). The accepted false positive: such a URL without credentials loses its
-# port and query head (`http://localhost:[REDACTED]@example.com`).
-_URL_CREDENTIALS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://(?:[^\s:/@?#]+)?:)([^\s@/]+)(@)")
+# The username runs up to the first `:` and may hold `@`, `?` and `#` (issue #104:
+# `smtp://alice@example.com:<pw>@smtp.example.com:587`); it may not hold a `=` after
+# a `?` or a `#`, which keeps the query case of #84 out (`?redirect=mailto:alice@…`
+# must not turn the query's tail into a « user » and erase `alice`).
+# The password may hold `?`, `#` and, since #104, a raw `@`: it runs greedily up to
+# the last `@` before a `/` or whitespace. When that last `@` delimits the password,
+# the mask stops there and the host stays visible
+# (`postgres://alice:[REDACTED]@db.local/app`); when another `@` follows in the same
+# run, the mask swallows it and the host is lost — accepted, pinned by T8
+# (`postgres://u:<pw>@h?email=a@b.example` → `postgres://u:[REDACTED]@b.example`).
+# Two limits stay documented: a `/` inside a password (#95) and a `=` in a username
+# after a `?` or a `#` (both pinned by xfail tests in test_secrets_url_credentials).
+# When in doubt, mask (Loïc, 2026-10-20; ADR-006: too much rather than too little):
+# there is no « port + query » exemption, because `postgresql://alice:12#a=b@db`
+# (a password) and `http://localhost:8080#a=b@example.com` (no credentials) are the
+# same string shape and no rule tells them apart without leaving a password in the
+# clear (Antigravity, PR #97). Accepted false positives, pinned by the tests: such a
+# URL without credentials loses its port and query head
+# (`http://localhost:[REDACTED]@example.com`), and a `#mailto:` or `?mailto:` tail,
+# or an `email=` query followed by another `@`, is masked too.
+# The lookbehind allows one attempt per scheme run — `\b` retried at every `.`, `+`
+# and `-`, which made the scan quadratic (20 s on 100 KB). It also stops `_` from
+# hiding a scheme it precedes: `_` is not a scheme character, but `\b` refused to
+# start a match right after it, so `_postgres://u:<pw>@h/x` stayed in the clear.
+# A `.` right before the scheme already worked on `master`, and
+# `Connexion...postgres://alice:<pw>@db/app` keeps being masked; T6 pins both.
+_URL_CREDENTIALS = re.compile(
+    r"(?i)(?<![a-z0-9+.-])"                # one attempt per scheme run: linear scan
+    r"([a-z0-9+.-]+://"                    # scheme: the whole run, whatever its first character
+    r"[^\s:/?#]*(?:[?#][^\s:/?#=]*)*:)"    # username: may hold @, ? and #; no = after a ? or #
+    r"([^\s/]+)"                           # password: greedy, up to the LAST @ before / or space
+    r"(@)"
+)
 
 # En-tête HTTP d'identifiant écrit tel quel (« Authorization: Digest username="…", … »,
 # « Cookie: a=1; b=2 ») : sa valeur court jusqu'à la fin de la ligne, virgules et ; compris,
