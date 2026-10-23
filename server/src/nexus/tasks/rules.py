@@ -31,9 +31,9 @@ INITIAL_STATUSES = frozenset({"backlog", "todo"})
 GATED_BY_DEPENDENCIES = frozenset({"in_progress", "review", "done"})
 DEPENDENCY_RESOLVED = frozenset({"done", "dropped"})
 
-# `StatusChange` field -> targets where the service applies it (`change_status`): on any other
-# target it used to be ignored silently (Codex, issue #17). `next_action` applies everywhere and
-# is deliberately absent.
+# `StatusChange` field -> targets where the service applies it (`change_status`). On any other
+# target it refuses the field (`field_inapplicable`), never ignoring it silently (Codex, #17).
+# `next_action` applies everywhere and is deliberately absent.
 STATUS_CHANGE_TARGETS: dict[str, frozenset[str]] = {
     "reason": frozenset({"dropped"}),
     "block_cause": frozenset({"blocked"}),
@@ -42,6 +42,37 @@ STATUS_CHANGE_TARGETS: dict[str, frozenset[str]] = {
     "evidence": frozenset({"done", "review"}),
     "role": frozenset({"in_progress"}),
 }
+
+
+def check_status_fields(
+    target: str,
+    *,
+    reason: str | None = None,
+    block_cause: str | None = None,
+    block_plan: str | None = None,
+    follow_up_at: datetime | None = None,
+    evidence: list[str] | None = None,
+    role: str | None = None,
+) -> None:
+    """Refuse a field that is provided but does not apply to `target`.
+
+    The API validator already refuses these pairs with a 422; this is the same check for a
+    direct service call, so a value is never silently dropped.
+    """
+    values = {
+        "reason": reason,
+        "block_cause": block_cause,
+        "block_plan": block_plan,
+        "follow_up_at": follow_up_at,
+        "evidence": evidence,
+        "role": role,
+    }
+    for field, value in values.items():
+        if value is not None and target not in STATUS_CHANGE_TARGETS[field]:
+            raise RuleViolation(
+                "field_inapplicable", f"{field} : champ inapplicable au statut « {target} »"
+            )
+
 
 PRIORITIES = ("low", "normal", "high", "critical")
 ROLES = ("main", "auxiliary")

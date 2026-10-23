@@ -200,6 +200,7 @@ backlog → todo → in_progress → review → done
 - `done` : **final** (ADR-022). Aucune transition n'en sort ; ni champ, ni dépendance de la tâche ne change (409 `task_done`, seulement si la requête change quelque chose). Restent possibles : commenter et compléter les preuves (`POST /api/tasks/<ref>/evidence`, ajout seul). Un problème trouvé ensuite se règle dans une tâche de suite (`follows`). Les dépendances **sur** une tâche close restent résolues.
 - **Dépendances** : une tâche n'entre en `in_progress`, `review` ou `done` que si toutes ses dépendances sont `done` ou `dropped`.
 - Transitions autorisées : `server/src/nexus/tasks/rules.py` (`TRANSITIONS`).
+- **Champs de transition** : `POST /api/tasks/<ref>/status` répond **422** si un champ fourni ne s'applique pas au statut visé (par exemple `reason` hors `dropped`, `evidence` hors `review`/`done`) ; `next_action` s'applique partout. Le service refait le contrôle (`field_inapplicable`) pour les appels directs, sans jamais ignorer le champ en silence.
 - Une tâche Nexus n'est jamais `unknown` : Nexus en est la source. `unknown` s'applique aux runs, nœuds et données externes non vérifiés.
 - Les statuts natifs des exécutants (ex. Hermes `triage`, `ready`, `running`, `archived`) restent au niveau du run (`native_status`).
 
