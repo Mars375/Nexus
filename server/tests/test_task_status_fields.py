@@ -171,3 +171,61 @@ def test_a_direct_status_change_refuses_an_inapplicable_field(client, target, fi
     assert got["status"] == "in_progress"
     history_after = client.get(f"/api/tasks/{ref}/history").json()
     assert [h["action"] for h in history_after] == [h["action"] for h in history_before]
+
+
+# The applicability table written by hand: INAPPLICABLE_FIELDS above is derived from
+# STATUS_CHANGE_TARGETS, so widening that table by mistake would shrink the tested pairs
+# instead of failing a test. This one pins the table itself.
+EXPECTED_STATUS_CHANGE_TARGETS = {
+    "reason": {"dropped"},
+    "block_cause": {"blocked"},
+    "block_plan": {"blocked"},
+    "follow_up_at": {"blocked"},
+    "evidence": {"done", "review"},
+    "role": {"in_progress"},
+}
+
+
+def test_the_applicability_table_is_the_documented_one():
+    assert {f: set(t) for f, t in STATUS_CHANGE_TARGETS.items()} == EXPECTED_STATUS_CHANGE_TARGETS
+
+
+DIRECT_EXTRA_INAPPLICABLE = [
+    ("todo", "evidence", ["commit:a1b2c3d"]),
+    ("in_progress", "evidence", ["commit:a1b2c3d"]),
+    ("blocked", "evidence", ["commit:a1b2c3d"]),
+    ("blocked", "reason", "motif"),
+    ("review", "reason", "motif"),
+    ("done", "role", "main"),
+]
+
+
+@pytest.mark.parametrize(("target", "field", "value"), DIRECT_EXTRA_INAPPLICABLE)
+def test_a_direct_status_change_refuses_more_inapplicable_pairs(client, target, field, value):
+    ref = create(client, next_action="x")["id"]
+    assert move(client, ref, "in_progress").status_code == 200
+    make = client.app.state.sessionmaker
+    with make() as session:
+        task = service.get_task(session, int(ref.removeprefix("nx-task-")))
+        with pytest.raises(RuleViolation) as exc:
+            service.change_status(session, task, target, "loic", **{field: value})
+        assert exc.value.code == "field_inapplicable"
+        session.rollback()
+    assert client.get(f"/api/tasks/{ref}").json()["status"] == "in_progress"
+
+
+@pytest.mark.parametrize(
+    "target",
+    [SECRET, ["done"], {"a": 1}, 7, "inconnu"],
+    ids=["secret-looking", "list", "dict", "int", "unknown-word"],
+)
+def test_a_direct_unknown_target_is_refused_without_quoting_it(client, target):
+    ref = create(client, next_action="x")["id"]
+    make = client.app.state.sessionmaker
+    with make() as session:
+        task = service.get_task(session, int(ref.removeprefix("nx-task-")))
+        with pytest.raises(RuleViolation) as exc:
+            service.change_status(session, task, target, "loic", evidence=["commit:a1b2c3d"])
+        assert exc.value.code == "unknown_status"
+        assert SECRET not in exc.value.message
+        session.rollback()

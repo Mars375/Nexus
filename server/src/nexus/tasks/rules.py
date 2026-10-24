@@ -59,6 +59,10 @@ def check_status_fields(
     The API validator already refuses these pairs with a 422; this is the same check for a
     direct service call, so a value is never silently dropped.
     """
+    # An unknown target is refused first, without quoting it: the message of a refusal never
+    # carries a received value, and a membership test on a non-hashable target must not raise.
+    if target not in STATUSES:
+        raise RuleViolation("unknown_status", "status : statut inconnu")
     values = {
         "reason": reason,
         "block_cause": block_cause,
