@@ -228,14 +228,20 @@ test('▲ puis ▼ presque aussitôt : la couche de l\'étage 1 reste le même n
   // baseline is captured synchronously here instead of read back from samples[0]
   // (one less paint-vs-click race in the test itself).
   const baseline = await page.evaluate(() => {
-    type Probe = { samples: { same: boolean; opacity: number; role: string | null }[]; run: boolean }
+    type Probe = { samples: { same: boolean; opacity: number; role: string | null; animation: boolean; transitionFrom: number | null }[]; run: boolean }
     const w = window as unknown as { __probe: Probe; __layer: Element }
     w.__layer = document.querySelector('.level[data-level="1"]')!
     w.__layer.setAttribute('data-probe', '1')
     w.__probe = { samples: [], run: true }
     const tick = () => {
       const el = document.querySelector('.level[data-level="1"]')
-      if (el) w.__probe.samples.push({ same: el === w.__layer && w.__layer.isConnected, opacity: Number(getComputedStyle(el).opacity), role: el.getAttribute('data-role') })
+      if (el) {
+        // A fade transition carries the opacity it starts from: a replay from 0 through a transition
+        // is invisible to the CSSAnimation flag, so its start value is sampled too.
+        const fade = el.getAnimations().find((a): a is CSSTransition => a instanceof CSSTransition && a.transitionProperty === 'opacity')
+        const start = fade ? (fade.effect as KeyframeEffect | null)?.getKeyframes()[0]?.opacity : undefined
+        w.__probe.samples.push({ same: el === w.__layer && w.__layer.isConnected, opacity: Number(getComputedStyle(el).opacity), role: el.getAttribute('data-role'), animation: el.getAnimations().some((a) => !(a instanceof CSSTransition)), transitionFrom: start == null ? null : Number(start) })
+      }
       if (w.__probe.run) requestAnimationFrame(tick)
     }
     requestAnimationFrame(tick)
@@ -243,26 +249,42 @@ test('▲ puis ▼ presque aussitôt : la couche de l\'étage 1 reste le même n
   })
   await upButton.click()
   await expect(page.locator('[data-stage]')).toHaveAttribute('data-floor', '2')
-  await page.waitForTimeout(80)
+  await page.waitForTimeout(40)
   await page.getByRole('button', { name: /^Descendre d'un étage/ }).click()
   await expect(page.locator('[data-stage]')).toHaveAttribute('data-floor', '1')
   await page.waitForTimeout(600)
-  const samples = await page.evaluate(() => { const w = window as unknown as { __probe: { samples: { same: boolean; opacity: number; role: string | null }[]; run: boolean } }; w.__probe.run = false; return w.__probe.samples })
+  const samples = await page.evaluate(() => { const w = window as unknown as { __probe: { samples: { same: boolean; opacity: number; role: string | null; animation: boolean; transitionFrom: number | null }[]; run: boolean } }; w.__probe.run = false; return w.__probe.samples })
   expect(samples.length).toBeGreaterThan(20)
   expect(samples.every((q) => q.same), 'le nœud de l\'étage 1 a été remplacé').toBe(true)
   expect(baseline, 'avant le mouvement, la couche est opaque').toBe(1)
-  // La profondeur du départ dépend du moment exact où le clic retour est tombé (du timing, pas
-  // du design : le seuil « jamais sous 0,3 » de la première version a flotté, et le « jamais 0 »
-  // tombait dès que le départ allait au bout — issue #59). Ce qui tient à toute vitesse : la
-  // couche reste le même nœud, la reprise ne replonge pas, et elle finit opaque.
-  // La comparaison des reprises démarre après le dernier échantillon « leaving » : au
-  // basculement, la transition reprend depuis la valeur en cours (le creux de fin de départ)
-  // et l'écart avec le premier échantillon lu dépend de la latence du clic ; l'invariant
-  // « la couche ne repart pas de zéro » reste garanti à toute vitesse par le même nœud.
+  // How deep the leaving fade gets depends on when the return click lands (timing, not design: the
+  // "never under 0.3" threshold of the first version drifted, and "never 0" failed as soon as the
+  // leaving ran to the end — issue #59). What holds at any speed: the layer stays the same node, the
+  // reprise never drops, and it ends opaque.
+  // The reprise is read from the first sample after the last "leaving" one. The transition reverses
+  // from the value it had reached at the switch, one frame after the last "leaving" sample, so the first
+  // reprise frame sits below it by about one frame of the fade: with `ease` over 350 ms the fade drops
+  // up to ~0.11 per 16.7 ms frame, ~0.22 over two frames (one normal frame plus one skipped on a loaded
+  // CI), hence the 0.25 tolerance. The return click is sent 40 ms after the lift, and measured runs put
+  // the last leaving sample between 0.34 and 0.62, so a restart from 0 fails the opacity assertion.
+  // The tolerance cannot catch a replay from 0 once the leaving got low (a slow machine: threshold
+  // <= 0), so two direct guards run alongside it, independent of that depth. No animation other than a
+  // CSS transition may run on the layer during the reprise (issue #109): a CSS animation replaying a
+  // keyframe entry, or one started through `element.animate()`. And no fade transition may start below
+  // the in-flight value, nor at exactly 0 while the leaving was still visible (above `visible`: the fade
+  // tail is positive but invisible, and a healthy switch landing there legitimately starts from 0).
+  // Being the same node forbids none of these: an @starting-style or an inline opacity reset followed
+  // by the `.level` transition produces a CSSTransition, which the animation flag never sees.
+  const tolerance = 0.25
+  const visible = 0.05
   const dernierDepart = samples.findLastIndex((q) => q.role === 'leaving')
   expect(dernierDepart, 'l\'étage 1 est passé par l\'état leaving').toBeGreaterThanOrEqual(0)
   const reprise = samples.slice(dernierDepart + 1)
   expect(reprise.length, 'la reprise a été vue').toBeGreaterThanOrEqual(2)
+  const laisse = samples[dernierDepart].opacity
+  expect(reprise.every((q) => !q.animation), 'la reprise rejoue une animation CSS sur le même nœud').toBe(true)
+  expect(reprise.every((q) => q.transitionFrom === null || (q.transitionFrom >= laisse - tolerance && !(q.transitionFrom === 0 && laisse > visible))), 'la reprise rejoue son entrée depuis zéro par une transition').toBe(true)
+  expect(reprise[0].opacity, 'la reprise repart de zéro').toBeGreaterThanOrEqual(laisse - tolerance)
   for (let i = 1; i < reprise.length; i++) {
     expect(reprise[i].opacity, 'la reprise replonge au lieu de remonter').toBeGreaterThanOrEqual(reprise[i - 1].opacity)
   }
