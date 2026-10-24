@@ -59,7 +59,7 @@ Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un 
 - **Process agents :** conventions de branches/PR/langue, fusion automatique quand les relectures sont OK, routage de modèles (sonnet principal, architect/reviewer en Opus) (PR #34, #45, #73, #96, #120).
 - **Découpage (#39) :** tests de l'API des événements (#89) et de `Floor` (#91) scindés par thème, `TaskPane.tsx` (#103) et `iso.ts` (#105) séparés par sous-modules, sans changer un test ni l'API publique ; services `events`/`tasks` jugés cohésifs, non découpés (décision dans l'issue) ; seuil indicatif 400/600 inscrit dans `AGENTS.md` (#108).
 
-**Reste pour la sortie de Phase 1 :** #95 (suivi P3 partiellement traité : #121 et #122 fusionnées, restent les points scanner de #87 et les points `change_status` et doc 422 de #85) ; #101 (faux positifs du scanner de secrets sur des identifiants générés, plus quelques faiblesses de détection, `ready-for-human`) ; sont faits : #15, #17, #57, #58 et #59 (PR #80, #85, #74, #88 et #76), #39 (seuil de taille dans `AGENTS.md`, PR #108), #47 (origine de la WebView, PR #112), #86 (P3 de #74 : point 1 couvert par #98, point 2 conservé sous dérogation ADR-021, point 3 vérifié sur Helios), #104 et #106 (fuites du scanner de secrets, PR #114 et #116) et #107 (ticket WebSocket qui survivait à la suppression de son jeton, PR #115).
+**Reste pour la sortie de Phase 1 :** #95 (suivi P3 partiellement traité : #121, #122 et #114 fusionnées ; restent les points scanner de #87, un test sur `last_used_at` après un 403 et les points de #85 sur le statut des tâches : `change_status`, `reason`, couverture des couples champ × cible, doc 422) ; #101 (faux positifs du scanner de secrets sur des identifiants générés, plus quelques faiblesses de détection, `ready-for-human`) ; sont faits : #15, #17, #57, #58 et #59 (PR #80, #85, #74, #88 et #76), #39 (seuil de taille dans `AGENTS.md`, PR #108), #47 (origine de la WebView, PR #112), #86 (P3 de #74 : point 1 couvert par #98, point 2 conservé sous dérogation ADR-021, point 3 vérifié sur Helios), #104 et #106 (fuites du scanner de secrets, PR #114 et #116) et #107 (ticket WebSocket qui survivait à la suppression de son jeton, PR #115).
 
 ## Phase 2 — Exécution
 
@@ -92,7 +92,7 @@ Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un 
 
 **Quand :** dès que le noyau (Phase 1) est stable, au moment choisi par Loïc ; ne bloque aucune phase.
 
-**Livrables :** Tauri 2 encapsulant l'UI existante ; serveur FastAPI en sidecar ; origine de la WebView autorisée côté serveur (CORS REST + WebSocket, #47) ; icône de barre des tâches, notifications Windows, démarrage automatique ; installeur.
+**Livrables :** Tauri 2 encapsulant l'UI existante ; serveur FastAPI en sidecar ; origine de la WebView autorisée côté serveur (CORS REST + WebSocket, faite en phase 1, #112) ; icône de barre des tâches, notifications Windows, démarrage automatique ; installeur.
 
 **Critère de sortie :** Nexus s'ouvre comme une application Windows, sans navigateur, avec les mêmes vues.
 
@@ -136,7 +136,7 @@ Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un 
 
 ## Prochaine action immédiate
 
-**Phase 1 :** trancher #101 (faux positifs du scanner, attend Loïc) et poursuivre le suivi P3 de #95 (points scanner de #87, `change_status` et doc 422 de #85). Les PR ouvertes se fusionnent quand leurs relectures sont complètes.
+**Phase 1 :** trancher #101 (faux positifs du scanner, attend Loïc) et poursuivre le suivi P3 de #95 (points scanner de #87, test `last_used_at` après un 403, points de #85 sur le statut des tâches). Les PR ouvertes se fusionnent quand leurs relectures sont complètes.
 
 ---
 
