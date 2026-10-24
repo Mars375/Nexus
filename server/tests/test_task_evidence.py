@@ -221,7 +221,7 @@ def test_every_path_strips_like_the_api(client, raw):
     assert client.get(f"/api/tasks/{by_status}").json()["evidence"] == [expected]
 
 
-@pytest.mark.parametrize("target", ["review", "done", "blocked", "in_progress"])
+@pytest.mark.parametrize("target", ["review", "done"])
 def test_a_blank_item_in_a_direct_status_change_is_refused_not_dropped(client, target):
     ref = made(client)
     move(client, ref, "in_progress")
@@ -244,7 +244,7 @@ def test_a_blank_item_in_a_direct_status_change_is_refused_not_dropped(client, t
         (["commit:\ud800"], "invalid_value"),
     ],
 )
-@pytest.mark.parametrize("target", ["review", "blocked"])
+@pytest.mark.parametrize("target", ["review", "done"])
 def test_a_direct_status_change_checks_evidence_like_attach_evidence(
     client, target, evidence, expected
 ):
@@ -255,6 +255,28 @@ def test_a_direct_status_change_checks_evidence_like_attach_evidence(
         with pytest.raises(RuleViolation) as exc:
             service.change_status(session, task, target, "loic", evidence=evidence)
         assert exc.value.code == expected
+        session.rollback()
+    got = client.get(f"/api/tasks/{ref}").json()
+    assert got["status"] == "in_progress" and got["evidence"] == []
+
+
+def test_evidence_on_a_blocked_target_is_refused_as_inapplicable(client):
+    ref = made(client)
+    move(client, ref, "in_progress")
+    session, task = direct(client, ref)
+    with session:
+        with pytest.raises(RuleViolation) as exc:
+            service.change_status(
+                session,
+                task,
+                "blocked",
+                "loic",
+                block_cause="SSH",
+                block_plan="clé",
+                evidence=["commit:a"],
+            )
+        assert exc.value.code == "field_inapplicable"
+        assert exc.value.message == "evidence : champ inapplicable au statut « blocked »"
         session.rollback()
     got = client.get(f"/api/tasks/{ref}").json()
     assert got["status"] == "in_progress" and got["evidence"] == []
