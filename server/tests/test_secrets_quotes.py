@@ -64,7 +64,8 @@ def test_doubled_backslash_before_the_closing_quote_is_masked_whole():
 def test_json_inside_json_is_masked_whole():
     text = '{"body": "{\\"' + PW + '\\": \\"' + "hun" + "ter2Zq" + '\\"}"}'
 
-    assert_masked(text, '{"body": "{\\"' + PW + '\\": ' + REDACTED + '"}"}')
+    # The backslash that escapes the closing quote stays with it (amendment 2).
+    assert_masked(text, '{"body": "{\\"' + PW + '\\": ' + REDACTED + '\\"}"}')
 
 
 # 7. A quoted value that is never closed stops at the end of its line.
@@ -209,8 +210,8 @@ def test_hostile_100k_inputs_stay_linear(text):
 # Amendment (review of PR #116): a value that runs across quotes must never swallow
 # another label that master's scan, stopped at the quote, reached and masked.
 WORD = "Les" + "Chats"
-SECRET_A = "Zq7" + "a"
-SECRET_B = "Zq7" + "b"
+MARK_A = "Zq7" + "a"
+MARK_B = "Zq7" + "b"
 
 
 # 18. A quoted label after a passphrase keeps its own value masked whole.
@@ -218,19 +219,19 @@ SECRET_B = "Zq7" + "b"
     ("text", "expected"),
     [
         (
-            PW + ": " + WORD + ' "' + AK + '": "' + SECRET_A + "," + SECRET_B + '"',
+            PW + ": " + WORD + ' "' + AK + '": "' + MARK_A + "," + MARK_B + '"',
             PW + ": " + REDACTED + ' "' + AK + '": "' + REDACTED + '"',
         ),
         (
-            PW + ": " + WORD + " '" + TK + "': '" + SECRET_A + ", " + SECRET_B + "'",
+            PW + ": " + WORD + " '" + TK + "': '" + MARK_A + ", " + MARK_B + "'",
             PW + ": " + REDACTED + " '" + TK + "': '" + REDACTED + "'",
         ),
         (
-            PW + ': "x"y "' + TK + '": "' + SECRET_A + "," + SECRET_B + '"',
+            PW + ': "x"y "' + TK + '": "' + MARK_A + "," + MARK_B + '"',
             PW + ': "' + REDACTED + '" "' + TK + '": "' + REDACTED + '"',
         ),
         (
-            PW + ": " + WORD + '"' + TK + '": "' + SECRET_A + "," + SECRET_B + '"',
+            PW + ": " + WORD + '"' + TK + '": "' + MARK_A + "," + MARK_B + '"',
             PW + ": " + REDACTED + '"' + TK + '": "' + REDACTED + '"',
         ),
     ],
@@ -242,14 +243,14 @@ def test_quoted_label_after_a_value_keeps_its_value_masked(text, expected):
 
 # 19. The same label with its value on the next line.
 def test_quoted_label_with_its_value_on_the_next_line_is_masked():
-    text = PW + ": " + WORD + ' "' + TK + '":\n  ' + SECRET_A
+    text = PW + ": " + WORD + ' "' + TK + '":\n  ' + MARK_A
 
     assert_masked(text, PW + ": " + REDACTED + ' "' + TK + '":\n  ' + REDACTED)
 
 
 # 20. A quoted label glued after a bracket shell.
 def test_quoted_label_glued_after_a_bracket_shell_is_masked():
-    text = PW + "=" + REDACTED + '"' + TK + '": ' + SECRET_A
+    text = PW + "=" + REDACTED + '"' + TK + '": ' + MARK_A
 
     assert_masked(text, PW + "=" + REDACTED + '"' + TK + '": ' + REDACTED)
 
@@ -258,10 +259,10 @@ def test_quoted_label_glued_after_a_bracket_shell_is_masked():
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        (PW + ": " + SECRET_A + "#" + TK + ":\n  " + SECRET_B, PW + ": " + REDACTED),
-        (PW + ": " + TK + ":\n  " + SECRET_B, PW + ": " + REDACTED),
-        (PW + ": [x." + TK + ":\n  " + SECRET_B, PW + ": " + REDACTED),
-        (PW + ": '" + SECRET_A + " " + TK + ":\n  " + SECRET_B, PW + ": '" + REDACTED + "'"),
+        (PW + ": " + MARK_A + "#" + TK + ":\n  " + MARK_B, PW + ": " + REDACTED),
+        (PW + ": " + TK + ":\n  " + MARK_B, PW + ": " + REDACTED),
+        (PW + ": [x." + TK + ":\n  " + MARK_B, PW + ": " + REDACTED),
+        (PW + ": '" + MARK_A + " " + TK + ":\n  " + MARK_B, PW + ": '" + REDACTED + "'"),
     ],
     ids=["glued", "value_start", "bracket", "unterminated_quote"],
 )
@@ -271,7 +272,7 @@ def test_label_at_the_end_of_a_line_inside_a_value_masks_the_next_line(text, exp
 
 # 22. A value that starts on a quoted label: that label's value is masked.
 def test_value_that_starts_on_a_quoted_label_masks_that_labels_value():
-    text = PW + ': "' + TK + '": ' + SECRET_A
+    text = PW + ': "' + TK + '": ' + MARK_A
 
     assert_masked(text, PW + ': "' + TK + '": ' + REDACTED)
 
@@ -311,3 +312,74 @@ def test_hostile_100k_label_inputs_stay_linear(text):
     elapsed = time.perf_counter() - started
 
     assert elapsed < 1.0
+
+
+# Amendment 2 (second review of PR #116). MARK_C stays a marker, never a label.
+MARK_C = "Zq7" + "c"
+# Two `.env` entries left empty, then the third variable's name.
+ENV_HEAD = PW.upper() + "=\n" + TK.upper() + "=\n" + AK.upper()
+
+
+# 25. A label left empty at the end of its line, then a line that opens another
+# assignment (YAML nesting, empty `.env` entries): that assignment keeps its label
+# and its value is masked whole.
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "auth:\n  " + PW + ":\n  " + TK + ":\n  " + AK + ': "' + MARK_A + "," + MARK_B + '"\n',
+            "auth:\n  " + PW + ":\n  " + TK + ":\n  " + AK + ': "' + REDACTED + '"\n',
+        ),
+        (
+            ENV_HEAD + '="' + MARK_A + "," + MARK_B + '"',
+            ENV_HEAD + '="' + REDACTED + '"',
+        ),
+        (
+            ENV_HEAD + "=[" + MARK_A + ", " + MARK_B + "]",
+            ENV_HEAD + "=" + REDACTED,
+        ),
+        (
+            PW + ": x#" + TK + ":\n" + AK + ': "' + MARK_A + "," + MARK_B + '"',
+            PW + ": " + REDACTED + "\n" + AK + ': "' + REDACTED + '"',
+        ),
+    ],
+    ids=["yaml_nested", "env_quoted", "env_list", "glued_label_at_line_end"],
+)
+def test_empty_label_before_another_assignment_keeps_that_value_masked(text, expected):
+    assert_masked(text, expected)
+
+
+# 26. A lone backslash before a separator is no separator: the next label is found.
+def test_lone_backslash_before_a_separator_does_not_hide_the_next_label():
+    text = TK + "\\:" + PW + '" =' + MARK_A
+
+    assert_masked(text, TK + "\\:" + PW + '" =' + REDACTED)
+
+
+# 27. A label with no value after it stays inside the value that reached it.
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (PW + ":[]" + MARK_A + "w_" + PW.upper() + ":", PW + ":" + REDACTED),
+        (TK + ":w " + MARK_C + "-" + TK + '":', TK + ":" + REDACTED),
+    ],
+    ids=["after_a_bracket", "quote_before_the_separator"],
+)
+def test_label_without_a_value_stays_inside_the_value(text, expected):
+    assert_masked(text, expected)
+
+
+# 28. Idempotence on shapes found by the review: a second pass changes nothing.
+@pytest.mark.parametrize(
+    "text",
+    [
+        PW + ":'''q7fwinScret" + "client" + "Secret=",
+        TK + ':"\n\'\'' + MDP + ':\\"',
+        MDP + ':\\"' + MARK_C + "w" + WORD + "DB_" + PW.upper() + '":',
+    ],
+    ids=["glued_after_empty_quotes", "escaped_quote_at_line_end", "prefixed_quoted_label"],
+)
+def test_second_pass_changes_nothing(text):
+    cleaned, _found = redact(text)
+
+    assert redact(cleaned) == (cleaned, [])

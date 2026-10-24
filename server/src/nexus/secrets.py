@@ -107,19 +107,36 @@ _CREDENTIAL_KEY = re.compile(rf"(?i){_LABEL}")
 
 # Characters that end a bare value: whitespace, comma, semicolon, closing brace.
 _STOP = r"\t \r\n,;}"
+# What may sit between a label and its separator: a quote, escaped or not (`"<label>":`,
+# `\"<label>\":`). Never a lone backslash: `<label>\:` is not an assignment, and
+# reading it as one hid the next label from the scan (`<l1>\:<l2>" =x` left x clear).
+_SEP_QUOTE = r"(?:\\?[\"'])?"
+# A label is only worth stopping for when a value follows its separator; a label
+# with nothing after it stays inside the value that reached it.
+_HAS_VALUE = rf"(?=\s*[^{_STOP}])"
 # A label that opens another value behind a quote, bare or escaped (`"<label>":`,
 # `'<label>'=`, `\"<label>\":`). Master ended every bare value at a quote, so its scan
 # resumed there and masked that label's own value; a value that now runs across
 # quotes stops in front of such a label instead (issue #106).
-_QUOTED_LABEL = rf"\\?[\"'](?:{_LABEL})\\?[\"']?\s*[=:]"
+_QUOTED_LABEL = rf"\\?[\"'](?:{_LABEL}){_SEP_QUOTE}\s*[=:]{_HAS_VALUE}"
 # The same, quote optional: a further word that opens another labelled value.
-_NEXT_LABEL = rf"\\?[\"']?(?:{_LABEL})\\?[\"']?\s*[=:]"
+_NEXT_LABEL = rf"\\?[\"']?(?:{_LABEL}){_SEP_QUOTE}\s*[=:]{_HAS_VALUE}"
+# The blanks after a separator cross a line break only towards a line that does
+# not open another assignment: `<label>:` left empty above `<label2>: x` (YAML
+# nesting, an empty `.env` entry) has no value, and `<label2>` keeps its own.
+_SEP_TAIL = rf"[ \t]*(?:\r?\n(?![ \t]*(?:export[ \t]+)?{_NEXT_LABEL})[ \t]*)*"
+# A backslash that escapes a quote ending the run: it stays with that quote, so
+# masking the value never turns `\"` into a bare `"` that a second pass would read
+# as a closing quote (idempotence).
+_LONE_BACKSLASH = rf"\\(?=[\"'](?![^{_STOP}]))"
 # A label inside a value, at the end of its line, whose own value sits on the next
 # line (`<label>: x#<label>:` then `y`): the value runs on across the line break and
-# the next line is masked too. Without it the value stopped at the break and the
-# next line stayed in the clear.
+# the next line is masked too. Not when the next line opens another assignment
+# (YAML `<label>:` with nested keys, `.env` `<LABEL>=` left empty): that line keeps
+# its label and the scan masks its own value.
 _LABEL_AT_LINE_END = (
-    rf"(?<![\w.-])(?:{_LABEL})\\?[\"']?[ \t]*[=:][ \t]*\r?\n\s*(?=[^{_STOP}])"
+    rf"(?<![\w.-])(?:{_LABEL}){_SEP_QUOTE}[ \t]*[=:][ \t]*\r?\n\s*(?=[^{_STOP}])"
+    rf"(?!(?:export[ \t]+)?{_NEXT_LABEL})"
 )
 # One character of a bare value after its first: a quote belongs to the value only
 # when the value goes on after it (j'aime, pa"ss) and does not open another label;
@@ -127,23 +144,28 @@ _LABEL_AT_LINE_END = (
 # canal` keeps its closing quote and its prose.
 _RUN_CHAR = (
     rf"(?:{_LABEL_AT_LINE_END}"
-    rf"|(?!{_QUOTED_LABEL})(?:[^{_STOP}\"']|[\"'](?=[^{_STOP}])))"
+    rf"|(?!{_QUOTED_LABEL}|{_LONE_BACKSLASH})(?:[^{_STOP}\"']|[\"'](?=[^{_STOP}])))"
 )
 # A further space-separated word of a passphrase, unless it opens another labelled value.
-_NEXT_WORD = rf"[ \t]+(?!{_NEXT_LABEL})[^{_STOP}]{_RUN_CHAR}*"
+_NEXT_WORD = rf"[ \t]+(?!{_NEXT_LABEL}|{_LONE_BACKSLASH})[^{_STOP}]{_RUN_CHAR}*"
 # Text glued after a closing quote that did not end the value: up to the next stop.
 _GLUE_CHAR = rf"(?:{_LABEL_AT_LINE_END}|(?!{_QUOTED_LABEL})[^{_STOP}])"
 _GLUED_WORD = rf"[ \t]+(?!{_NEXT_LABEL}){_GLUE_CHAR}+"
-# A value never starts on a label between quotes (`<label>: "<label>": x`): the scan
-# resumes on that label and masks its own value.
-_NOT_A_LABEL = rf"(?!\\?\"(?:{_LABEL})\\?\"\s*[=:]|\\?'(?:{_LABEL})\\?'\s*[=:])"
+# A value never starts on a label between quotes that has its own value
+# (`<label>: "<label>": x`): the scan resumes on that label and masks its value.
+_NOT_A_LABEL = (
+    rf"(?!\\?\"(?:{_LABEL})\\?\"\s*[=:]{_HAS_VALUE}"
+    rf"|\\?'(?:{_LABEL})\\?'\s*[=:]{_HAS_VALUE})"
+)
 # A line that opens another labelled value: a quoted value never runs across it.
-_NEW_ASSIGNMENT_LINE = rf"[ \t]*(?:export[ \t]+)?[\"']?(?:{_LABEL})\\?[\"']?[ \t]*[:=]"
-# A value made only of [REDACTED] markers, quotes and separators is already masked:
-# when the scan stops in front of a label, the entropy pass may mask that label
-# too and leave `[REDACTED]'[REDACTED]:` behind; masking it again on a second pass
-# would break idempotence.
-_ONLY_MARKERS = re.compile(r"[\"':=]*(?:\[REDACTED\][\"':=]*)+")
+_NEW_ASSIGNMENT_LINE = (
+    rf"[ \t]*(?:export[ \t]+)?\\?[\"']?(?:{_LABEL}){_SEP_QUOTE}[ \t]*[:=]"
+)
+# A value made only of [REDACTED] markers, quotes, separators and backslashes is
+# already masked: when the scan stops in front of a label, the entropy pass may
+# mask that label too and leave `[REDACTED]'[REDACTED]:` behind; masking it again
+# on a second pass would break idempotence.
+_ONLY_MARKERS = re.compile(r"[\"':=\\]*(?:\[REDACTED\][\"':=\\]*)+")
 
 
 def _quoted(q: str) -> str:
@@ -162,7 +184,7 @@ _SQ = _quoted("'")
 
 _ASSIGNMENT = re.compile(
     rf"(?i)(?<![\w.-])({_LABEL})"
-    r"(\\?[\"']?\s*[:=]\s*)"
+    rf"({_SEP_QUOTE}\s*[:=]{_SEP_TAIL})"
     rf"{_NOT_A_LABEL}(?:(?:{_DQ}|{_SQ})"
     rf"((?=[\w\\\"'])(?!{_NEXT_LABEL}){_GLUE_CHAR}+(?:{_GLUED_WORD})*)?"
     r"|((?:(?:basic|bearer|digest|negotiate|ntlm)\s+)?"
@@ -171,18 +193,18 @@ _ASSIGNMENT = re.compile(
     # starts on a label whose own value sits on the next line takes that line too.
     # Text glued after a bracket shell joins the value unless it opens another
     # label (`[REDACTED]"<label>": x`). Bracket fragments glued to the run stay
-    # inside the value: a value starting
-    # at `[` goes through the bracket shell FIRST (alternation order), so a value
-    # that starts at an existing [REDACTED] never reaches the naked-run chain, the
-    # prose after the shell stays prose, and the shell value comes back unchanged
-    # through mask_value's short circuit (idempotence). A further word that opens
-    # a recognised label ends the sweep instead of joining it: the resumed scan
-    # masks it under its own label, so [REDACTED] is never doubled, while a
-    # passphrase word that merely carries an `=` (« battery=staple ») stays inside
-    # the value. An auth scheme (Basic xyz) is part of the value.
+    # inside the value: a value starting at `[` goes through the bracket shell
+    # FIRST (alternation order), so a value that starts at an existing [REDACTED]
+    # never reaches the naked-run chain, the prose after the shell stays prose,
+    # and the shell value comes back unchanged through mask_value's short circuit
+    # (idempotence). A further word that opens a recognised label ends the sweep
+    # instead of joining it: the resumed scan masks it under its own label, so
+    # [REDACTED] is never doubled, while a passphrase word that merely carries an
+    # `=` (« battery=staple ») stays inside the value. An auth scheme (Basic xyz)
+    # is part of the value.
     rf"(?:{_LABEL_AT_LINE_END}{_RUN_CHAR}*(?:{_NEXT_WORD})*"
     rf"|\[(?:{_LABEL_AT_LINE_END}|[^\]\r\n])*\]?(?:(?!{_NEXT_LABEL}){_RUN_CHAR}+)?"
-    rf"|[^{_STOP}\"']{_RUN_CHAR}*(?:{_NEXT_WORD})*)))"
+    rf"|(?!{_LONE_BACKSLASH})[^{_STOP}\"']{_RUN_CHAR}*(?:{_NEXT_WORD})*)))"
 )
 
 # Long opaque runs: random-looking tokens that matched no format above (third-party
@@ -582,8 +604,10 @@ def redact(text: str) -> tuple[str, list[str]]:
     def mask_value(match: re.Match[str]) -> str:
         label, separator, double, single, glued, bare = match.groups()
         value = next(v for v in (double, single, bare) if v is not None)
-        # Text glued after the closing quote means the quote did not end the value.
-        if not glued and (not value or _ONLY_MARKERS.fullmatch(value)):
+        # Text glued after the closing quote means the quote did not end the value;
+        # a value (glued text included) made only of markers is already masked.
+        masked = value + (glued or "")
+        if not masked or _ONLY_MARKERS.fullmatch(masked):
             return match.group(0)
         found.append("credential")
         quote = '"' if double is not None else "'" if single is not None else ""
