@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 env:
   HUSKY: "0"
@@ -36,6 +36,7 @@ jobs:
         with:
           node-version: "22"
           cache: "pnpm"
+          cache-dependency-path: "**/pnpm-lock.yaml"
 
       - name: Install dependencies
         run: pnpm install && pnpm bootstrap
@@ -70,6 +71,7 @@ jobs:
         with:
           node-version: "22"
           cache: "pnpm"
+          cache-dependency-path: "**/pnpm-lock.yaml"
 
       - name: Install dependencies
         run: pnpm install && pnpm bootstrap
