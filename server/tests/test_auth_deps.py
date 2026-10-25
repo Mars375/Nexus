@@ -261,6 +261,19 @@ def test_actor_header_differing_from_the_token_is_403_without_echo(client, heade
         assert s.scalars(select(Task)).all() == []
 
 
+@pytest.mark.parametrize("header", ["loic", "mallory", ""])
+def test_actor_header_differing_from_the_token_does_not_touch_its_last_use(client, header):
+    # The actor check comes before the touch: a refused request is not a use of the token.
+    token, token_id = issue(client, "helios")
+    old = now() - timedelta(seconds=301)
+    with client.app.state.sessionmaker() as s:
+        s.get(ActorToken, token_id).last_used_at = old
+        s.commit()
+    res = create_task(client, **bearer(token), **{"X-Nexus-Actor": header})
+    assert res.status_code == 403
+    assert last_used_of(client, token_id) == old
+
+
 def event(actor, id="e1"):
     return {"id": id, "at": AT, "actor": actor, "kind": "question", "subject": "avance ?",
             "needs": ["loic"]}
