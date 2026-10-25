@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from collections import Counter
 from collections.abc import Callable
+from datetime import datetime
+from functools import cache
 from math import log2
 from typing import Any
 
@@ -23,6 +25,12 @@ _FULL: list[tuple[str, re.Pattern[str]]] = [
     ("aws_access_key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
     ("slack_token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}")),
     ("google_api_key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
+    # New Relic browser key (issue #101): `NRJS-` + 19 hex digits, 76 bits — under
+    # the 128-bit floor of the entropy pass, so only its format can catch it.
+    ("newrelic_key", re.compile(r"\bNRJS-[a-f0-9]{19}\b")),
+    # Sourcegraph access token (issue #101): `sgp_` + 16 hex digits (or `local`)
+    # + `_` + 40 hex digits.
+    ("sourcegraph_token", re.compile(r"\bsgp_(?:[a-fA-F0-9]{16}|local)_[a-fA-F0-9]{40}\b")),
     # Nexus actor token (ADR-020): `nxt_` + 43 base64url characters; a longer run is redacted whole.
     # Deliberately unanchored (no `\b`): ADR-006 prefers over-redaction, so a token glued to
     # other text is still masked.
@@ -209,11 +217,10 @@ _ASSIGNMENT = re.compile(
 
 # Long opaque runs: random-looking tokens that matched no format above (third-party
 # API keys, full-width hashes). The pass runs last, once labelled values are already
-# masked. Dots, slashes and colons are not in the candidate class, so UUIDs, paths,
-# URLs and dotted hosts never become candidates; `_` and `-` joiners ARE allowed —
-# a token like « Y7qP2rTx_N9vH4mKu_C6wJ8sZa_R5dE3fGh » splits into runs below 24
-# characters — with the segment guard in mask_random_run keeping identifiers
-# (a short word between separators) and 4-character UUID groups out (issue #15).
+# masked. Dots, slashes and colons are not in the candidate class, so paths, URLs and
+# dotted hosts never become candidates; `_` and `-` joiners ARE allowed — a token
+# like « Y7qP2rTx_N9vH4mKu_C6wJ8sZa_R5dE3fGh » splits into runs below 24 characters —
+# and `_opaque_run` rules on the whole candidate, whatever its chopping (issue #101).
 _ENTROPY_TOKEN = re.compile(r"[A-Za-z0-9+=_-]{24,}")
 # Unlabelled base64 split by slashes (issue #84): the class above has no `/`, so a
 # segmented value leaked — every flat sub-run stayed under the floor. This pattern
@@ -329,58 +336,189 @@ def _word_chunk(part: str) -> bool:
     return letters.isalpha() and letters.islower() and len(letters) >= 6
 
 
+# Opaque material of an entropy candidate (issue #101). The candidate is split on
+# `-` and `_`, and the segments a generator or a person writes on purpose are set
+# aside: a timestamp (`_timestamp_segment`), a UUID or a ULID
+# (`_generated_id_segment`, plus the dashed UUID removed before the split) and a
+# name (`_name_segment`). What is left is the material. The candidate is opaque
+# when that material could hold a 128-bit secret, however the value was chopped:
+# the sum over its segments of length × log2(alphabet) reaches `_OPAQUE_BITS`, and
+# its Shannon entropy sits within `_ENTROPY_MARGIN` of what a uniform draw of that
+# length over that alphabet gives (a repeated or worded run falls short).
+# 128 bits is the smallest size of the keys we must catch (`<hex32>`: Datadog,
+# Mailgun, Shopify) and sits above the random part of generated identifiers: a
+# hex8/hex12/hex24 suffix behind a timestamp (32 to 96 bits), a nanoid21 (≤ 125),
+# a base36 24 (cuid2, `<b36_12>_<b36_12>`: 124).
+# Measured on 1 000 draws per family (issue #101, spec comment): every generated
+# family of the issue goes to 0 and no secret family loses detection against the
+# rules this replaces. Assumed prices, pinned by tests: a split hex value of 128
+# bits is masked whatever its prefix (`span_<hex16>_<hex16>`, the shape of a
+# `key_<hex16>_<hex16>`), a hex32 key shaped like a UUID v4 (1 draw in 64) is
+# read as an identifier, and a 128-bit base62 identifier (`ch_<b62_24>`, KSUID)
+# stays masked as on master.
+_OPAQUE_BITS = 128.0
+_ENTROPY_MARGIN = 0.6
+# The expected entropy grows with the length; past 128 characters the cap only
+# lowers the bar (more masking), and it bounds the cache of `_expected_entropy`.
+_ENTROPY_SAMPLE_CAP = 128
+_UUID_DASHED = re.compile(
+    r"(?<![A-Za-z0-9])[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"
+    r"-[0-9a-fA-F]{12}(?![A-Za-z0-9])"
+)
+_HEX_SEGMENT = re.compile(r"[0-9a-f]+|[0-9A-F]+")
+_ULID_SEGMENT = re.compile(r"[0-7][0-9a-hjkmnp-tv-z]{25}|[0-7][0-9A-HJKMNP-TV-Z]{25}")
+_CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz"
+_STAMP_WITH_T = re.compile(r"([0-9]{8})T([0-9]{6})Z?")
+_STAMP_FORMATS = {8: "%Y%m%d", 12: "%Y%m%d%H%M", 14: "%Y%m%d%H%M%S"}
+_NAME_SEGMENT = re.compile(r"[A-Za-z]+[0-9]*")
+_EPOCH_MS_FLOOR = 946_684_800_000  # 2000-01-01T00:00:00Z
+_EPOCH_MS_CEILING = 4_102_444_800_000  # 2100-01-01T00:00:00Z
+
+
+def _timestamp_segment(segment: str) -> bool:
+    """A date or a Unix epoch written in digits, as generators stamp their ids.
+
+    `20261018`, `202610181430`, `20261018143022` and `20261018T143022Z` must be a
+    valid date between 1970 and 2099; a 10-, 13-, 16- or 19-digit run must be an
+    epoch in seconds, milliseconds, microseconds or nanoseconds between 2000 and
+    2100. Any other digit run (a counter, an account number) stays material.
+    """
+    stamped = _STAMP_WITH_T.fullmatch(segment)
+    if stamped:
+        segment = stamped.group(1) + stamped.group(2)
+    if not (segment.isascii() and segment.isdigit()):
+        return False
+    size = len(segment)
+    if size in _STAMP_FORMATS:
+        try:
+            datetime.strptime(segment, _STAMP_FORMATS[size])
+        except ValueError:
+            return False
+        return 1970 <= int(segment[:4]) < 2100
+    if size in (10, 13, 16, 19):
+        millis = int(segment) * 1000 if size == 10 else int(segment) // 10 ** (size - 13)
+        return _EPOCH_MS_FLOOR <= millis < _EPOCH_MS_CEILING
+    return False
+
+
+def _generated_id_segment(segment: str) -> bool:
+    """A UUID of version 4 or 7 written as 32 hex digits, or a ULID.
+
+    Version nibble and variant bits for the UUID (a random hex32 key matches a
+    v4 one draw in 64: the assumed price), a plausible millisecond timestamp for
+    the UUID v7 and the ULID (Crockford base32, one case).
+    """
+    if len(segment) == 32 and _HEX_SEGMENT.fullmatch(segment):
+        lowered = segment.lower()
+        if lowered[16] not in "89ab":
+            return False
+        if lowered[12] == "4":
+            return True
+        return lowered[12] == "7" and (
+            _EPOCH_MS_FLOOR <= int(lowered[:12], 16) < _EPOCH_MS_CEILING
+        )
+    if _ULID_SEGMENT.fullmatch(segment):
+        millis = 0
+        for ch in segment[:10].lower():
+            millis = millis * 32 + _CROCKFORD.index(ch)
+        return _EPOCH_MS_FLOOR <= millis < _EPOCH_MS_CEILING
+    return False
+
+
+def _name_segment(segment: str) -> bool:
+    """A word or a camelCase / PascalCase name, digits only at its end.
+
+    `accountsettings3`, `Connection1`, `handleUserLoginV2`, `HTTPServer`: most
+    lowercase letters sit in runs of three or more (`_lower_run_share`), and
+    every block of capitals opens a word (one capital before lowercase letters),
+    is an acronym before a word (three capitals or more, `HTTPServer`), a
+    trailing acronym (`toJSON`, `userID`) or a version tag before the final
+    digits (`apiV2`). A random draw shuffles case (`SNcveshQ`, `JVwPNruz`) and
+    fails the shape. One linear scan, no backtracking pattern.
+    """
+    if not _NAME_SEGMENT.fullmatch(segment) or _lower_run_share(segment) < 0.6:
+        return False
+    letters = segment.rstrip("0123456789")
+    versioned = len(letters) < len(segment)
+    index, size = 0, len(letters)
+    while index < size:
+        if not letters[index].isupper():
+            index += 1
+            continue
+        end = index
+        while end < size and letters[end].isupper():
+            end += 1
+        block = end - index
+        if end < size and block == 2:
+            return False
+        if end == size and block == 1 and not versioned:
+            return False
+        index = end
+    return True
+
+
+def _alphabet_size(segment: str) -> int:
+    """The smallest usual alphabet that holds a segment.
+
+    16 for hex digits of one case, otherwise 10 per digit class, 26 per letter
+    case present and 2 for the base64 `+` and `=`.
+    """
+    has_lower = any("a" <= ch <= "z" for ch in segment)
+    has_upper = any("A" <= ch <= "Z" for ch in segment)
+    has_digit = any("0" <= ch <= "9" for ch in segment)
+    has_sign = "+" in segment or "=" in segment
+    if (has_lower or has_upper) and not has_sign and _HEX_SEGMENT.fullmatch(segment):
+        return 16
+    return 10 * has_digit + 26 * has_lower + 26 * has_upper + 2 * has_sign
+
+
+@cache
+def _expected_entropy(size: int, alphabet: int) -> float:
+    """Expected Shannon entropy, in bits per character, of `size` characters
+    drawn uniformly from `alphabet` symbols.
+
+    log2(n) − (k / n) · E[c · log2(c)], where c is the binomial count of one
+    symbol. At most `_ENTROPY_SAMPLE_CAP` × 63 pairs are ever computed.
+    """
+    p = 1.0 / alphabet
+    ratio = p / (1.0 - p)
+    pmf = (1.0 - p) ** size
+    weighted = 0.0
+    for count in range(1, size + 1):
+        pmf *= (size - count + 1) / count * ratio
+        if count >= 2:
+            weighted += pmf * count * log2(count)
+    return log2(size) - alphabet * weighted / size
+
+
 def _opaque_run(token: str) -> bool:
     """Does a high-entropy candidate read as an opaque token or an identifier?"""
-    if _shannon_bits_per_char(token) < _HIGH_ENTROPY_BITS:
-        return False
     # Vendor tokens are drawn from digit-bearing alphabets; a candidate made
     # only of letters (joined label vocabulary such as
     # « authentification-rechargement ») is a phrase, not a secret —
-    # clean_label() validates its labels through this very gate.
-    if not any(ch.isdigit() for ch in token):
+    # clean_label() validates its labels through this very gate. A candidate
+    # without a letter (a long decimal number) is not opaque either.
+    if not any(ch.isdigit() for ch in token) or not any(ch.isalpha() for ch in token):
         return False
-    # Framing separators (markdown italics `_token_`) only produce empty
-    # segments: they do not drag the floor down, real segments decide.
-    parts = [part for part in re.split(r"[-_]", token) if part]
-    if parts and min(map(len, parts)) >= 8:
-        return True
-    # A short head segment is tolerated when EVERY following segment is full
-    # length (≥ 8), carries a digit, mixes upper- and lowercase letters, AND
-    # does not itself read as a word: « tok_Y7qP2rTx_… » is opaque (issue #84),
-    # while a snake_case identifier whose tail is plain words with a digit
-    # appended — v1_userprofile2_accountsettings3, db_connectionpool1_maxconnections2 —
-    # stays an identifier (Antigravity review on d2361cc: those digit-bearing
-    # word tails passed on length alone and masked five identifiers, a
-    # regression against master; a digit-free tail such as `database` was
-    # already ruled out on 6d78a6c). A tail of single lowercase letters
-    # between digits and capitals keeps scoring 0 and passes.
-    # Mixed case is the base62 signature of a vendor tail (issue #93): generated
-    # identifiers draw theirs from single-case alphabets — decimal timestamps,
-    # hex digests, base36 — and `evt_20261018143022_a1b2c3d4` was refused with a
-    # 409. A segment of 24+ characters is exempt: a long hex tail is the shape of
-    # real vendor keys (`key-<hex32>`, `shpat_<hex32>`) and no generated
-    # identifier of this family carries one next to a decimal timestamp (that
-    # segment still fails the case test). Assumed price: a short-prefixed value
-    # made only of single-case segments under 24 characters is no longer masked.
-    if len(parts) >= 2 and len(parts[0]) < 8 and all(
-        len(part) >= 8
-        and any(ch.isdigit() for ch in part)
-        and (
-            len(part) >= 24
-            or (any(ch.isupper() for ch in part) and any(ch.islower() for ch in part))
-        )
-        and _lower_run_share(part) < 0.6
-        for part in parts[1:]
-    ):
-        return True
-    # A short vendor prefix does not break a token that holds a flat 24+ run
-    # behind it (« tok_Y7qP2rTx… »): the prefix belongs to the value it names
-    # and the whole candidate is masked. The 4-character groups of a UUID and
-    # the words of a slug never reach 24 characters on their own.
-    return any(
-        len(part) >= 24 and _shannon_bits_per_char(part) >= _HIGH_ENTROPY_BITS
-        for part in parts
+    token = _UUID_DASHED.sub("_", token)
+    material = [
+        part
+        for part in re.split(r"[-_]", token)
+        if part
+        and not (_timestamp_segment(part) or _generated_id_segment(part) or _name_segment(part))
+    ]
+    sizes = [_alphabet_size(part) for part in material]
+    # A hex segment that drew no letter (`30882887`) is still hex.
+    if 16 in sizes:
+        sizes = [16 if size == 10 else size for size in sizes]
+    bits = sum(len(part) * log2(size) for part, size in zip(material, sizes, strict=True))
+    if bits < _OPAQUE_BITS:
+        return False
+    joined = "".join(material)
+    expected = _expected_entropy(
+        min(len(joined), _ENTROPY_SAMPLE_CAP), round(2 ** (bits / len(joined)))
     )
+    return _shannon_bits_per_char(joined) >= expected - _ENTROPY_MARGIN
 
 
 def _blob_segment(segment: str) -> bool:
