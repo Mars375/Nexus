@@ -226,6 +226,15 @@ def change_status(
     role: str | None = None,
 ) -> Task:
     permissions.check_status(actor, target)
+    rules.check_status_fields(
+        target,
+        reason=reason,
+        block_cause=block_cause,
+        block_plan=block_plan,
+        follow_up_at=follow_up_at,
+        evidence=evidence,
+        role=role,
+    )
     if evidence is not None:
         # Same checks as attach_evidence and publish(): a direct caller gets no silent drop.
         # Judged on the raw items, before masking (an item reduced to a secret is filtered later).
@@ -307,8 +316,6 @@ def change_status(
     changes |= {f: [before[f], getattr(task, f)] for f in watched if before[f] != getattr(task, f)}
     if final != target:
         changes["note"] = "preuve attendue manquante : clôture passée en review"
-    if reason and target != "dropped":
-        changes["reason"] = reason
     _record(session, task, actor, "status", changes)
     _record_redactions(session, task, actor, redacted)
     return task
