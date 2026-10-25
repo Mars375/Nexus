@@ -210,8 +210,18 @@ test("une tâche préparée « principale » démarre en auxiliaire si une autre
   await dialog.getByRole('button', { name: 'Déplacer en en cours' }).click()
 
   await expect(column(page, 'En cours').getByText('Préparée principale', { exact: true })).toBeVisible()
-  const started = await (await page.request.get(`/api/tasks/${id}`, { headers: auth() })).json()
-  expect(started.operation_role).toBe('auxiliary')
+  // The board card is optimistic: the status POST may still be in flight when the API is read.
+  // Wait for the server to have resolved the role instead of reading it once.
+  await expect
+    .poll(
+      async (): Promise<string | null> => {
+        const response = await page.request.get(`/api/tasks/${id}`, { headers: auth() })
+        if (!response.ok()) throw new Error(`GET /api/tasks/${id} : ${response.status()}`)
+        return (await response.json()).operation_role
+      },
+      { message: 'le rôle d’opération doit être résolu côté serveur', timeout: 5_000 },
+    )
+    .toBe('auxiliary')
 })
 
 test('le tableau et le détail disent d\'où viennent les données', async ({ page }) => {
