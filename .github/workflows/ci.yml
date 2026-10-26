@@ -85,3 +85,11 @@ jobs:
 
       - name: Run end-to-end tests
         run: pnpm e2e
+
+      - name: Upload Playwright traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: web/test-results/
+          if-no-files-found: ignore
