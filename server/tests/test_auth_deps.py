@@ -3,7 +3,7 @@
 import logging
 import sqlite3
 import time
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 import pytest
@@ -11,7 +11,7 @@ from fastapi import Depends
 from sqlalchemy import select
 
 from nexus.auth import tokens
-from nexus.clock import now
+from nexus.clock import TZ, now
 from nexus.models import ActorToken, Approval, Task, TaskHistory
 
 AT = "2026-09-28T09:05:00+02:00"
@@ -32,6 +32,22 @@ def bearer(token):
 def last_used_of(client, token_id):
     with client.app.state.sessionmaker() as s:
         return s.get(ActorToken, token_id).last_used_at
+
+
+def outside_window():
+    """An instant just outside the touch window, computed on the UTC timeline: wall-clock
+    subtraction in Europe/Paris lands in a non-existent hour on the spring DST change and
+    can end up in the future (#128)."""
+    return now().astimezone(UTC) - timedelta(seconds=301)
+
+
+def test_outside_window_is_in_the_past_on_the_spring_dst_change(monkeypatch):
+    # 2027-03-28 03:02 CEST: 301 s earlier on the wall clock is 02:56:59, an hour that does
+    # not exist that day; read back with fold=0 it would be 54 minutes in the future.
+    moment = datetime(2027, 3, 28, 3, 2, tzinfo=TZ)
+    monkeypatch.setitem(globals(), "now", lambda: moment)
+    assert outside_window() == moment.astimezone(UTC) - timedelta(seconds=301)
+    assert outside_window() < moment
 
 
 def create_task(client, **headers):
@@ -158,13 +174,13 @@ def test_a_recent_use_is_not_written_again(client):
 
 def test_a_use_after_the_window_is_recorded_again(client):
     token, token_id = issue(client)
-    old = now() - timedelta(seconds=301)
+    old = outside_window()
     with client.app.state.sessionmaker() as s:
         s.get(ActorToken, token_id).last_used_at = old
         s.commit()
     assert create_task(client, **bearer(token)).status_code == 201
     stamp = last_used_of(client, token_id)
-    assert stamp is not None and stamp > old
+    assert stamp is not None and stamp.astimezone(UTC) > old
     assert abs((stamp - now()).total_seconds()) < 5
 
 
@@ -232,14 +248,14 @@ def test_a_recent_use_opens_no_touch_session(client, monkeypatch):
 
 def test_a_revoked_token_is_refused_without_touching_its_last_use(client):
     token, token_id = issue(client)
-    old = now() - timedelta(seconds=301)
+    old = outside_window()
     with client.app.state.sessionmaker() as s:
         row = s.get(ActorToken, token_id)
         row.last_used_at = old
         row.revoked_at = now()
         s.commit()
     assert create_task(client, **bearer(token)).status_code == 401
-    assert last_used_of(client, token_id) == old
+    assert last_used_of(client, token_id).astimezone(UTC) == old
 
 
 def test_actor_header_matching_the_token_is_accepted(client):
@@ -265,13 +281,13 @@ def test_actor_header_differing_from_the_token_is_403_without_echo(client, heade
 def test_actor_header_differing_from_the_token_does_not_touch_its_last_use(client, header):
     # The actor check comes before the touch: a refused request is not a use of the token.
     token, token_id = issue(client, "helios")
-    old = now() - timedelta(seconds=301)
+    old = outside_window()
     with client.app.state.sessionmaker() as s:
         s.get(ActorToken, token_id).last_used_at = old
         s.commit()
     res = create_task(client, **bearer(token), **{"X-Nexus-Actor": header})
     assert res.status_code == 403
-    assert last_used_of(client, token_id) == old
+    assert last_used_of(client, token_id).astimezone(UTC) == old
 
 
 def event(actor, id="e1"):
