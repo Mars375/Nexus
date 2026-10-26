@@ -47,7 +47,8 @@ def test_outside_window_is_in_the_past_on_the_spring_dst_change(monkeypatch):
     moment = datetime(2027, 3, 28, 3, 2, tzinfo=TZ)
     monkeypatch.setitem(globals(), "now", lambda: moment)
     assert outside_window() == moment.astimezone(UTC) - timedelta(seconds=301)
-    assert outside_window() < moment
+    # Compare instants: two values sharing one tzinfo compare by wall clock and would pass.
+    assert outside_window().astimezone(UTC) < moment.astimezone(UTC)
 
 
 def create_task(client, **headers):
