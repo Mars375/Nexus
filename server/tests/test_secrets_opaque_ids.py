@@ -105,14 +105,16 @@ def test_chopped_values_of_128_bits_are_masked(chaine):
 
 
 def test_the_floor_is_128_bits_of_material():
-    # 32 hex digits (128 bits) are masked, 31 (124) are not; 22 base62
-    # characters (131 bits) are masked, 21 (125, a nanoid) are not.
+    # Behind an identifier's name, 32 hex digits (128 bits) are masked and 31
+    # (124) are not; 22 base62 characters (131 bits) are masked, 21 (125, a
+    # nanoid) are not. A prefix that names a credential (`key`, `tok`) never
+    # protects a short body (amendment 1).
     hex32 = "4f3a9b2c1d7e" + "8f90a1b2c3d4e5f60718"
-    assert _masked("key-" + hex32)
-    assert redact("key-" + hex32[:31]) == ("key-" + hex32[:31], [])
+    assert _masked("evt-" + hex32)
+    assert redact("evt-" + hex32[:31]) == ("evt-" + hex32[:31], [])
     b62 = "Y7qP2rTxN9v" + "H4mKuC6wJ8s"
-    assert _masked("tok_" + b62)
-    assert redact("tok_" + b62[:21]) == ("tok_" + b62[:21], [])
+    assert _masked("evt_" + b62)
+    assert redact("evt_" + b62[:21]) == ("evt_" + b62[:21], [])
 
 
 def test_repeated_material_is_not_opaque():
@@ -126,8 +128,8 @@ def test_repeated_material_is_not_opaque():
     [
         # Same shape as a `key_<hex16>_<hex16>`: 128 bits of hex, masked.
         ("span_" + "4f3a9b2c1d7e8f90" + "_a1b2c3d4e5f60718", True),
-        # A hex32 key shaped like a UUID v4 (one draw in 64) reads as an id.
-        ("key-" + "4f3a9b2c1d7e" + "4f6b8c2e1a9d7b5f3c1e", False),
+        # A hex32 value shaped like a UUID v4 (one draw in 64) reads as an id.
+        ("4f3a9b2c1d7e" + "4f6b8c2e1a9d7b5f3c1e", False),
         # An unknown 103-bit format with no known prefix stays in the clear.
         ("LIC-" + "Q7ZK2M9XRT" + "4WB8NC3VJ5", False),
         # A camelCase name with digits inside its words is material (master masked it too).
@@ -197,3 +199,156 @@ def test_opaque_rule_stays_linear(text):
     started = time.perf_counter()
     redact(text)
     assert time.perf_counter() - started < 1.0
+
+
+# --- Amendment 1 (review of PR #127) --------------------------------------------
+# The material rule alone left values master masked in the clear. Every candidate
+# that is not a recognised generated identifier now also goes through master's
+# rule; the cases below were each a regression of the first version.
+
+HEX32 = "8c291f2fc8b5f208" + "99203fad89d9b0ef"
+HEX64 = "4f3a9b2c1d7e8f90a1b2c3d4e5f60718" + "293a4b5c6d7e8f9012345678abcdef01"
+B62_20 = "z8lYBSDOgt" + "TvahBSA3tx"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"https://cdn.example.com/a.png?exp=1729260000&sig={HEX64}",
+        f"X-Hub-Signature-256: sha256={HEX64}",
+        f"digest={HEX64}",
+        f"DD_APP={HEX32}5e7a1c3d",
+        f"GET https://api.example.com/v1/items?k={HEX32}&page=2",
+        f"cle {HEX32}= fin",
+        f"ref x+{HEX32} fin",
+        f"pk 0x{HEX64} fin",
+        f"sid SK{HEX32} fin",
+    ],
+    ids=["sig", "sha256", "digest", "DD_APP", "query", "padding", "plus", "0x", "SK"],
+)
+def test_hex_glued_to_a_sign_or_a_short_head_is_masked(text):
+    # `=` and `+` belong to the candidate class: `sig=<hex64>` was one segment
+    # whose alphabet was no longer hex, and the uniform-draw gate refused it.
+    cleaned, found = redact(text)
+    assert HEX32[:16] not in cleaned and HEX64[:16] not in cleaned
+    assert found == ["high_entropy"]
+
+
+@pytest.mark.parametrize(
+    ("chaine", "kind"),
+    [
+        ("glpat-" + B62_20, "gitlab_token"),
+        ("glrt-" + B62_20, "gitlab_token"),
+        ("motpasseglpat-" + B62_20, "gitlab_token"),  # glued to a word
+        ("dapi" + HEX32, "databricks_token"),
+        ("#fragNRJS-" + HEX32[:19], "newrelic_key"),  # glued to a word
+    ],
+)
+def test_vendor_formats_are_masked_even_glued(chaine, kind):
+    # GitLab's 20 characters (119 bits) sit under the floor behind a name the
+    # rule sets aside; the formats are unanchored like `nxt_`.
+    cleaned, found = redact(f"cle {chaine} fin")
+    assert B62_20 not in cleaned and HEX32[:19] not in cleaned
+    assert kind in found
+
+
+@pytest.mark.parametrize(
+    "chaine",
+    [
+        "key-" + HEX32[:24],
+        "key-" + HEX32[:31],
+        "tok_" + B62_20,
+        "secret_" + HEX32[:24],
+    ],
+)
+def test_credential_named_prefixes_keep_masking_short_bodies(chaine):
+    # A prefix that names a credential never opens the generated-identifier
+    # exemption: master masked these and they stay masked.
+    cleaned, found = redact(f"cle {chaine} fin")
+    assert cleaned == f"cle {REDACTED} fin"
+    assert found == ["high_entropy"]
+
+
+@pytest.mark.parametrize(
+    "constante",
+    [
+        "HTTP2_MAX_CONCURRENT_STREAMS_PER_CONNECTION",
+        "AWS_S3_BUCKET_NAME_FOR_NIGHTLY_BACKUPS",
+        "NEXUS_DATA_DIR_OVERRIDE_FOR_INTEGRATION_TESTS2",
+    ],
+)
+def test_screaming_snake_constants_stay_untouched(constante):
+    # All-capital words hold no lowercase letter: they were all material and
+    # 1 147 constants out of 2 000 were masked (refused with a 409 as an id).
+    assert redact(constante) == (constante, [])
+
+
+def test_random_screaming_snake_constants_stay_untouched():
+    words = (
+        "HTTP2 MAX CONCURRENT STREAMS PER CONNECTION AWS S3 BUCKET NAME FOR NIGHTLY "
+        "BACKUPS NEXUS DATA DIR OVERRIDE TESTS DEFAULT TIMEOUT RETRY LIMIT OAUTH2 "
+        "CLIENT REDIS POOL SIZE V2 API BASE URL LOG LEVEL FEATURE FLAG WORKER COUNT"
+    ).split()
+    rng = random.Random(101)
+    for _ in range(300):
+        name = "_".join(rng.choice(words) for _ in range(rng.randint(3, 7))) + "_V2"
+        assert redact(name) == (name, []), name
+
+
+@pytest.mark.parametrize(
+    ("famille", "plancher"),
+    [
+        (lambda rng: _draw(rng, HEX, 24), 140),
+        (lambda rng: _draw(rng, HEX.upper(), 24), 140),
+        (lambda rng: _draw(rng, string.ascii_lowercase + string.digits, 24), 292),
+        (lambda rng: "tok_" + _urlsafe(rng, 16), 250),
+    ],
+    ids=["hex24", "HEX24", "b36_24", "tok_urlsafe16"],
+)
+def test_bare_and_short_values_keep_master_masking(famille, plancher):
+    # Values with no recognised structure keep master's rule: a bare 24-character
+    # hex or base36 value under 128 bits is still masked as before.
+    rng = random.Random(101)
+    assert sum(_masked(famille(rng)) for _ in range(300)) >= plancher
+
+
+@pytest.mark.parametrize(
+    ("chaine", "masque"),
+    [
+        # An unknown word in front of under 128 bits reads like `evt_<hex24>`.
+        ("vendor_" + HEX32[:24], False),
+        ("deployment-" + HEX32[:31], False),
+    ],
+)
+def test_amendment_trade_offs_are_pinned(chaine, masque):
+    assert _masked(chaine) is masque
+
+
+@pytest.mark.parametrize(("slash", "plafond"), [(False, 0), (True, 1)])
+def test_redaction_is_idempotent_on_a_fixed_seed(slash, plafond):
+    # 4 000 seeded inputs built from labels, quotes, URLs, prefixes and random
+    # runs. Without `/`, redact is idempotent; with `/`, one input fails on this
+    # seed, on master as on this branch (the slashed pass, issue #126).
+    fragments = [
+        "password", "token", "api_key", "mot de passe", "Authorization: ", ":", "=", " ",
+        "\n", '"', "'", "\\", ",", ";", "{", "}", "[", "]", "_", "-", ".", "@", "#", "?",
+        "+", "[REDACTED]", "https://", "postgres://u:", "evt_", "tok_", "key-", "sk_live_",
+        "NRJS-", "glpat-", "dapi", "0x", "sha256=", "20261018143022", "1729260000123",
+        "3686f22a-1ac5-4c8a-9d5b-8f29c2f21e90", "getUserById", "HTTP2_MAX", "userprofile2",
+    ]
+    if slash:
+        fragments += ["/", "/api/v1/", "C:/Users/x/", "/var/lib/", "?q=", "/tokens/"]
+    alphabets = [B62, HEX, HEX.upper(), B62 + "-_", B62 + "+="] + ([B62 + "+/="] if slash else [])
+    rng = random.Random(f"idempotence:101:{slash}")
+    failures = 0
+    for _ in range(4000):
+        parts = []
+        for _ in range(rng.randint(1, 8)):
+            if rng.random() < 0.5:
+                parts.append(rng.choice(fragments))
+            else:
+                alphabet = rng.choice(alphabets)
+                parts.append("".join(rng.choice(alphabet) for _ in range(rng.randint(4, 48))))
+        once, _ = redact("".join(parts))
+        failures += redact(once)[0] != once
+    assert failures <= plafond
