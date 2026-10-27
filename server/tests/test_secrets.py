@@ -702,12 +702,24 @@ def test_a_very_long_slashed_run_is_analysed_in_one_pass():
     # clearing the entropy floor once the trailing sample weighs in — pinned
     # so a heuristic shift has to argue with this test.
     text = "/".join(["8SKDsHj+ePj"] * 4000) + "/q3QCEgcaHD6honHxcM="
-    started = time.perf_counter()
     cleaned, found = redact(text)
-    elapsed = time.perf_counter() - started
     assert cleaned == "/".join(["8SKDsHj+ePj"] * 3861) + "/" + REDACTED
     assert found == ["high_entropy"]
-    assert elapsed < 1.0
+
+    # The ceiling is relative, not a wall-clock bound that a slow CI runner could trip:
+    # four times the segments must cost about four times as long (a quadratic return costs
+    # sixteen times). Best of several runs, so one scheduling hiccup does not decide.
+    def best_of(parts, runs=5):
+        sample = "/".join(["8SKDsHj+ePj"] * parts) + "/q3QCEgcaHD6honHxcM="
+        times = []
+        for _ in range(runs):
+            started = time.perf_counter()
+            redact(sample)
+            times.append(time.perf_counter() - started)
+        return min(times)
+
+    small, large = best_of(1000), best_of(4000)
+    assert large < 9 * max(small, 0.002), (small, large)
 
 
 @pytest.mark.parametrize(
