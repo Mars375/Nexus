@@ -706,9 +706,12 @@ def test_a_very_long_slashed_run_is_analysed_in_one_pass():
     assert cleaned == "/".join(["8SKDsHj+ePj"] * 3861) + "/" + REDACTED
     assert found == ["high_entropy"]
 
-    # The ceiling is relative, not a wall-clock bound that a slow CI runner could trip:
-    # four times the segments must cost about four times as long (a quadratic return costs
-    # sixteen times). Best of several runs, so one scheduling hiccup does not decide.
+    # The ceiling is relative, not a wall-clock bound alone that a slow CI runner could trip:
+    # four times the segments must cost about four times as long (the old quadratic loop cost
+    # 13 to 16 times as much). Best of several runs, so one scheduling hiccup does not decide.
+    # Under heavy CPU load the larger run is almost always preempted while the smaller one fits
+    # a scheduler quantum, which inflates the ratio of a linear scan; a generous absolute
+    # ceiling therefore also lets it through (the quadratic loop takes 2.4 s or more).
     def best_of(parts, runs=5):
         sample = "/".join(["8SKDsHj+ePj"] * parts) + "/q3QCEgcaHD6honHxcM="
         times = []
@@ -719,7 +722,7 @@ def test_a_very_long_slashed_run_is_analysed_in_one_pass():
         return min(times)
 
     small, large = best_of(1000), best_of(4000)
-    assert large < 9 * max(small, 0.002), (small, large)
+    assert large < 9 * max(small, 0.002) or large < 0.5, (small, large)
 
 
 @pytest.mark.parametrize(
