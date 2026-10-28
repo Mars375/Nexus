@@ -29,23 +29,6 @@ _FULL: list[tuple[str, re.Pattern[str]]] = [
     ("private_key", re.compile(
         r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)"
     )),
-    # Unanchored vendor formats (issue #101) run right after the private key and
-    # before every pattern anchored by a word boundary: masking a token glued to an
-    # AWS key (`AKIA…glpat-…`) gives that key the word boundary it lacked, so an anchored
-    # pattern placed before them would only catch it on a second pass. Masking never
-    # writes their literal prefixes, so the order cannot work the other way round.
-    # New Relic browser key: `NRJS-` + 19 hex digits (76 bits, under any entropy floor).
-    ("newrelic_key", re.compile(rf"{_GLUED_RUN}NRJS-[a-f0-9]{{19}}{_RUN_TAIL}")),
-    # Sourcegraph access token: `sgp_` + 16 hex digits (or `local`) + `_` + 40 hex.
-    ("sourcegraph_token", re.compile(
-        rf"{_GLUED_RUN}sgp_(?:[a-fA-F0-9]{{16}}|local)_[a-fA-F0-9]{{40}}{_RUN_TAIL}"
-    )),
-    # GitLab tokens: `glpat-` and its siblings + 20 characters (119 bits).
-    ("gitlab_token", re.compile(
-        rf"{_GLUED_RUN}gl(?:pat|rt|dt|ft|soat|cbt|ptt)-[0-9A-Za-z_-]{{20}}{_RUN_TAIL}"
-    )),
-    # Databricks personal access token: `dapi` + 32 hex digits, optional `-<n>`.
-    ("databricks_token", re.compile(rf"{_GLUED_RUN}dapi[a-f0-9]{{32}}{_RUN_TAIL}")),
     ("api_key", re.compile(r"\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}")),
     ("github_token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{22,})")),
     ("aws_access_key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
@@ -528,6 +511,12 @@ _NAME_SEGMENT = re.compile(r"[A-Za-z]+[0-9]{0,8}")
 # A SCREAMING_SNAKE word of three letters or more (`HTTP2`, `MAX`, `CONCURRENT`).
 _UPPER_NAME = re.compile(r"[A-Z]{3,}[0-9]{0,8}")
 _BASE64_SIGNS = re.compile(r"[+=]")
+# A `+` carries drawn bits only between two characters of material: a run of `+`
+# (`v2++++++`) is not a base64 draw and must not inflate the bit count.
+_PLUS_JOINER = re.compile(r"(?<=[A-Za-z0-9])\+(?=[A-Za-z0-9])")
+# No usual alphabet is wider than base64: the bits per character are capped at
+# log2(64), which also bounds the cache of `_expected_entropy`.
+_MAX_ALPHABET = 64
 # A `+`, `-` or `_` drawn as part of a base64 value carries log2(64) bits.
 _DRAWN_JOINER_BITS = 6.0
 
@@ -579,7 +568,9 @@ def _drawn_joiners(parts: list[str], aside: list[bool]) -> int:
     """Joiners drawn as base64 symbols: a `+` inside material always counts; a
     `-` or `_` counts when a neighbour is mixed-case material and no neighbour
     was set aside (`tok_<urlsafe16>`, 128 bits, lost 6 bits per joiner)."""
-    count = sum(part.count("+") for part, kept in zip(parts, aside, strict=True) if not kept)
+    count = sum(
+        len(_PLUS_JOINER.findall(part)) for part, kept in zip(parts, aside, strict=True) if not kept
+    )
     for left, right, left_aside, right_aside in zip(
         parts, parts[1:], aside, aside[1:], strict=False
     ):
@@ -617,9 +608,8 @@ def _opaque_material(token: str) -> bool:
     if bits < _OPAQUE_BITS:
         return False
     joined = "".join(pieces)
-    expected = _expected_entropy(
-        min(len(joined), _ENTROPY_SAMPLE_CAP), round(2 ** (bits / len(joined)))
-    )
+    alphabet = min(_MAX_ALPHABET, max(2, round(2 ** (bits / len(joined)))))
+    expected = _expected_entropy(min(len(joined), _ENTROPY_SAMPLE_CAP), alphabet)
     return _shannon_bits_per_char(joined) >= expected - _ENTROPY_MARGIN
 
 
@@ -833,6 +823,27 @@ def _opaque_slashed(token: str) -> bool:
     return _opaque_chunks(parts)
 
 
+_VENDOR: list[tuple[str, re.Pattern[str]]] = [
+    # Unanchored vendor formats (issue #101) run right after the private key and
+    # before every pattern anchored by a word boundary: masking a token glued to an
+    # AWS key (`AKIA…glpat-…`) gives that key the word boundary it lacked, so an anchored
+    # pattern placed before them would only catch it on a second pass. Masking never
+    # writes their literal prefixes, so the order cannot work the other way round.
+    # New Relic browser key: `NRJS-` + 19 hex digits (76 bits, under any entropy floor).
+    ("newrelic_key", re.compile(rf"{_GLUED_RUN}NRJS-[a-f0-9]{{19}}{_RUN_TAIL}")),
+    # Sourcegraph access token: `sgp_` + 16 hex digits (or `local`) + `_` + 40 hex.
+    ("sourcegraph_token", re.compile(
+        rf"{_GLUED_RUN}sgp_(?:[a-fA-F0-9]{{16}}|local)_[a-fA-F0-9]{{40}}{_RUN_TAIL}"
+    )),
+    # GitLab tokens: `glpat-` and its siblings + 20 characters (119 bits).
+    ("gitlab_token", re.compile(
+        rf"{_GLUED_RUN}gl(?:pat|rt|dt|ft|soat|cbt|ptt)-[0-9A-Za-z_-]{{20}}{_RUN_TAIL}"
+    )),
+    # Databricks personal access token: `dapi` + 32 hex digits, optional `-<n>`.
+    ("databricks_token", re.compile(rf"{_GLUED_RUN}dapi[a-f0-9]{{32}}{_RUN_TAIL}")),
+]
+
+
 def redact(text: str) -> tuple[str, list[str]]:
     """Renvoie le texte masqué et la liste des types de secrets trouvés."""
     found: list[str] = []
@@ -898,6 +909,10 @@ def redact(text: str) -> tuple[str, list[str]]:
     text = _URL_CREDENTIALS.sub(mask_url, text)
     text = _HEADER_CREDENTIALS.sub(mask_header, text)
     text = _SLASHED_TOKEN.sub(mask_slashed_run, text)
+    for kind, pattern in _VENDOR:
+        text, count = pattern.subn(REDACTED, text)
+        if count:
+            found.append(kind)
     text = _ENTROPY_TOKEN.sub(mask_random_run, text)
     return text, sorted(set(found))
 

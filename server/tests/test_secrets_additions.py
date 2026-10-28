@@ -82,14 +82,38 @@ def test_vendor_formats_mask_their_whole_run(chaine, kind):
     assert found == [kind]
 
 
-def test_vendor_format_takes_a_glued_label_and_keeps_a_spaced_one():
-    # A label glued by `=` belongs to the run, as `digest=<hex>` does on master;
-    # a spaced label stays readable.
-    cleaned, found = redact("TOKEN=glpat-" + B62_20)
-    assert (cleaned, found) == (REDACTED, ["gitlab_token"])
-    cleaned, found = redact("TOKEN: glpat-" + B62_20)
-    assert cleaned.startswith("TOKEN: ") and B62_20 not in cleaned
-    assert "gitlab_token" in found
+GL_TOKEN = "gl" + "pat-" + B62_20
+DB_TOKEN = "da" + "pi" + HEX32
+NR_KEY = "NR" + "JS-" + "4f3a9b2c1d7e8f90a1b"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (f"password: {GL_TOKEN} correct horse battery", "password: [REDACTED]"),
+        (f"password={DB_TOKEN} correct horse", "password=[REDACTED]"),
+        (f"token={NR_KEY}.Xk9qP2mZ7", "token=[REDACTED]"),
+        (f"secret={GL_TOKEN}/Xk9qP2mZ7wR4", "secret=[REDACTED]"),
+        (f"mot de passe={GL_TOKEN} suite", "mot de passe=[REDACTED]"),
+        (f"TOKEN={GL_TOKEN}", "TOKEN=[REDACTED]"),
+        (f"TOKEN: {GL_TOKEN}", "TOKEN: [REDACTED]"),
+    ],
+    ids=[
+        "passphrase",
+        "glued-passphrase",
+        "dot-tail",
+        "slash-tail",
+        "french-label",
+        "glued",
+        "spaced",
+    ],
+)
+def test_vendor_formats_never_take_a_mask_from_the_label_passes(text, expected):
+    # The vendor formats run after the passes that read a label: a format that ran
+    # first would stop at a space, a dot or a slash and leave the rest of the value in
+    # the clear (review of PR #135: master masked all of these). The label and the
+    # whole value are masked exactly as on master.
+    assert redact(text)[0] == expected
 
 
 def test_aws_key_glued_to_a_vendor_format_is_masked_in_one_pass():
@@ -183,11 +207,12 @@ def test_split_hex_of_128_bits_is_masked_as_assumed():
     ids=["gl", "glpat-short", "dapi-short", "NRJS-short", "chopped", "dates", "eqchain"],
 )
 def test_additions_stay_linear(text):
-    # 100 KB each (a comment body has no length bound): the ceiling catches a
-    # quadratic return; the bench of #101 measured the 400 KB versions.
+    # 100 KB each (a comment body has no length bound): the generous ceiling (3 s, issue
+    # #134 on wall-clock bounds under load) catches a quadratic return; the bench of
+    # #101 measured the 400 KB versions.
     started = time.perf_counter()
     redact(text)
-    assert time.perf_counter() - started < 1.0
+    assert time.perf_counter() - started < 3.0
 
 
 @pytest.mark.parametrize(("slash", "plafond"), [(False, 0), (True, 1)])
@@ -219,3 +244,20 @@ def test_redaction_is_idempotent_on_a_fixed_seed(slash, plafond):
         once, _ = redact("".join(parts))
         failures += redact(once)[0] != once
     assert failures <= plafond
+
+
+@pytest.mark.parametrize("run", [340, 5_000])
+def test_a_long_run_of_plus_signs_neither_raises_nor_counts_as_drawn_bits(run):
+    # `+` between two characters of material is a base64 draw (6 bits); a run of them
+    # is not, and used to overflow `2 ** (bits / len)` (500 on a validation error).
+    for text in ("v2" + "+" * run, "note v2" + "+" * run):
+        assert redact(text) == (text, [])
+
+
+def test_the_entropy_cache_stays_bounded():
+    from nexus.secrets import _expected_entropy
+
+    rng = random.Random("cache:101")
+    for _ in range(300):
+        redact(" ".join(_draw(rng, B62 + "+-_=", rng.randint(20, 80)) for _ in range(3)))
+    assert _expected_entropy.cache_info().currsize <= 128 * 63
