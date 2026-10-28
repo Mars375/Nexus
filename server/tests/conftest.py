@@ -5,6 +5,7 @@ import os
 import socket
 import threading
 import time
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,10 +13,31 @@ from fastapi.testclient import TestClient
 from nexus.actors import ACTORS
 from nexus.app import create_app
 from nexus.auth import tokens
+from nexus.clock import now
 from nexus.config import Settings
 from nexus.live import LIVE_PROTOCOL
 
 LOCAL_URL = "http://127.0.0.1"  # TestClient sends Host `testserver` by default: refused (D6)
+
+
+def ago(seconds: float) -> datetime:
+    """An instant `seconds` before now, computed on the UTC timeline.
+
+    Wall-clock subtraction in Europe/Paris is not a real duration across a DST change: on the
+    spring one it lands in an hour that does not exist (read back with `fold=0`, it can be in the
+    future) and on the autumn one it re-reads the repeated hour an hour off. Tests that fix the
+    clock freeze this module's `now`, not their own (#128, #132).
+    """
+    return now().astimezone(UTC) - timedelta(seconds=seconds)
+
+
+def seconds_since(stamp: datetime) -> float:
+    """The absolute distance in seconds between `stamp` and now, on the UTC timeline.
+
+    `stamp - now()` on two values of the same zone compares by wall clock and ignores `fold`:
+    across a DST change it is off by an hour (#132). Same `now` as `ago`.
+    """
+    return abs((stamp.astimezone(UTC) - now().astimezone(UTC)).total_seconds())
 
 
 class ActorClient(TestClient):

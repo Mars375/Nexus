@@ -7,6 +7,7 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from conftest import ago, seconds_since
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
@@ -185,28 +186,28 @@ def test_touch_last_used_sets_it_on_the_first_use(session, factory):
     tokens.touch_last_used(factory, row.id)
     session.refresh(row)
     assert row.last_used_at is not None
-    assert abs((row.last_used_at - now()).total_seconds()) < 5
+    assert seconds_since(row.last_used_at) < 5
 
 
 def test_touch_last_used_leaves_a_recent_value_alone(session, factory):
     row, _ = tokens.issue(session, "helios", "poste")
-    recent = now() - timedelta(seconds=100)
+    recent = ago(100)
     row.last_used_at = recent
     session.commit()
     tokens.touch_last_used(factory, row.id)
     session.expire(row)
-    assert row.last_used_at == recent
+    assert row.last_used_at.astimezone(UTC) == recent
 
 
 def test_touch_last_used_writes_again_after_the_window(session, factory):
     row, _ = tokens.issue(session, "helios", "poste")
-    old = now() - timedelta(seconds=301)
+    old = ago(301)
     row.last_used_at = old
     session.commit()
     tokens.touch_last_used(factory, row.id)
     session.expire(row)
-    assert row.last_used_at is not None and row.last_used_at > old
-    assert abs((row.last_used_at - now()).total_seconds()) < 5
+    assert row.last_used_at is not None and row.last_used_at.astimezone(UTC) > old
+    assert seconds_since(row.last_used_at) < 5
 
 
 def test_two_touches_in_a_row_write_once(session, factory):
@@ -275,19 +276,19 @@ class _CountedFactory:
 def test_a_known_recent_use_opens_no_session(caplog):
     spy = _NoSession()
     caplog.set_level(logging.WARNING, logger="nexus")
-    tokens.touch_last_used(spy, 1, last_used_at=now() - timedelta(seconds=10))
+    tokens.touch_last_used(spy, 1, last_used_at=ago(10))
     assert spy.calls == 0
     assert caplog.text == ""
 
 
 def test_a_known_use_beyond_the_window_still_writes(session, factory):
     row, _ = tokens.issue(session, "helios", "poste")
-    old = now() - timedelta(seconds=301)
+    old = ago(301)
     row.last_used_at = old
     session.commit()
     tokens.touch_last_used(factory, row.id, last_used_at=old)
     session.expire(row)
-    assert abs((row.last_used_at - now()).total_seconds()) < 5
+    assert seconds_since(row.last_used_at) < 5
 
 
 def test_a_known_never_used_token_still_writes(session, factory):
@@ -302,19 +303,19 @@ def test_the_update_stays_the_arbiter_for_a_stale_row(session, factory):
     # Another request touched the token after this one loaded its row: Python sees a stale
     # value, the conditional UPDATE matches nothing and keeps the recent one.
     row, _ = tokens.issue(session, "helios", "poste")
-    recent = now() - timedelta(seconds=10)
+    recent = ago(10)
     row.last_used_at = recent
     session.commit()
-    tokens.touch_last_used(factory, row.id, last_used_at=now() - timedelta(seconds=301))
+    tokens.touch_last_used(factory, row.id, last_used_at=ago(301))
     session.expire(row)
-    assert row.last_used_at == recent
+    assert row.last_used_at.astimezone(UTC) == recent
 
 
 def test_a_revocation_between_lookup_and_touch_keeps_last_used_intact(session, factory):
     # The dependency loaded the row while it was still live; another request revokes it
     # before this touch runs. The UPDATE must not stamp a revoked token.
     row, token = tokens.issue(session, "helios", "poste")
-    old = now() - timedelta(seconds=301)
+    old = ago(301)
     row.last_used_at = old
     session.commit()
     loaded = tokens.lookup_row(session, token)
@@ -326,7 +327,7 @@ def test_a_revocation_between_lookup_and_touch_keeps_last_used_intact(session, f
     tokens.touch_last_used(factory, token_id, last_used_at=last_used)
 
     session.expire(row)
-    assert row.last_used_at == old
+    assert row.last_used_at.astimezone(UTC) == old
 
 
 def test_a_revocation_before_a_first_touch_keeps_last_used_none(session, factory):
@@ -359,7 +360,7 @@ def test_an_operational_error_without_a_sqlite_name_uses_the_fallback(caplog):
 
 def test_a_future_last_use_counts_as_inside_the_window():
     spy = _NoSession()
-    tokens.touch_last_used(spy, 1, last_used_at=now() + timedelta(hours=1))
+    tokens.touch_last_used(spy, 1, last_used_at=now().astimezone(UTC) + timedelta(hours=1))
     assert spy.calls == 0
 
 
