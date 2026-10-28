@@ -7,7 +7,7 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from conftest import ago
+from conftest import ago, seconds_since
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
@@ -186,7 +186,7 @@ def test_touch_last_used_sets_it_on_the_first_use(session, factory):
     tokens.touch_last_used(factory, row.id)
     session.refresh(row)
     assert row.last_used_at is not None
-    assert abs((row.last_used_at.astimezone(UTC) - now().astimezone(UTC)).total_seconds()) < 5
+    assert seconds_since(row.last_used_at) < 5
 
 
 def test_touch_last_used_leaves_a_recent_value_alone(session, factory):
@@ -207,7 +207,7 @@ def test_touch_last_used_writes_again_after_the_window(session, factory):
     tokens.touch_last_used(factory, row.id)
     session.expire(row)
     assert row.last_used_at is not None and row.last_used_at.astimezone(UTC) > old
-    assert abs((row.last_used_at.astimezone(UTC) - now().astimezone(UTC)).total_seconds()) < 5
+    assert seconds_since(row.last_used_at) < 5
 
 
 def test_two_touches_in_a_row_write_once(session, factory):
@@ -288,7 +288,7 @@ def test_a_known_use_beyond_the_window_still_writes(session, factory):
     session.commit()
     tokens.touch_last_used(factory, row.id, last_used_at=old)
     session.expire(row)
-    assert abs((row.last_used_at.astimezone(UTC) - now().astimezone(UTC)).total_seconds()) < 5
+    assert seconds_since(row.last_used_at) < 5
 
 
 def test_a_known_never_used_token_still_writes(session, factory):

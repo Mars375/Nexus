@@ -31,6 +31,15 @@ def ago(seconds: float) -> datetime:
     return now().astimezone(UTC) - timedelta(seconds=seconds)
 
 
+def seconds_since(stamp: datetime) -> float:
+    """The absolute distance in seconds between `stamp` and now, on the UTC timeline.
+
+    `stamp - now()` on two values of the same zone compares by wall clock and ignores `fold`:
+    across a DST change it is off by an hour (#132). Same `now` as `ago`.
+    """
+    return abs((stamp.astimezone(UTC) - now().astimezone(UTC)).total_seconds())
+
+
 class ActorClient(TestClient):
     """TestClient on the loopback that signs each request with the token of its actor.
 

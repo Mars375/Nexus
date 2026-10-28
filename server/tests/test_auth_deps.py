@@ -8,7 +8,7 @@ from typing import Annotated
 
 import conftest
 import pytest
-from conftest import ago
+from conftest import ago, seconds_since
 from fastapi import Depends
 from sqlalchemy import select
 
@@ -77,18 +77,20 @@ def test_the_stamp_delta_is_measured_on_instants_across_the_spring_change(monkey
     # 01:59:58 CET (00:59:58Z) then 03:00:01 CEST (01:00:01Z): 3 s apart, but the wall clocks of
     # the same zone differ by 3603 s because the hour 02:00-03:00 does not exist that day.
     moment = datetime(2027, 3, 28, 3, 0, 1, tzinfo=TZ)
-    monkeypatch.setitem(globals(), "now", lambda: moment)
+    monkeypatch.setattr(conftest, "now", lambda: moment)
     stamp = datetime(2027, 3, 28, 1, 59, 58, tzinfo=TZ)
-    assert abs((stamp.astimezone(UTC) - now().astimezone(UTC)).total_seconds()) < 5
+    assert seconds_since(stamp) == 3
+    assert abs((stamp - moment).total_seconds()) == 3603  # the wall-clock reading it replaces
 
 
 def test_the_stamp_delta_is_measured_on_instants_across_the_autumn_change(monkeypatch):
     # 02:59:58 CEST (00:59:58Z) then 02:00:01 CET (01:00:01Z): 3 s apart, but the wall clocks of
     # the same zone differ by -3597 s (PEP 495: one tzinfo compares by wall clock, ignores fold).
     moment = datetime(2026, 10, 25, 2, 0, 1, tzinfo=TZ, fold=1)
-    monkeypatch.setitem(globals(), "now", lambda: moment)
+    monkeypatch.setattr(conftest, "now", lambda: moment)
     stamp = datetime(2026, 10, 25, 2, 59, 58, tzinfo=TZ, fold=0)
-    assert abs((stamp.astimezone(UTC) - now().astimezone(UTC)).total_seconds()) < 5
+    assert seconds_since(stamp) == 3
+    assert abs((stamp - moment).total_seconds()) == 3597  # the wall-clock reading it replaces
 
 
 def create_task(client, **headers):
@@ -200,7 +202,7 @@ def test_a_valid_token_records_its_last_use(client):
     assert create_task(client, **bearer(token)).status_code == 201
     stamp = last_used_of(client, token_id)
     assert stamp is not None
-    assert abs((stamp.astimezone(UTC) - now().astimezone(UTC)).total_seconds()) < 5
+    assert seconds_since(stamp) < 5
 
 
 def test_a_recent_use_is_not_written_again(client):
@@ -223,7 +225,7 @@ def test_a_use_after_the_window_is_recorded_again(client):
     assert create_task(client, **bearer(token)).status_code == 201
     stamp = last_used_of(client, token_id)
     assert stamp is not None and stamp.astimezone(UTC) > old
-    assert abs((stamp.astimezone(UTC) - now().astimezone(UTC)).total_seconds()) < 5
+    assert seconds_since(stamp) < 5
 
 
 def test_a_locked_database_does_not_delay_an_authenticated_request(client):
