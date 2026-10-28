@@ -831,8 +831,8 @@ _VENDOR: list[tuple[str, re.Pattern[str]]] = [
     # a format that ran first would stop at a space, a dot or a slash and leave the rest
     # of a value that master masks in the clear (PR #135 review). The run they mask is
     # exactly the maximal run the entropy pass reads, so they only add masks. A token
-    # glued to an AWS key (`AKIA…<token>`) is masked whole in one pass because ``
-    # fails in front of the key and the format takes the entire run.
+    # glued to an AWS key (`AKIA…<token>`) is masked whole in one pass because the closing
+    # word boundary of `aws_access_key` fails after the key and the format takes the entire run.
     # New Relic browser key: `NRJS-` + 19 hex digits (76 bits, under any entropy floor).
     ("newrelic_key", re.compile(rf"{_GLUED_RUN}NRJS-[a-f0-9]{{19}}{_RUN_TAIL}")),
     # Sourcegraph access token: `sgp_` + 16 hex digits (or `local`) + `_` + 40 hex.
