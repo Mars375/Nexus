@@ -6,7 +6,9 @@ import time
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
+import conftest
 import pytest
+from conftest import ago
 from fastapi import Depends
 from sqlalchemy import select
 
@@ -35,20 +37,58 @@ def last_used_of(client, token_id):
 
 
 def outside_window():
-    """An instant just outside the touch window, computed on the UTC timeline: wall-clock
-    subtraction in Europe/Paris lands in a non-existent hour on the spring DST change and
-    can end up in the future (#128)."""
-    return now().astimezone(UTC) - timedelta(seconds=301)
+    """An instant just outside the touch window (#128), on the UTC timeline."""
+    return ago(301)
 
 
 def test_outside_window_is_in_the_past_on_the_spring_dst_change(monkeypatch):
     # 2027-03-28 03:02 CEST: 301 s earlier on the wall clock is 02:56:59, an hour that does
     # not exist that day; read back with fold=0 it would be 54 minutes in the future.
     moment = datetime(2027, 3, 28, 3, 2, tzinfo=TZ)
-    monkeypatch.setitem(globals(), "now", lambda: moment)
+    monkeypatch.setattr(conftest, "now", lambda: moment)
     assert outside_window() == moment.astimezone(UTC) - timedelta(seconds=301)
     # Compare instants: two values sharing one tzinfo compare by wall clock and would pass.
     assert outside_window().astimezone(UTC) < moment.astimezone(UTC)
+
+
+def test_ago_is_exact_on_the_spring_dst_change(monkeypatch):
+    # The "recent" family (-100, -10 s): at 03:00:05 CEST the wall clock subtracts to 02:58:25
+    # and 02:59:55, an hour that does not exist that day; read back with fold=0 they are ~58
+    # minutes in the future, not instants 100 or 10 s before now.
+    moment = datetime(2027, 3, 28, 3, 0, 5, tzinfo=TZ)
+    monkeypatch.setattr(conftest, "now", lambda: moment)
+    for seconds in (100, 10):
+        assert ago(seconds) == moment.astimezone(UTC) - timedelta(seconds=seconds)
+        assert ago(seconds) < moment.astimezone(UTC)
+
+
+def test_ago_is_exact_on_the_autumn_dst_change(monkeypatch):
+    # 2026-10-25 02:30 CET (fold=1) is the second pass through the repeated hour: 02:30+01:00 is
+    # 01:30Z, but the wall clock subtracts to 02:24:59 read back with fold=0, i.e. CEST
+    # (00:24:59Z), an hour and 301 s before the real instant. Every window must stay a duration.
+    moment = datetime(2026, 10, 25, 2, 30, tzinfo=TZ, fold=1)
+    monkeypatch.setattr(conftest, "now", lambda: moment)
+    for seconds in (301, 100, 10):
+        assert ago(seconds) == moment.astimezone(UTC) - timedelta(seconds=seconds)
+        assert ago(seconds) < moment.astimezone(UTC)
+
+
+def test_the_stamp_delta_is_measured_on_instants_across_the_spring_change(monkeypatch):
+    # 01:59:58 CET (00:59:58Z) then 03:00:01 CEST (01:00:01Z): 3 s apart, but the wall clocks of
+    # the same zone differ by 3603 s because the hour 02:00-03:00 does not exist that day.
+    moment = datetime(2027, 3, 28, 3, 0, 1, tzinfo=TZ)
+    monkeypatch.setitem(globals(), "now", lambda: moment)
+    stamp = datetime(2027, 3, 28, 1, 59, 58, tzinfo=TZ)
+    assert abs((stamp.astimezone(UTC) - now().astimezone(UTC)).total_seconds()) < 5
+
+
+def test_the_stamp_delta_is_measured_on_instants_across_the_autumn_change(monkeypatch):
+    # 02:59:58 CEST (00:59:58Z) then 02:00:01 CET (01:00:01Z): 3 s apart, but the wall clocks of
+    # the same zone differ by -3597 s (PEP 495: one tzinfo compares by wall clock, ignores fold).
+    moment = datetime(2026, 10, 25, 2, 0, 1, tzinfo=TZ, fold=1)
+    monkeypatch.setitem(globals(), "now", lambda: moment)
+    stamp = datetime(2026, 10, 25, 2, 59, 58, tzinfo=TZ, fold=0)
+    assert abs((stamp.astimezone(UTC) - now().astimezone(UTC)).total_seconds()) < 5
 
 
 def create_task(client, **headers):
@@ -160,17 +200,18 @@ def test_a_valid_token_records_its_last_use(client):
     assert create_task(client, **bearer(token)).status_code == 201
     stamp = last_used_of(client, token_id)
     assert stamp is not None
-    assert abs((stamp - now()).total_seconds()) < 5
+    assert abs((stamp.astimezone(UTC) - now().astimezone(UTC)).total_seconds()) < 5
 
 
 def test_a_recent_use_is_not_written_again(client):
     token, token_id = issue(client)
-    recent = now() - timedelta(seconds=100)
+    recent = ago(100)
     with client.app.state.sessionmaker() as s:
         s.get(ActorToken, token_id).last_used_at = recent
         s.commit()
     assert create_task(client, **bearer(token)).status_code == 201
-    assert last_used_of(client, token_id) == recent
+    stamp = last_used_of(client, token_id)
+    assert stamp is not None and stamp.astimezone(UTC) == recent
 
 
 def test_a_use_after_the_window_is_recorded_again(client):
@@ -182,7 +223,7 @@ def test_a_use_after_the_window_is_recorded_again(client):
     assert create_task(client, **bearer(token)).status_code == 201
     stamp = last_used_of(client, token_id)
     assert stamp is not None and stamp.astimezone(UTC) > old
-    assert abs((stamp - now()).total_seconds()) < 5
+    assert abs((stamp.astimezone(UTC) - now().astimezone(UTC)).total_seconds()) < 5
 
 
 def test_a_locked_database_does_not_delay_an_authenticated_request(client):
@@ -207,7 +248,7 @@ def test_a_recent_use_never_waits_for_the_write_lock(client, caplog):
     # #94: inside the window nothing is due, so the request must not even ask for the lock
     # (an UPDATE matching no row still takes it) nor log a misleading warning.
     token, token_id = issue(client, "codex")
-    recent = now() - timedelta(seconds=10)
+    recent = ago(10)
     with client.app.state.sessionmaker() as s:
         s.get(ActorToken, token_id).last_used_at = recent
         s.commit()
@@ -228,13 +269,14 @@ def test_a_recent_use_never_waits_for_the_write_lock(client, caplog):
     # is the spy test below, this one only checks the request does not wait.
     assert elapsed < tokens.TOUCH_BUSY_TIMEOUT
     assert "dernière utilisation" not in caplog.text
-    assert last_used_of(client, token_id) == recent
+    stamp = last_used_of(client, token_id)
+    assert stamp is not None and stamp.astimezone(UTC) == recent
 
 
 def test_a_recent_use_opens_no_touch_session(client, monkeypatch):
     token, token_id = issue(client, "codex")
     with client.app.state.sessionmaker() as s:
-        s.get(ActorToken, token_id).last_used_at = now() - timedelta(seconds=10)
+        s.get(ActorToken, token_id).last_used_at = ago(10)
         s.commit()
     opened = []
 
