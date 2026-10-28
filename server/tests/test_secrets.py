@@ -1076,14 +1076,17 @@ def test_real_vendor_key_shape_is_masked_by_the_flat_rule():
     assert found == ["high_entropy"]
 
 
-def test_interleaved_short_vendor_segments_stay_untouched_as_assumed():
+def test_interleaved_short_vendor_segments_are_masked():
     # Same review, the other half of the finding: a value that interleaves a
-    # SHORT segment (`live`, `v1`) between opaque ones stays out of reach on
-    # purpose — tolerating it would reopen the identifier false positives just
-    # closed (see test_identifier_with_one_short_head_…). The assumption is
-    # pinned here so a later widening has to argue with this test.
+    # SHORT segment (`live`, `v1`) between opaque ones was left out of reach on
+    # purpose, to keep identifiers safe. Issue #101 adds a rule on the
+    # material: the 32 base62 characters around `live` hold 190 bits and the
+    # value is masked, while the identifiers of
+    # test_identifier_with_one_short_head_… stay names.
     text = "sk_live_" + "Y7qP2rTx_N9vH4mKu" + "_C6wJ8sZa_R5dE3fGh"
-    assert redact(text) == (text, [])
+    cleaned, found = redact(f"cle {text} ici")
+    assert cleaned == f"cle {REDACTED} ici"
+    assert found == ["high_entropy"]
 
 
 def test_identifier_with_two_short_segments_stays_untouched():
@@ -1193,17 +1196,14 @@ def test_long_hexadecimal_tail_behind_a_short_prefix_stays_masked(chaine):
     assert found == ["high_entropy"]
 
 
-@pytest.mark.parametrize(
-    "chaine",
-    ["key_4f3a9b2c_1d7e8f90_a1b2c3d4_e5f60718", "key_k3x9m2p7q1zt_w8v4n6b2c5yr"],
-)
-def test_single_case_short_prefixed_segments_stay_untouched_as_assumed(chaine):
-    # Price of the #93 fix, assumed: a short-prefixed value whose segments are all
-    # single-case (hex, base36) and each under 24 characters is indistinguishable
-    # from a generated identifier (vendors mostly emit base62; a few emit short hex
-    # keys, such as `NRJS-<hex19>`). A 24+ segment stays masked, see above. Pinned
-    # so a later widening has to argue with this test.
-    text = f"cle {chaine} ici"
+def test_single_case_short_prefixed_segments_stay_untouched_as_assumed():
+    # Price of the #93 fix, narrowed by issue #101: a value chopped into
+    # single-case segments is also judged on its material, 128 bits at least.
+    # Four hex8 segments hold 128 bits and are now masked (test_secrets_additions);
+    # two base36 segments of 12 hold 124 bits, the shape of a generated
+    # identifier (`evt_<b36_12>_<b36_12>`), and stay. Pinned so a later
+    # widening has to argue with this test.
+    text = "cle key_k3x9m2p7q1zt_w8v4n6b2c5yr ici"
     assert redact(text) == (text, [])
 
 
