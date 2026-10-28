@@ -70,6 +70,11 @@ def test_run_reference_containing_a_secret_is_refused(client, fields):
         "build_20261018123456_ab12cd34",
         "pr87_c532761947a5_f745827e",
         "evt_20260928_helios_0007",
+        # issue #101
+        "workflow_20261018143022_4f3a9b2c",
+        "evt_3f2b8c1e9a7d4f6b8c2e1a9d7b5f3c1e",
+        "evt_01m57pqe1g7wnrr7mtfn7pq31e",
+        "evt_20261018143022_4f3a9b2c1d7e8f90a1b2c3d4",
     ],
 )
 def test_generated_event_id_is_not_taken_for_a_secret(client, event_id):
@@ -84,7 +89,14 @@ def test_generated_event_id_is_not_taken_for_a_secret(client, event_id):
 
 @pytest.mark.parametrize(
     "run",
-    ["run_1729260000123_4f3a9b2c", "job_20261018_4f3a9b2c1d7e", "helios_20261018143022_9f8e7d6c"],
+    [
+        "run_1729260000123_4f3a9b2c",
+        "job_20261018_4f3a9b2c1d7e",
+        "helios_20261018143022_9f8e7d6c",
+        # issue #101
+        "pipeline_1729260000123_4f3a9b2c",
+        "deployment-20261018143022-4f3a9b2c",
+    ],
 )
 def test_generated_run_reference_is_not_taken_for_a_secret(client, run):
     ref = task(client, next_action="x")

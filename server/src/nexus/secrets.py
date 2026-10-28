@@ -329,8 +329,102 @@ def _word_chunk(part: str) -> bool:
     return letters.isalpha() and letters.islower() and len(letters) >= 6
 
 
+# Generated-identifier pieces (issue #101): a timestamp, a UUID of version 4 or 7
+# written as 32 hex digits, a ULID. Shared by the additions of the entropy pass and
+# by the generated-identifier exemption.
+_EPOCH_MS_FLOOR = 946_684_800_000  # 2000-01-01T00:00:00Z
+_EPOCH_MS_CEILING = 4_102_444_800_000  # 2100-01-01T00:00:00Z
+_HEX_SEGMENT = re.compile(r"[0-9a-f]+|[0-9A-F]+")
+_ULID_SEGMENT = re.compile(r"[0-7][0-9a-hjkmnp-tv-z]{25}|[0-7][0-9A-HJKMNP-TV-Z]{25}")
+_CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz"
+_STAMP_WITH_T = re.compile(r"([0-9]{8})T([0-9]{6})Z?")
+_MONTH_DAYS = (31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+
+
+def _timestamp_segment(segment: str) -> bool:
+    """A date or a Unix epoch written in digits, as generators stamp their ids.
+
+    `20261018`, `202610181430`, `20261018143022` and `20261018T143022Z` must be a
+    valid date-time between 1970 and 2099; a 10- or 13-digit run must be an epoch
+    in seconds or milliseconds between 2000 and 2100. Any other digit run (a
+    counter, an account number, a 16-digit card number) is not one.
+    """
+    stamped = _STAMP_WITH_T.fullmatch(segment)
+    if stamped:
+        segment = stamped.group(1) + stamped.group(2)
+    if not (segment.isascii() and segment.isdigit()):
+        return False
+    size = len(segment)
+    if size in (8, 12, 14):
+        year, month, day = int(segment[:4]), int(segment[4:6]), int(segment[6:8])
+        if not (1970 <= year < 2100 and 1 <= month <= 12 and 1 <= day <= _MONTH_DAYS[month - 1]):
+            return False
+        if month == 2 and day == 29 and not (year % 4 == 0 and (year % 100 or year % 400 == 0)):
+            return False
+        clock = segment[8:]
+        return all(
+            int(clock[index:index + 2]) < (24 if index == 0 else 60)
+            for index in range(0, len(clock), 2)
+        )
+    if size in (10, 13):
+        millis = int(segment) * 1000 if size == 10 else int(segment)
+        return _EPOCH_MS_FLOOR <= millis < _EPOCH_MS_CEILING
+    return False
+
+
+def _generated_id_segment(segment: str) -> bool:
+    """A UUID of version 4 or 7 written as 32 hex digits, or a ULID.
+
+    Version nibble and variant bits for the UUID (a random hex32 value matches a
+    v4 one draw in 64), a plausible millisecond timestamp for the UUID v7 and the
+    ULID (Crockford base32, one case, at least one letter past `f`: a hex run of
+    26 digits is not one).
+    """
+    if len(segment) == 32 and _HEX_SEGMENT.fullmatch(segment):
+        lowered = segment.lower()
+        if lowered[16] not in "89ab":
+            return False
+        if lowered[12] == "4":
+            return True
+        return lowered[12] == "7" and (
+            _EPOCH_MS_FLOOR <= int(lowered[:12], 16) < _EPOCH_MS_CEILING
+        )
+    if _ULID_SEGMENT.fullmatch(segment) and not _HEX_SEGMENT.fullmatch(segment):
+        millis = 0
+        for ch in segment[:10].lower():
+            millis = millis * 32 + _CROCKFORD.index(ch)
+        return _EPOCH_MS_FLOOR <= millis < _EPOCH_MS_CEILING
+    return False
+
+
+def _camel_shape(letters: str, versioned: bool) -> bool:
+    """Every block of capitals opens a word (one capital before lowercase
+    letters), is an acronym before a word (three capitals or more, `HTTPServer`),
+    a trailing acronym (`toJSON`) or a version tag before final digits (`apiV2`).
+    A random draw shuffles case (`SNcveshQ`, `JVwPNruz`). One linear scan."""
+    index, size = 0, len(letters)
+    while index < size:
+        if not letters[index].isupper():
+            index += 1
+            continue
+        end = index
+        while end < size and letters[end].isupper():
+            end += 1
+        block = end - index
+        if end < size and block == 2:
+            return False
+        if end == size and block == 1 and not versioned:
+            return False
+        index = end
+    return True
+
+
 def _opaque_run(token: str) -> bool:
     """Does a high-entropy candidate read as an opaque token or an identifier?"""
+    # A generated identifier recognised by its whole shape is never opaque
+    # (issue #101): see `_generated_identifier`, a closed grammar.
+    if _generated_identifier(token):
+        return False
     if _shannon_bits_per_char(token) < _HIGH_ENTROPY_BITS:
         return False
     # Vendor tokens are drawn from digit-bearing alphabets; a candidate made
@@ -591,6 +685,117 @@ def _opaque_slashed(token: str) -> bool:
     # segment of an asset path (#84).
     parts = [part for part in token.split("/") if part]
     return _opaque_chunks(parts)
+
+
+# Generated identifiers the entropy pass leaves alone (issue #101). The exemption
+# is a closed grammar over the WHOLE candidate, never an estimate: it lets through
+# only what proves to be written by a person or a generator, and everything else
+# keeps master's rule (« dans le doute on masque », ADR-006):
+#   <word> (sep <word>)* [sep <timestamp>]* [sep <tail>]
+# with `-` or `_` as separators and no empty segment, where
+#   - every <word> is a name (`_identifier_word`): letters, then at most four
+#     digits, most lowercase letters in runs of three or more, capitals only
+#     opening words, a vowel in every word of two letters or more, and no word
+#     that names a credential (`_CREDENTIAL_WORDS`: `key`, `token`, `api`,
+#     `access`, `signing`, `webhook`, `hash`…);
+#   - <tail> is a UUID of version 4 or 7 in 32 hex digits or a ULID — behind a
+#     timestamp, or behind a word whose last word is the noun of an identifier
+#     (`_ID_NOUNS`: `evt`, `run`, `trace`, `orderId`…) —, a dashed UUID, or, only
+#     after a timestamp, at most 24 hex digits of one case.
+# A candidate holding `=` or `+` (a label glued to its value, a base64 value) is
+# never exempt. Prices, measured in the #101 comment: a random value that happens
+# to read as dictionary words keeps no protection it had not on master, and the
+# shapes left out — `evt_<nanoid21>`, `evt_<objectid>`, `evt_<cuid2>`, bare UUIDs
+# and ULIDs, SCREAMING_SNAKE constants — keep master's verdict.
+_CREDENTIAL_WORDS = frozenset(
+    (
+        "key keys secret secrets token tokens tok pat pass passwd password passphrase pwd"
+        " cred creds credential credentials sig sign signing signed signature hmac hash"
+        " salt seed nonce otp totp mfa auth oauth session sess bearer cookie jwt sk pk rk"
+        " api apikey access private priv client refresh encryption encrypt decrypt"
+        " cipher webhook license master"
+    ).split()
+)
+# The last word before a UUID or a ULID that no timestamp precedes: the noun of an
+# identifier. `shpat_<hex32>`, a Shopify key, is a UUID v4 one draw in 64 and must
+# not pass for `evt_<uuid4hex>`.
+_ID_NOUNS = frozenset(
+    (
+        "id ids uid uuid guid ulid evt event events run runs job jobs task tasks trace"
+        " traces span spans req request requests msg message messages order orders item"
+        " items node nodes build builds deploy deployment deployments release releases"
+        " workflow workflows pipeline pipelines commit commits ref refs record records"
+        " doc docs document documents object objects entity entities user users account"
+        " accounts device devices instance instances correlation operation operations"
+        " invoice invoices ticket tickets incident incidents alert alerts notification"
+        " notifications batch batches upload uploads file files"
+    ).split()
+)
+_ID_WORD = re.compile(r"[A-Za-z]+[0-9]{0,4}")
+# Words of a name: an acronym not followed by lowercase letters, or an optional
+# capital and lowercase letters. Each match is linear: no nested quantifier.
+_NAME_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+")
+_ID_HEX_TAIL = re.compile(r"[0-9a-f]{1,24}|[0-9A-F]{1,24}")
+_ID_UUID_DASHED = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+
+
+def _identifier_word(segment: str) -> bool:
+    """A name a person wrote: `workflow`, `deployment`, `handleUserLoginV2`."""
+    if not _ID_WORD.fullmatch(segment) or _lower_run_share(segment) < 0.6:
+        return False
+    letters = segment.rstrip("0123456789")
+    if not _camel_shape(letters, len(letters) < len(segment)):
+        return False
+    # Capitals only open words: two capitals in a row are allowed only as a
+    # trailing acronym of four letters at most (`toJSON`, `userID`). A random
+    # draw holds blocks of capitals anywhere (`ZRUiUagkoa`, `sKJAeXWHkey`).
+    block = 0
+    for index, ch in enumerate(letters):
+        block = block + 1 if ch.isupper() else 0
+        if block >= 2 and index + 1 < len(letters) and not letters[index + 1].isupper():
+            return False
+        if block > 4:
+            return False
+    for word in _NAME_WORDS.findall(letters):
+        if word.lower() in _CREDENTIAL_WORDS:
+            return False
+        if word.isupper():
+            if len(word) > 4:
+                return False
+        elif len(word) >= 2 and not any(ch in "aeiouyAEIOUY" for ch in word):
+            return False
+    return True
+
+
+def _generated_identifier(token: str) -> bool:
+    """Does the whole candidate follow the closed grammar of a generated id?"""
+    if "=" in token or "+" in token:
+        return False
+    parts = re.split(r"[-_]", token)
+    if not all(parts):
+        return False
+    words = 0
+    while words < len(parts) and _identifier_word(parts[words]):
+        words += 1
+    if words == 0:
+        return False
+    tail = parts[words:]
+    if len(tail) == 5 and _ID_UUID_DASHED.fullmatch("-".join(tail)):
+        return token.endswith("-".join(tail))
+    stamps = 0
+    while stamps < len(tail) and _timestamp_segment(tail[stamps]):
+        stamps += 1
+    tail = tail[stamps:]
+    if not tail:
+        return True
+    if len(tail) > 1:
+        return False
+    if stamps:
+        return _generated_id_segment(tail[0]) or bool(_ID_HEX_TAIL.fullmatch(tail[0]))
+    noun = _NAME_WORDS.findall(parts[words - 1].rstrip("0123456789"))[-1].lower()
+    return noun in _ID_NOUNS and _generated_id_segment(tail[0])
 
 
 def redact(text: str) -> tuple[str, list[str]]:
