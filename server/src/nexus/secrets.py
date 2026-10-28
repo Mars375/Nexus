@@ -19,9 +19,11 @@ REDACTED = "[REDACTED]"
 # the run of entropy-candidate characters before it — one attempt per run, as
 # `_URL_CREDENTIALS` does, so the scan stays linear — to the end of the run of
 # entropy-candidate characters after it. A random head or base64 tail glued to the
-# format would otherwise stay in the clear, too short for the entropy pass. A label
-# glued by `=` goes with the token (`TOKEN=glpat-…`), as master's entropy pass
-# already takes `digest=<hex>` whole; a spaced label (`TOKEN: glpat-…`) stays.
+# format would otherwise stay in the clear, too short for the entropy pass. The
+# formats run after every label, URL, header and slashed-value pass (see `_VENDOR`):
+# a known label (`TOKEN=<token>`, `password: <token> and more`) is read by those
+# passes exactly as on master; an unknown one glued by `=` goes with the run, as the
+# entropy pass already takes `digest=<hex>` whole.
 _GLUED_RUN = r"(?<![A-Za-z0-9+=_-])[A-Za-z0-9+=_-]*?"
 _RUN_TAIL = r"[A-Za-z0-9+=_-]*"
 
@@ -565,9 +567,9 @@ def _mixed_case(part: str) -> bool:
 
 
 def _drawn_joiners(parts: list[str], aside: list[bool]) -> int:
-    """Joiners drawn as base64 symbols: a `+` inside material always counts; a
-    `-` or `_` counts when a neighbour is mixed-case material and no neighbour
-    was set aside (`tok_<urlsafe16>`, 128 bits, lost 6 bits per joiner)."""
+    """Joiners drawn as base64 symbols: a `+` between two characters of material counts
+    (a run of `+` does not); a `-` or `_` counts when a neighbour is mixed-case material
+    and no neighbour was set aside (`tok_<urlsafe16>`, 128 bits, lost 6 bits per joiner)."""
     count = sum(
         len(_PLUS_JOINER.findall(part)) for part, kept in zip(parts, aside, strict=True) if not kept
     )
@@ -824,11 +826,13 @@ def _opaque_slashed(token: str) -> bool:
 
 
 _VENDOR: list[tuple[str, re.Pattern[str]]] = [
-    # Unanchored vendor formats (issue #101) run right after the private key and
-    # before every pattern anchored by a word boundary: masking a token glued to an
-    # AWS key (`AKIA…glpat-…`) gives that key the word boundary it lacked, so an anchored
-    # pattern placed before them would only catch it on a second pass. Masking never
-    # writes their literal prefixes, so the order cannot work the other way round.
+    # Unanchored vendor formats (issue #101), applied by `redact` just before the entropy
+    # pass and after every pass that reads a label, a URL, a header or a slashed value:
+    # a format that ran first would stop at a space, a dot or a slash and leave the rest
+    # of a value that master masks in the clear (PR #135 review). The run they mask is
+    # exactly the maximal run the entropy pass reads, so they only add masks. A token
+    # glued to an AWS key (`AKIA…<token>`) is masked whole in one pass because ``
+    # fails in front of the key and the format takes the entire run.
     # New Relic browser key: `NRJS-` + 19 hex digits (76 bits, under any entropy floor).
     ("newrelic_key", re.compile(rf"{_GLUED_RUN}NRJS-[a-f0-9]{{19}}{_RUN_TAIL}")),
     # Sourcegraph access token: `sgp_` + 16 hex digits (or `local`) + `_` + 40 hex.
