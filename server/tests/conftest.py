@@ -57,8 +57,12 @@ class ActorClient(TestClient):
     def token_for(self, actor: str) -> str:
         if actor not in self._issued:
             with self.app.state.sessionmaker() as session:
-                _, self._issued[actor] = tokens.issue(session, actor, "test")
+                _, token = tokens.issue(session, actor, "test")
                 session.commit()
+            # Published only once committed (#138): another thread may already be using it, and
+            # an uncommitted row is invisible to its connection, i.e. a 401 `invalid_token` for a
+            # valid token before the request even reaches the test's race barrier.
+            self._issued[actor] = token
         return self._issued[actor]
 
     def headers_for(self, actor: str) -> dict[str, str]:
