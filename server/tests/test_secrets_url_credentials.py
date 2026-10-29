@@ -8,6 +8,7 @@ The fake password is assembled at runtime, never written in the clear.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 
 import pytest
 
@@ -200,15 +201,32 @@ def test_redaction_is_idempotent(text, _expected):
     assert redact(once) == (once, [])
 
 
+# Two sizes of one pattern, four times apart: a linear scan costs about four times
+# as much on the large one, a quadratic scan about sixteen times (#133, #134).
+SMALL_INPUT = 25_000
+LARGE_INPUT = 100_000
+
+
+def fastest_scan(build: Callable[[int], str], size: int, runs: int = 5) -> float:
+    """Fastest of `runs` scans of one input, so a single scheduling hiccup does not decide."""
+    text = build(size)
+    times = []
+    for _ in range(runs):
+        started = time.perf_counter()
+        redact(text)
+        times.append(time.perf_counter() - started)
+    return min(times)
+
+
 @pytest.mark.parametrize(
-    "text",
-    (
-        "a." * 50_000,
-        "a-" * 50_000 + "://u:x",
-        "x://" + "?a#b" * 25_000,
-        "x://u:" + "p@" * 50_000 + "/",
-        "x://" + "u@" * 50_000,
-    ),
+    "build",
+    [
+        lambda size: "a." * (size // 2),
+        lambda size: "a-" * (size // 2) + "://u:x",
+        lambda size: "x://" + "?a#b" * (size // 4),
+        lambda size: "x://u:" + "p@" * (size // 2) + "/",
+        lambda size: "x://" + "u@" * (size // 2),
+    ],
     ids=(
         "dotted-scheme-run",
         "dashed-scheme-run",
@@ -217,14 +235,20 @@ def test_redaction_is_idempotent(text, _expected):
         "at-signs",
     ),
 )
-def test_url_credentials_scan_is_linear(text):
+def test_url_credentials_scan_is_linear(build):
     # `master` was quadratic: the `\b` retried at every `.`, `+` and `-` of a
-    # scheme run (20 s on 100 KB). A comment body has no length bound; the
-    # ceiling catches a quadratic return (tens of milliseconds now).
-    started = time.perf_counter()
-    redact(text)
-    elapsed = time.perf_counter() - started
-    assert elapsed < 1.0, elapsed
+    # scheme run (20 s on 100 KB). A comment body has no length bound.
+    #
+    # The bound is relative, not a wall-clock bound alone that a slow runner could
+    # trip (#133, #134): four times the input must cost about four times as long, so
+    # a quadratic return (about sixteen times as long) fails it. Under heavy CPU
+    # load the small scan fits a scheduler quantum while the large one gets
+    # preempted, which inflates the ratio of a linear scan; the generous absolute
+    # ceiling therefore also lets a linear scan through (the quadratic loop of the
+    # same input takes several seconds).
+    small = fastest_scan(build, SMALL_INPUT)
+    large = fastest_scan(build, LARGE_INPUT)
+    assert large < 9 * max(small, 0.002) or large < 3.0, (small, large)
 
 
 @pytest.mark.xfail(

@@ -7,6 +7,7 @@ by gitleaks), which silently turns an assertion into a no-op.
 
 import random
 import time
+from collections.abc import Callable
 
 import pytest
 
@@ -18,6 +19,22 @@ TK = "tok" + "en"
 SEC = "sec" + "ret"
 AK = "api" + "_key"
 VALUE = "LesChats" + "2026"
+
+# Two sizes of one pattern, four times apart: a linear scan costs about four times
+# as much on the large one, a quadratic scan about sixteen times (#133, #134).
+SMALL_INPUT = 25_000
+LARGE_INPUT = 100_000
+
+
+def fastest_scan(build: Callable[[int], str], size: int, runs: int = 5) -> float:
+    """Fastest of `runs` scans of one input, so a single scheduling hiccup does not decide."""
+    text = build(size)
+    times = []
+    for _ in range(runs):
+        started = time.perf_counter()
+        redact(text)
+        times.append(time.perf_counter() - started)
+    return min(times)
 
 
 def assert_masked(text: str, expected: str) -> None:
@@ -176,18 +193,19 @@ def test_masking_is_idempotent_on_random_input():
         assert redact(cleaned) == (cleaned, [])
 
 
-# 17. Hostile 100 KB inputs stay linear. Short ids: pytest exports the node id
-# in `PYTEST_CURRENT_TEST`, which Windows caps at 32767 characters.
+# 17. Hostile 100 KB inputs stay linear, and four times less input costs about four
+# times less (#133, #134). Short ids: pytest exports the node id in
+# `PYTEST_CURRENT_TEST`, which Windows caps at 32767 characters.
 @pytest.mark.parametrize(
-    "text",
+    "build",
     [
-        PW + '="' + '\\"' * (100_000 // 2),
-        PW + '="' + "\\" * 100_000,
-        PW + ": " + "a'" * (100_000 // 2),
-        PW + '="' + "\n" * 100_000,
-        PW + '="' + ("\n" + PW) * (100_000 // (len(PW) + 1)),
-        (PW + '="a ') * (100_000 // (len(PW) + 4)),
-        MDP + " : " + ("j'aime " * (100_000 // 7)),
+        lambda size: PW + '="' + '\\"' * (size // 2),
+        lambda size: PW + '="' + "\\" * size,
+        lambda size: PW + ": " + "a'" * (size // 2),
+        lambda size: PW + '="' + "\n" * size,
+        lambda size: PW + '="' + ("\n" + PW) * (size // (len(PW) + 1)),
+        lambda size: (PW + '="a ') * (size // (len(PW) + 4)),
+        lambda size: MDP + " : " + ("j'aime " * (size // 7)),
     ],
     ids=[
         "escaped_quotes",
@@ -199,12 +217,18 @@ def test_masking_is_idempotent_on_random_input():
         "passphrase_words",
     ],
 )
-def test_hostile_100k_inputs_stay_linear(text):
-    started = time.perf_counter()
-    redact(text)
-    elapsed = time.perf_counter() - started
+def test_hostile_100k_inputs_stay_linear(build):
+    # The bound is relative, not a wall-clock bound alone that a slow runner could
+    # trip (#133, #134): four times the input must cost about four times as long, so
+    # a quadratic return (about sixteen times as long) fails it. Under heavy CPU
+    # load the small scan fits a scheduler quantum while the large one gets
+    # preempted, which inflates the ratio of a linear scan; the generous absolute
+    # ceiling therefore also lets a linear scan through (the quadratic loop of the
+    # same input takes several seconds).
+    small = fastest_scan(build, SMALL_INPUT)
+    large = fastest_scan(build, LARGE_INPUT)
 
-    assert elapsed < 1.0
+    assert large < 9 * max(small, 0.002) or large < 3.0, (small, large)
 
 
 # Amendment (review of PR #116): a value that runs across quotes must never swallow
@@ -284,17 +308,18 @@ def test_value_made_of_markers_and_quotes_is_left_alone():
     assert redact(text) == (text, [])
 
 
-# 24. Hostile 100 KB inputs for the label checks stay linear.
+# 24. Hostile 100 KB inputs for the label checks stay linear (same relative bound
+# as #17: four times the input, about four times the cost; #133, #134).
 @pytest.mark.parametrize(
-    "text",
+    "build",
     [
-        PW + ": a" + ("'" + TK + "':") * (100_000 // 8),
-        PW + ": a" + (' "' + TK + '":') * (100_000 // 9),
-        PW + ": " + ("a#" + TK + ":\n") * (100_000 // 9),
-        PW + "='" + ("x " + TK + ":\n") * (100_000 // 9),
-        PW + "=[" + (TK + ":\n") * (100_000 // 7),
-        PW + ": x'" + "aB" * (100_000 // 2),
-        PW + ': "a"' + ("b'" + TK + "'=") * (100_000 // 9),
+        lambda size: PW + ": a" + ("'" + TK + "':") * (size // 8),
+        lambda size: PW + ": a" + (' "' + TK + '":') * (size // 9),
+        lambda size: PW + ": " + ("a#" + TK + ":\n") * (size // 9),
+        lambda size: PW + "='" + ("x " + TK + ":\n") * (size // 9),
+        lambda size: PW + "=[" + (TK + ":\n") * (size // 7),
+        lambda size: PW + ": x'" + "aB" * (size // 2),
+        lambda size: PW + ': "a"' + ("b'" + TK + "'=") * (size // 9),
     ],
     ids=[
         "quoted_labels_glued",
@@ -306,12 +331,11 @@ def test_value_made_of_markers_and_quotes_is_left_alone():
         "glued_after_quote",
     ],
 )
-def test_hostile_100k_label_inputs_stay_linear(text):
-    started = time.perf_counter()
-    redact(text)
-    elapsed = time.perf_counter() - started
+def test_hostile_100k_label_inputs_stay_linear(build):
+    small = fastest_scan(build, SMALL_INPUT)
+    large = fastest_scan(build, LARGE_INPUT)
 
-    assert elapsed < 1.0
+    assert large < 9 * max(small, 0.002) or large < 3.0, (small, large)
 
 
 # Amendment 2 (second review of PR #116). MARK_C stays a marker, never a label.
