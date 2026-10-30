@@ -53,8 +53,15 @@ class ActorClient(TestClient):
         super().__init__(app, **kwargs)
         self._authenticate = authenticate
         self._issued: dict[str, str] = {}
+        self._issue_lock = threading.Lock()
 
     def token_for(self, actor: str) -> str:
+        # One issuance at a time: two threads asking for the same actor while the first commits
+        # would each issue a token, and the second would replace the first in the cache.
+        with self._issue_lock:
+            return self._token_for_locked(actor)
+
+    def _token_for_locked(self, actor: str) -> str:
         if actor not in self._issued:
             with self.app.state.sessionmaker() as session:
                 _, token = tokens.issue(session, actor, "test")
