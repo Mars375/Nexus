@@ -848,8 +848,18 @@ _VENDOR: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 
-def redact(text: str) -> tuple[str, list[str]]:
-    """Renvoie le texte masqué et la liste des types de secrets trouvés."""
+# Fixed-point bound of `redact` (issue #126): the slashed-value pass and the entropy
+# pass can feed each other, so a masked tail makes the next pass read the remaining
+# head as opaque and mask more. Retuning the detection rules to avoid that would risk
+# leaving a real secret in the clear (over-redaction is the accepted price, ADR-006);
+# running the unchanged passes again until nothing moves is safe by construction, since
+# a pass only ever adds masks. Three passes are enough for the observed cases, and a
+# text without a secret stops after the first one.
+_MAX_PASSES = 3
+
+
+def _redact_once(text: str) -> tuple[str, list[str]]:
+    """Apply every masking pass once; return the masked text and the kinds found."""
     found: list[str] = []
     for kind, pattern in _FULL:
         text, count = pattern.subn(REDACTED, text)
@@ -919,6 +929,22 @@ def redact(text: str) -> tuple[str, list[str]]:
             found.append(kind)
     text = _ENTROPY_TOKEN.sub(mask_random_run, text)
     return text, sorted(set(found))
+
+
+def redact(text: str) -> tuple[str, list[str]]:
+    """Mask text until a fixed point, at most `_MAX_PASSES` passes.
+
+    Return the masked text and every kind of secret found along the way, duplicates
+    included: a later pass only reports what it actually masked.
+    """
+    found: list[str] = []
+    for _ in range(_MAX_PASSES):
+        masked, kinds = _redact_once(text)
+        found.extend(kinds)
+        if masked == text:
+            break
+        text = masked
+    return text, found
 
 
 # Un secret masqué et ce qui l'entoure : étiquette suivie de : ou = (password=),
