@@ -215,11 +215,10 @@ def test_additions_stay_linear(text):
     assert time.perf_counter() - started < 3.0
 
 
-@pytest.mark.parametrize(("slash", "plafond"), [(False, 0), (True, 1)])
+@pytest.mark.parametrize(("slash", "plafond"), [(False, 0), (True, 0)])
 def test_redaction_is_idempotent_on_a_fixed_seed(slash, plafond):
     # 4 000 seeded inputs built from labels, quotes, URLs, prefixes and random
-    # runs. Without `/`, redact is idempotent; with `/`, the failures are those of
-    # master on this seed (the slashed pass, issue #126).
+    # runs. With or without `/`, redact is idempotent on this seed.
     fragments = [
         "password", "token", "api_key", "mot de passe", "Authorization: ", ":", "=", " ",
         "\n", '"', "'", "\\", ",", ";", "{", "}", "[", "]", "_", "-", ".", "@", "#", "?",
