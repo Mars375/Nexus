@@ -2,7 +2,7 @@
 
 **Version :** 0.2 (refonte : application autonome — ADR-011)
 **Date :** 2026-09-28
-**Mise à jour d'état :** 2026-10-26
+**Mise à jour d'état :** 2026-10-31
 
 ---
 
@@ -50,7 +50,7 @@
 
 ### État au 2026-10-26
 
-Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un ensemble cohérent : découpage de `iso.ts` (#105) et de `TaskPane.tsx` (#103), cinq rondes tailnet confirmées sans rebind (#98), origine de la WebView autorisée côté serveur pour Tauri, REST et WebSocket (#112, qui ferme #47), seuil indicatif de taille des fichiers inscrit dans `AGENTS.md` (#108, qui ferme #39), puis les corrections du scanner de secrets (mots de passe d'URL #104 par #114, guillemets dans les valeurs #106 par #116), du ticket WebSocket lié à l'empreinte du jeton (#107 par #115), la stabilisation du test e2e qui lisait le rôle d'opération avant sa résolution (#125 par #129), et l'ajout d'une CI GitHub Actions (lint, typage, build, tests, e2e) qui vérifie chaque PR (#130).
+Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un ensemble cohérent : découpage de `iso.ts` (#105) et de `TaskPane.tsx` (#103), cinq rondes tailnet confirmées sans rebind (#98), origine de la WebView autorisée côté serveur pour Tauri, REST et WebSocket (#112, qui ferme #47), seuil indicatif de taille des fichiers inscrit dans `AGENTS.md` (#108, qui ferme #39), puis les corrections du scanner de secrets (mots de passe d'URL #104 par #114, guillemets dans les valeurs #106 par #116), du ticket WebSocket lié à l'empreinte du jeton (#107 par #115), la stabilisation du test e2e qui lisait le rôle d'opération avant sa résolution (#125 par #129), les ajouts de détection du scanner (#101, PR A, #135), la stabilisation du test de course des approbations (#138, #141) et le test sur `last_used_at` après un 403 (#124).
 
 - **Tableau (Travail) :** thème « Salle orbitale » de bout en bout, focus de la première carte, fin du saut à l'ouverture des dialogues, police des toasts, agent principal affiché sur la carte, tâche terminée non modifiable + preuves jointes + tâche « suite » (PR #50, #51, #70, #71).
 - **Vue Maintenant :** vue complète (PR #29) puis paysage d'étages/baies de 4 nœuds par étage, rotation, finitions, et trois temps de demandes reçues (modèle → réponses → répondre/valider/refuser depuis Maintenant) (PR #33, #35, #37, #52, #53, #54).
@@ -59,7 +59,7 @@ Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un 
 - **Process agents :** conventions de branches/PR/langue, fusion automatique quand les relectures sont OK, routage de modèles (sonnet principal, architect/reviewer en Opus) (PR #34, #45, #73, #96, #120).
 - **Découpage (#39) :** tests de l'API des événements (#89) et de `Floor` (#91) scindés par thème, `TaskPane.tsx` (#103) et `iso.ts` (#105) séparés par sous-modules, sans changer un test ni l'API publique ; services `events`/`tasks` jugés cohésifs, non découpés (décision dans l'issue) ; seuil indicatif 400/600 inscrit dans `AGENTS.md` (#108).
 
-**Reste pour la sortie de Phase 1 :** #101 (faux positifs du scanner de secrets sur des identifiants générés, corrigé par la PR #127 en relecture) et le suivi P3 de #95 (déjà traité par #121, #122 et #114 ; restent les points scanner de #87, le test `last_used_at` après un 403 et les points de #85 sur le statut des tâches) ; deux bugs ouverts le prolongent : #126 (masquage non idempotent sur les valeurs à barres obliques) et #128 (date « hors fenêtre » fausse au passage à l'heure d'été dans le test de `last_used_at`). Sont faits : #15, #17, #57, #58 et #59 (PR #80, #85, #74, #88 et #76), #39 (seuil de taille dans `AGENTS.md`, PR #108), #47 (origine de la WebView, PR #112), #86 (P3 de #74 : point 1 couvert par #98, point 2 conservé sous dérogation ADR-021, point 3 vérifié sur Helios), #104 et #106 (fuites du scanner de secrets, PR #114 et #116), #107 (ticket WebSocket qui survivait à la suppression de son jeton, PR #115) et #125 (test e2e qui lisait le rôle d'opération avant sa résolution, PR #129).
+**Reste pour la sortie de Phase 1 :** #101 (faux positifs du scanner de secrets sur des identifiants générés : ajouts de détection faits par #135, consigne d'id en relecture dans #139, PR B à venir) et le suivi P3 de #95 (déjà traité par #121, #122, #114, #124 et #133 ; restent les points scanner de #87 et les points de #85 sur le statut des tâches) ; s'y ajoutent #126 (masquage non idempotent sur les valeurs à barres obliques, PR #140 en relecture) et #134 (bornes de temps du scanner, PR #142 en relecture). La CI GitHub Actions (lint, typage, build, tests, e2e) est en relecture dans #130. Sont faits : #15, #17, #57, #58 et #59 (PR #80, #85, #74, #88 et #76), #39 (seuil de taille dans `AGENTS.md`, PR #108), #47 (origine de la WebView, PR #112), #86 (P3 de #74 : point 1 couvert par #98, point 2 conservé sous dérogation ADR-021, point 3 vérifié sur Helios), #104 et #106 (fuites du scanner de secrets, PR #114 et #116), #107 (ticket WebSocket qui survivait à la suppression de son jeton, PR #115) et #125 (test e2e qui lisait le rôle d'opération avant sa résolution, PR #129).
 
 ## Phase 2 — Exécution
 
@@ -136,7 +136,7 @@ Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un 
 
 ## Prochaine action immédiate
 
-**Phase 1 :** fusionner #127 (scanner, ferme #101) et #124 (test `last_used_at` après un 403) quand leurs relectures sont complètes, puis traiter #126 et #128 ; poursuivre le suivi P3 de #95 (points scanner de #87, points de #85 sur le statut des tâches). Les PR ouvertes se fusionnent quand leurs relectures sont complètes.
+**Phase 1 :** fusionner #140 (#126), #139 (#101, consigne d'id) et #142 (#134) quand leurs relectures sont complètes, puis la PR B de #101 ; poursuivre le suivi P3 de #95 (points scanner de #87, points de #85 sur le statut des tâches). Les PR ouvertes se fusionnent quand leurs relectures sont complètes.
 
 ---
 
