@@ -53,12 +53,23 @@ class ActorClient(TestClient):
         super().__init__(app, **kwargs)
         self._authenticate = authenticate
         self._issued: dict[str, str] = {}
+        self._issue_lock = threading.Lock()
 
     def token_for(self, actor: str) -> str:
+        # One issuance at a time: two threads asking for the same actor while the first commits
+        # would each issue a token, and the second would replace the first in the cache.
+        with self._issue_lock:
+            return self._token_for_locked(actor)
+
+    def _token_for_locked(self, actor: str) -> str:
         if actor not in self._issued:
             with self.app.state.sessionmaker() as session:
-                _, self._issued[actor] = tokens.issue(session, actor, "test")
+                _, token = tokens.issue(session, actor, "test")
                 session.commit()
+            # Published only once committed (#138): another thread may already be using it, and
+            # an uncommitted row is invisible to its connection, i.e. a 401 `invalid_token` for a
+            # valid token before the request even reaches the test's race barrier.
+            self._issued[actor] = token
         return self._issued[actor]
 
     def headers_for(self, actor: str) -> dict[str, str]:
