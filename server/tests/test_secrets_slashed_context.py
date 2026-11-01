@@ -172,7 +172,6 @@ def _cascade_text() -> str:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="cascade between passes, PR 146 review")
 def test_the_window_rule_does_not_change_what_the_passes_of_master_mask():
     text = _cascade_text()
     assert redact(text)[0] == f"{secrets.REDACTED}/{secrets.REDACTED}"
@@ -202,7 +201,6 @@ def _visible_fragments(source: str, out: str) -> set[str]:
     return {source[i : i + 8] for i in range(len(source) - 7) if source[i : i + 8] in out}
 
 
-@pytest.mark.xfail(strict=True, reason="cascade between passes, PR 146 review")
 def test_the_rule_never_makes_a_hidden_fragment_readable_again(monkeypatch):
     assert hasattr(secrets, "_mask_opaque_windows")
     runs = _random_runs(20_000)
