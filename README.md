@@ -68,6 +68,8 @@ Nexus est une application locale et autonome qui réunit Loïc et tous ses agent
 
 - **2026-09-28** — Phase 0 : fondations documentaires. Refonte du même jour : Nexus devient une application autonome (ADR-011), et non plus une surcouche de Hermes Kanban.
 - **2026-09-28** — Phase 0 close (refonte relue et validée par Loïc). Phase 1 en cours : noyau (tableau Nexus, vue Maintenant, API d'événements).
+- **2026-10-31** — Phase 1 en usage quotidien : tableau **Travail** (créer, déplacer, commenter, assigner, lier, preuves jointes, tâche « suite »), vue **Maintenant**, API d'événements et temps réel WebSocket, authentification par jeton d'acteur (ADR-020), sauvegardes quotidiennes et nœuds Tailscale en lecture seule. Les tests couvrent le serveur (pytest) et l'UI (Vitest, Playwright) ; une CI GitHub Actions (lint, typage, build, tests, e2e) vérifie chaque PR (#130).
+- **2026-11-01** — Phase 1 close (noyau livré et utilisé au quotidien, décision de Loïc). Suite : fermer le suivi du scanner de secrets (#144), puis la Phase 2 (Exécution) au moment choisi par Loïc.
 
 ## Lancer Nexus
 
