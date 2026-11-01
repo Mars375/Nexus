@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from collections.abc import Callable
+from contextvars import ContextVar
 from functools import cache
 from math import log2
 from typing import Any
@@ -825,6 +826,78 @@ def _opaque_slashed(token: str) -> bool:
     return _opaque_chunks(parts)
 
 
+# Segments that read as path words and cut a slashed candidate into windows
+# (issue #144): a lowercase word with a short numeric suffix, digits alone, a
+# version tag, or a name in camelCase / PascalCase / SCREAMING style.
+_PATH_WORD = re.compile(r"[a-z]{3,}[0-9]{0,4}|[0-9]+|v[0-9]{1,3}")
+
+
+def _path_word(segment: str) -> bool:
+    return bool(_PATH_WORD.fullmatch(segment)) or _name_segment(segment)
+
+
+# Segments of the opaque windows met by the passes of ONE `redact` call (issue #144).
+# A ContextVar, never a module global: the scanner runs in concurrent workers, and
+# each call (each thread, each task) sees only its own collector. None outside
+# `redact`: the rule then collects nothing.
+_WINDOW_SEGMENTS: ContextVar[set[str] | None] = ContextVar("window_segments", default=None)
+# Shortest segment replaced afterwards: a shorter one is too common to be told apart.
+_MIN_WINDOW_SEGMENT = 3
+
+
+def _mask_opaque_windows(parts: list[str]) -> None:
+    """Note the segments of the opaque windows between path words of a candidate.
+
+    A key whose own slashes chop it into segments, written between path words
+    (`s3://bucket/<key>/backups/production`, `api/v1/<key>/download`), made the
+    words veto of `_opaque_slashed` rule the whole candidate a path, and the
+    tail rule never finds a tail free of words: the key leaked. Cutting the
+    candidate at every word leaves windows of consecutive non-word segments;
+    a window of two segments or more that `_opaque_slashed` judges opaque has
+    its segments noted in the collector of the running `redact` call.
+
+    Nothing is rewritten here: masking a window during a pass changed what the
+    next passes of the fixed point saw (`<16>/backups/MRS/rkEj/<24>` lost its
+    entropy-masked tail and kept 16 opaque characters readable, PR 146 review).
+    `redact` applies the noted segments once the passes of the existing rules
+    reached their fixed point. One pass over the segments, each read once.
+    """
+    collector = _WINDOW_SEGMENTS.get()
+    if collector is None:
+        return
+    window: list[str] = []
+
+    def close() -> None:
+        if 2 <= len(window) < len(parts) and _opaque_slashed("/".join(window)):
+            collector.update(part for part in window if len(part) >= _MIN_WINDOW_SEGMENT)
+        window.clear()
+
+    for part in parts:
+        if _path_word(part):
+            close()
+        else:
+            window.append(part)
+    close()
+
+
+# A slashed run of the output of the passes: its segments may be `[REDACTED]` markers.
+_MARKED_SLASHED_RUN = re.compile(
+    r"(?<![A-Za-z0-9+])(?:\[REDACTED\]|[A-Za-z0-9+]+={0,2})"
+    r"(?:/(?:\[REDACTED\]|[A-Za-z0-9+]+={0,2}))+"
+)
+
+
+def _mask_noted_segments(text: str, noted: set[str]) -> str:
+    """Replace every noted segment found in a slashed run of `text` by a mask."""
+
+    def mask_run(match: re.Match[str]) -> str:
+        return "/".join(
+            REDACTED if part in noted else part for part in match.group(0).split("/")
+        )
+
+    return _MARKED_SLASHED_RUN.sub(mask_run, text)
+
+
 _VENDOR: list[tuple[str, re.Pattern[str]]] = [
     # Unanchored vendor formats (issue #101), applied by `redact` just before the entropy
     # pass and after every pass that reads a label, a URL, a header or a slashed value:
@@ -912,6 +985,10 @@ def _redact_once(text: str) -> tuple[str, list[str]]:
         if start is not None:
             found.append("high_entropy")
             return "/".join(parts[:start]) + "/" + REDACTED
+        # Neither the whole candidate nor its tail is opaque: path words may
+        # sit on BOTH sides of the value (`s3://bucket/<key>/backups/production`).
+        # The rule only notes the segments; `redact` masks them afterwards.
+        _mask_opaque_windows(parts)
         return token
 
     # Labelled values run FIRST: a value that is itself a URL holding credentials
@@ -931,12 +1008,8 @@ def _redact_once(text: str) -> tuple[str, list[str]]:
     return text, sorted(set(found))
 
 
-def redact(text: str) -> tuple[str, list[str]]:
-    """Mask text until a fixed point, at most `_MAX_PASSES` passes.
-
-    Return the masked text and every kind of secret found along the way, duplicates
-    included: a later pass only reports what it actually masked.
-    """
+def _converge(text: str) -> tuple[str, list[str]]:
+    """Run `_redact_once` until a fixed point, at most `_MAX_PASSES` passes."""
     found: list[str] = []
     for _ in range(_MAX_PASSES):
         masked, kinds = _redact_once(text)
@@ -944,6 +1017,37 @@ def redact(text: str) -> tuple[str, list[str]]:
         if masked == text:
             break
         text = masked
+    return text, found
+
+
+def redact(text: str) -> tuple[str, list[str]]:
+    """Mask text until a fixed point, at most `_MAX_PASSES` passes.
+
+    Return the masked text and every kind of secret found along the way, duplicates
+    included: a later pass only reports what it actually masked.
+
+    The passes first reach the fixed point of the older rules, while the window rule
+    (issue #144) only notes the opaque segments it meets in a collector local to this
+    call. Those segments are then masked in the slashed runs of the output and the
+    passes run again with the collection still active, at most `_MAX_PASSES` rounds:
+    the window rule only ever adds masks on top of the older rules' result. A text
+    without a noted segment costs nothing more.
+    """
+    collector: set[str] = set()
+    token = _WINDOW_SEGMENTS.set(collector)
+    try:
+        text, found = _converge(text)
+        for _ in range(_MAX_PASSES):
+            if not collector:
+                break
+            masked = _mask_noted_segments(text, collector)
+            if masked == text:
+                break
+            found.append("high_entropy")
+            text, kinds = _converge(masked)
+            found.extend(kinds)
+    finally:
+        _WINDOW_SEGMENTS.reset(token)
     return text, found
 
 
