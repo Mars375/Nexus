@@ -181,14 +181,16 @@ _SEGMENT_SIZES = (3, 4, 5, 6, 8, 12, 16, 24, 28, 32)
 _PATH_WORDS = ["backups", "MRS", "logs", "tokens", "api", "v1", "data", "releases", "12"]
 
 
-def _random_runs(count: int, seed: int = 144) -> list[str]:
+def _random_runs(
+    count: int, seed: int = 144, sizes: tuple[int, ...] = _SEGMENT_SIZES
+) -> list[str]:
     """Slashed runs with 2 to 5 opaque segments mixed with path words."""
     rng = random.Random(seed)
     alphabet = _ALPHABET.replace("/", "")
     runs = []
     for _ in range(count):
         parts = [
-            "".join(rng.choice(alphabet) for _ in range(rng.choice(_SEGMENT_SIZES)))
+            "".join(rng.choice(alphabet) for _ in range(rng.choice(sizes)))
             for _ in range(rng.randint(2, 5))
         ]
         for _ in range(rng.randint(0, 4)):
@@ -256,3 +258,120 @@ def test_concurrent_calls_do_not_share_the_window_collector():
         thread.join()
     assert results["a"] == alone_a
     assert results["b"] == alone_b
+
+
+def _piece(*chunks: str) -> str:
+    return "".join(chunks)
+
+
+@pytest.mark.xfail(strict=True, reason="Antigravity review on dafcd5d")
+def test_a_short_segment_inside_a_key_is_masked_with_the_key():
+    # Antigravity review on dafcd5d (P1): a segment under three characters was
+    # never noted and stayed readable between two masked segments.
+    first, last = _piece("A1b2C3", "d4E5"), _piece("F6g7H8", "j9K0L1")
+    out = redact(f"s3://bucket/{first}/x/{last}/backups/production")[0]
+    mask = secrets.REDACTED
+    assert out == f"s3://bucket/{mask}/{mask}/{mask}/backups/production"
+
+
+@pytest.mark.xfail(strict=True, reason="Antigravity review on dafcd5d")
+def test_a_clean_path_is_not_masked_because_it_shares_a_segment_with_a_key():
+    # Antigravity review on dafcd5d (P2): the replacement was a global string
+    # replacement, so the first (healthy) path lost its segment too.
+    first, last = _piece("A1b2C3", "d4E5"), _piece("F6g7H8", "j9K0L1")
+    for lead in ("api", "Api"):
+        sane = f"{lead}/v1beta2/projects/list"
+        out = redact(f"{sane} et {lead}/v1beta2/{first}/{last}/download")[0]
+        assert out.startswith(f"{sane} et "), out
+        assert first not in out
+        assert last not in out
+
+
+@pytest.mark.xfail(strict=True, reason="Antigravity review on dafcd5d")
+def test_a_clean_path_sharing_a_non_word_segment_with_a_key_stays_intact():
+    first, last = _piece("A1b2C3", "d4E5"), _piece("F6g7H8", "j9K0L1")
+    sane = "ops/Zz9/readme"
+    out = redact(f"{sane} et s3://bucket/{first}/Zz9/{last}/backups/production")[0]
+    assert out.startswith(f"{sane} et "), out
+    assert first not in out
+    assert last not in out
+
+
+XF = pytest.mark.xfail(strict=True, reason="Antigravity review on dafcd5d")
+
+
+@pytest.mark.parametrize(
+    ("segment", "is_word"),
+    [
+        ("abc", True),
+        ("HTTPServer", True),
+        pytest.param("V2", True, marks=XF),
+        pytest.param("v1beta2", True, marks=XF),
+        pytest.param("rc1", True, marks=XF),
+        ("abc12345678", True),
+        ("abc123456789", False),
+    ],
+)
+def test_path_word_rule_is_what_the_security_doc_promises(segment, is_word):
+    assert secrets._path_word(segment) is is_word
+
+
+def test_a_marker_that_swallowed_several_segments_still_leaves_no_key_segment():
+    first, last = _piece("A1b2C3", "d4E5"), _piece("F6g7H8", "j9K0L1")
+    out = redact(f"cat /etc/tokens/abcdef/v1/Nop0/{first}/{last}")[0]
+    assert first not in out
+    assert last not in out
+    assert "tokens" in out
+
+
+@pytest.mark.xfail(strict=True, reason="Antigravity review on dafcd5d")
+def test_a_marker_may_cover_several_elements_of_a_noted_sequence():
+    first, last = _piece("A1b2C3", "d4E5"), _piece("F6g7H8", "j9K0L1")
+    mask = secrets.REDACTED
+    text = f"tokens/abcdef/v1/Nop0/{mask}"
+    noted = {("Nop0", first, last)}
+    assert secrets._mask_noted_segments(text, noted) == f"tokens/abcdef/v1/{mask}/{mask}"
+
+
+@pytest.mark.xfail(strict=False, reason="limite #84, issue #147")
+def test_a_key_of_one_or_two_character_segments_between_path_words():
+    key = "/".join(["AB", "CD", "E5", "f6", "G7", "h8", "I9", "j0", "K1", "12"])
+    out = redact(f"s3://bucket/{key}/backups/production")[0]
+    assert "AB" not in out
+
+
+def test_shared_segment_across_many_sequences_costs_linearly():
+    # Pathological shape: the same segment heads many distinct windows.
+    def best_of(count, runs=5):
+        rng = random.Random(count)
+        alphabet = _ALPHABET.replace("/", "")
+        lines = [
+            "s3://bucket/Q7xK9p/{}/backups/production".format(
+                "".join(rng.choice(alphabet) for _ in range(22))
+            )
+            for _ in range(count)
+        ]
+        text = "\n".join(lines)
+        times = []
+        for _ in range(runs):
+            started = time.perf_counter()
+            redact(text)
+            times.append(time.perf_counter() - started)
+        return min(times)
+
+    small, large = best_of(500), best_of(2000)
+    assert large < 6 * max(small, 0.002) or large < 0.5, (small, large)
+
+
+_SHORT_SIZES = (1, 2, 3)
+
+
+def test_short_segment_keys_only_add_masks_and_reach_a_fixed_point(monkeypatch):
+    runs = _random_runs(6_000, seed=3, sizes=_SHORT_SIZES)
+    with monkeypatch.context() as patch:
+        patch.setattr(secrets, "_mask_opaque_windows", lambda parts: None, raising=True)
+        without = [redact(run)[0] for run in runs]
+    for run, old in zip(runs, without, strict=True):
+        new = redact(run)[0]
+        assert _visible_fragments(run, new) <= _visible_fragments(run, old), (run, old, new)
+        assert redact(new)[0] == new, (run, new)
