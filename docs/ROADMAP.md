@@ -2,7 +2,7 @@
 
 **Version :** 0.2 (refonte : application autonome — ADR-011)
 **Date :** 2026-09-28
-**Mise à jour d'état :** 2026-10-31
+**Mise à jour d'état :** 2026-11-01
 
 ---
 
@@ -33,7 +33,7 @@
 
 **Critère de sortie :** docs refondues validées par Loïc.
 
-## Phase 1 — Noyau (en cours)
+## Phase 1 — Noyau (terminée le 2026-11-01)
 
 **Objectif :** Nexus existe et sert tous les jours, sans aucun LLM.
 
@@ -48,9 +48,9 @@
 
 **Critère de sortie :** Loïc gère ses tâches dans Nexus au quotidien ; un agent lancé à la main déclare `claimed` → `done` + preuve via l'API ; « retrouver l'état d'une tâche < 30 s ».
 
-### État au 2026-10-31
+### État au 2026-11-01
 
-Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un ensemble cohérent : découpage de `iso.ts` (#105) et de `TaskPane.tsx` (#103), cinq rondes tailnet confirmées sans rebind (#98), origine de la WebView autorisée côté serveur pour Tauri, REST et WebSocket (#112, qui ferme #47), seuil indicatif de taille des fichiers inscrit dans `AGENTS.md` (#108, qui ferme #39), puis les corrections du scanner de secrets (mots de passe d'URL #104 par #114, guillemets dans les valeurs #106 par #116), du ticket WebSocket lié à l'empreinte du jeton (#107 par #115), la stabilisation du test e2e qui lisait le rôle d'opération avant sa résolution (#125 par #129), les ajouts de détection du scanner (#101 par #135), la stabilisation du test de course des approbations (#138, #141) et le test sur `last_used_at` après un 403 (#124).
+Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un ensemble cohérent : découpage de `iso.ts` (#105) et de `TaskPane.tsx` (#103), cinq rondes tailnet confirmées sans rebind (#98), origine de la WebView autorisée côté serveur pour Tauri, REST et WebSocket (#112, qui ferme #47), seuil indicatif de taille des fichiers inscrit dans `AGENTS.md` (#108, qui ferme #39), puis les corrections du scanner de secrets (mots de passe d'URL #104 par #114, guillemets dans les valeurs #106 par #116), du ticket WebSocket lié à l'empreinte du jeton (#107 par #115), la stabilisation du test e2e qui lisait le rôle d'opération avant sa résolution (#125 par #129), les ajouts de détection du scanner (#101 par #135), la stabilisation du test de course des approbations (#138, #141) le test sur `last_used_at` après un 403 (#124), le masquage du scanner jusqu'au point fixe (#126 par #140), les bornes de temps relatives du scanner (#134 par #142), la consigne d'id d'événement court et lisible (#101 par #139), la CI GitHub Actions qui vérifie chaque PR (#130), CodeRabbit exigé seulement quand il est disponible (#143) et les limites connues du scanner de secrets (#145).
 
 - **Tableau (Travail) :** thème « Salle orbitale » de bout en bout, focus de la première carte, fin du saut à l'ouverture des dialogues, police des toasts, agent principal affiché sur la carte, tâche terminée non modifiable + preuves jointes + tâche « suite » (PR #50, #51, #70, #71).
 - **Vue Maintenant :** vue complète (PR #29) puis paysage d'étages/baies de 4 nœuds par étage, rotation, finitions, et trois temps de demandes reçues (modèle → réponses → répondre/valider/refuser depuis Maintenant) (PR #33, #35, #37, #52, #53, #54).
@@ -59,7 +59,7 @@ Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un 
 - **Process agents :** conventions de branches/PR/langue, fusion automatique quand les relectures sont OK, routage de modèles (sonnet principal, architect/reviewer en Opus) (PR #34, #45, #73, #96, #120).
 - **Découpage (#39) :** tests de l'API des événements (#89) et de `Floor` (#91) scindés par thème, `TaskPane.tsx` (#103) et `iso.ts` (#105) séparés par sous-modules, sans changer un test ni l'API publique ; services `events`/`tasks` jugés cohésifs, non découpés (décision dans l'issue) ; seuil indicatif 400/600 inscrit dans `AGENTS.md` (#108).
 
-**Reste pour la sortie de Phase 1 :** #101 (faux positifs du scanner de secrets sur des identifiants générés : ajouts de détection faits par #135, décision de Loïc du 2026-10-29 : les identifiants générés restent refusés et la consigne d'id de #139, en relecture, fermera #101) et le suivi P3 de #95 (déjà traité par #121, #122, #114, #123, #124 et #133 ; restent à arbitrer deux points du scanner de #87 : le sur-masquage d'un chemin entier et une limite documentée) ; s'y ajoutent #126 (masquage non idempotent sur les valeurs à barres obliques, PR #140 en relecture) et #134 (bornes de temps du scanner, PR #142 en relecture). La CI GitHub Actions (lint, typage, build, tests, e2e) est en relecture dans #130. Sont faits : #15, #17, #57, #58 et #59 (PR #80, #85, #74, #88 et #76), #39 (seuil de taille dans `AGENTS.md`, PR #108), #47 (origine de la WebView, PR #112), #86 (P3 de #74 : point 1 couvert par #98, point 2 conservé sous dérogation ADR-021, point 3 vérifié sur Helios), #104 et #106 (fuites du scanner de secrets, PR #114 et #116), #107 (ticket WebSocket qui survivait à la suppression de son jeton, PR #115) et #125 (test e2e qui lisait le rôle d'opération avant sa résolution, PR #129).
+**Sortie de Phase 1 :** Loïc clôt la Phase 1 le 2026-11-01. #101 (les identifiants générés restent refusés, décision du 2026-10-29 ; ajouts de détection #135 et consigne d'id #139), #126 (PR #140), #134 (PR #142) et #138 (PR #141) sont fermés ; la CI GitHub Actions (#130) est fusionnée. Le suivi P3 de #95 est soldé : #121, #122, #114, #123, #124 et #133 ; le point de #88 sur `touch_sessionmaker` a été écarté le 2026-10-22 ; le sur-masquage d'un chemin entier est accepté et documenté dans `docs/SECURITY.md` (#145). Reste en suivi, hors sortie de phase : #144 (clé à barres obliques laissée en clair dans certains chemins, correction à cadrer par `architect`). Sont faits : #15, #17, #57, #58 et #59 (PR #80, #85, #74, #88 et #76), #39 (seuil de taille dans `AGENTS.md`, PR #108), #47 (origine de la WebView, PR #112), #86 (P3 de #74 : point 1 couvert par #98, point 2 conservé sous dérogation ADR-021, point 3 vérifié sur Helios), #104 et #106 (fuites du scanner de secrets, PR #114 et #116), #107 (ticket WebSocket qui survivait à la suppression de son jeton, PR #115) et #125 (test e2e qui lisait le rôle d'opération avant sa résolution, PR #129).
 
 ## Phase 2 — Exécution
 
@@ -136,7 +136,7 @@ Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un 
 
 ## Prochaine action immédiate
 
-**Phase 1 :** fusionner #140 (#126), #139 (#101, consigne d'id) et #142 (#134) quand leurs relectures sont complètes ; arbitrer les deux points restants de #87 dans le suivi P3 de #95. Les autres PR ouvertes suivent la même règle.
+**Phase 1 :** close le 2026-11-01. **Suite :** traiter #144 (cadrage par `architect`, tests d'abord, une PR dédiée), puis ouvrir la Phase 2 (Exécution) au moment choisi par Loïc.
 
 ---
 
