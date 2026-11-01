@@ -161,3 +161,100 @@ def test_window_rule_cost_grows_linearly_with_the_segments():
 
     small, large = best_of(1000), best_of(4000)
     assert large < 9 * max(small, 0.002) or large < 0.5, (small, large)
+
+
+def _cascade_text() -> str:
+    # Reviewer finding on PR 146: pass 1 masks the 24-character segment through
+    # the entropy pass and keeps `rkEj`; pass 2 then judges the whole candidate
+    # opaque. Built from pieces so no secret-looking literal sits in the repository.
+    return "/".join(
+        ["bkU2zUZo" + "1KtKuwgK", "backups", "MRS", "rkEj", "RvAskhR0" + "m2SH6VmZ7CVzoijr"]
+    )
+
+
+@pytest.mark.xfail(strict=True, reason="cascade between passes, PR 146 review")
+def test_the_window_rule_does_not_change_what_the_passes_of_master_mask():
+    text = _cascade_text()
+    assert redact(text)[0] == f"{secrets.REDACTED}/{secrets.REDACTED}"
+
+
+_SEGMENT_SIZES = (3, 4, 5, 6, 8, 12, 16, 24, 28, 32)
+_PATH_WORDS = ["backups", "MRS", "logs", "tokens", "api", "v1", "data", "releases", "12"]
+
+
+def _random_runs(count: int, seed: int = 144) -> list[str]:
+    """Slashed runs with 2 to 5 opaque segments mixed with path words."""
+    rng = random.Random(seed)
+    alphabet = _ALPHABET.replace("/", "")
+    runs = []
+    for _ in range(count):
+        parts = [
+            "".join(rng.choice(alphabet) for _ in range(rng.choice(_SEGMENT_SIZES)))
+            for _ in range(rng.randint(2, 5))
+        ]
+        for _ in range(rng.randint(0, 4)):
+            parts.insert(rng.randint(0, len(parts)), rng.choice(_PATH_WORDS))
+        runs.append("/".join(parts))
+    return runs
+
+
+def _visible_fragments(source: str, out: str) -> set[str]:
+    return {source[i : i + 8] for i in range(len(source) - 7) if source[i : i + 8] in out}
+
+
+@pytest.mark.xfail(strict=True, reason="cascade between passes, PR 146 review")
+def test_the_rule_never_makes_a_hidden_fragment_readable_again(monkeypatch):
+    assert hasattr(secrets, "_mask_opaque_windows")
+    runs = _random_runs(20_000)
+    with monkeypatch.context() as patch:
+        patch.setattr(secrets, "_mask_opaque_windows", lambda parts: None, raising=True)
+        without = [redact(run)[0] for run in runs]
+    for run, old in zip(runs, without, strict=True):
+        new = redact(run)[0]
+        assert _visible_fragments(run, new) <= _visible_fragments(run, old), (run, old, new)
+
+
+def test_runs_reach_a_fixed_point_before_the_pass_bound(monkeypatch):
+    calls = 0
+    original = secrets._redact_once
+
+    def spy(value, *args):
+        nonlocal calls
+        calls += 1
+        return original(value, *args)
+
+    runs = _random_runs(3_000, seed=7)
+    for run in runs:
+        once = redact(run)[0]
+        monkeypatch.setattr(secrets, "_redact_once", spy)
+        calls = 0
+        again = redact(once)[0]
+        monkeypatch.setattr(secrets, "_redact_once", original)
+        assert again == once, run
+        assert calls < secrets._MAX_PASSES, (run, calls)
+
+
+def test_concurrent_calls_do_not_share_the_window_collector():
+    import threading
+
+    texts_a = _random_runs(300, seed=1)
+    texts_b = _random_runs(300, seed=2)
+    alone_a = [redact(text)[0] for text in texts_a]
+    alone_b = [redact(text)[0] for text in texts_b]
+    results: dict[str, list[str]] = {}
+    barrier = threading.Barrier(2)
+
+    def work(name: str, texts: list[str]) -> None:
+        barrier.wait()
+        results[name] = [redact(text)[0] for text in texts]
+
+    threads = [
+        threading.Thread(target=work, args=("a", texts_a)),
+        threading.Thread(target=work, args=("b", texts_b)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert results["a"] == alone_a
+    assert results["b"] == alone_b
