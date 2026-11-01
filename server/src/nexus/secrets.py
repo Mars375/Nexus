@@ -828,48 +828,51 @@ def _opaque_slashed(token: str) -> bool:
 
 # Segments that read as path words and cut a slashed candidate into windows
 # (issue #144): a lowercase word with a short numeric suffix, digits alone, a
-# version tag, or a name in camelCase / PascalCase / SCREAMING style.
-_PATH_WORD = re.compile(r"[a-z]{3,}[0-9]{0,4}|[0-9]+|v[0-9]{1,3}")
+# version tag (`v1`, `V2`, `v1beta2`, `v2rc1`), a release candidate (`rc1`), or a
+# name in camelCase / PascalCase / SCREAMING style (`_name_segment`).
+_PATH_WORD = re.compile(
+    r"[a-z]{3,}[0-9]{0,4}|[0-9]+|[vV][0-9]{1,3}(?:(?:alpha|beta|rc)[0-9]+)?|rc[0-9]+"
+)
 
 
 def _path_word(segment: str) -> bool:
     return bool(_PATH_WORD.fullmatch(segment)) or _name_segment(segment)
 
 
-# Segments of the opaque windows met by the passes of ONE `redact` call (issue #144).
+# Opaque windows (tuples of consecutive segments) met by the passes of ONE `redact` call
+# (issue #144).
 # A ContextVar, never a module global: the scanner runs in concurrent workers, and
 # each call (each thread, each task) sees only its own collector. None outside
 # `redact`: the rule then collects nothing.
-_WINDOW_SEGMENTS: ContextVar[set[str] | None] = ContextVar("window_segments", default=None)
-# Shortest segment replaced afterwards: a shorter one is too common to be told apart.
-_MIN_WINDOW_SEGMENT = 3
+_WINDOWS: ContextVar[set[tuple[str, ...]] | None] = ContextVar("opaque_windows", default=None)
 
 
 def _mask_opaque_windows(parts: list[str]) -> None:
-    """Note the segments of the opaque windows between path words of a candidate.
+    """Note the opaque windows between path words of a candidate.
 
     A key whose own slashes chop it into segments, written between path words
     (`s3://bucket/<key>/backups/production`, `api/v1/<key>/download`), made the
     words veto of `_opaque_slashed` rule the whole candidate a path, and the
     tail rule never finds a tail free of words: the key leaked. Cutting the
     candidate at every word leaves windows of consecutive non-word segments;
-    a window of two segments or more that `_opaque_slashed` judges opaque has
-    its segments noted in the collector of the running `redact` call.
+    a window of two segments or more that `_opaque_slashed` judges opaque is
+    noted, as the ordered tuple of its segments, in the collector of the running
+    `redact` call.
 
     Nothing is rewritten here: masking a window during a pass changed what the
     next passes of the fixed point saw (`<16>/backups/MRS/rkEj/<24>` lost its
     entropy-masked tail and kept 16 opaque characters readable, PR 146 review).
-    `redact` applies the noted segments once the passes of the existing rules
+    `redact` applies the noted windows once the passes of the existing rules
     reached their fixed point. One pass over the segments, each read once.
     """
-    collector = _WINDOW_SEGMENTS.get()
+    collector = _WINDOWS.get()
     if collector is None:
         return
     window: list[str] = []
 
     def close() -> None:
         if 2 <= len(window) < len(parts) and _opaque_slashed("/".join(window)):
-            collector.update(part for part in window if len(part) >= _MIN_WINDOW_SEGMENT)
+            collector.add(tuple(window))
         window.clear()
 
     for part in parts:
@@ -887,15 +890,111 @@ _MARKED_SLASHED_RUN = re.compile(
 )
 
 
-def _mask_noted_segments(text: str, noted: set[str]) -> str:
-    """Replace every noted segment found in a slashed run of `text` by a mask."""
+# Verification budget of `_mask_noted_segments`, per segment read (windows noted + parts of
+# the slashed runs): beyond it the output is masked by maximal window instead.
+_APPLY_BUDGET_FACTOR = 16
+
+
+class _BudgetExceeded(Exception):
+    pass
+
+
+def _walk(
+    parts: list[str], start: int, seq: tuple[str, ...], k: int, step: int, spend: Callable[[], None]
+) -> int | None:
+    """Follow `seq` from element `k` (exclusive) and text part `start` (exclusive) in
+    direction `step`; return the last part index reached, None when the text differs.
+
+    A `[REDACTED]` marker may stand for one element or more (the tail rule and the
+    labelled values swallow several segments in one mask): it eats elements up to the
+    next one equal to the part after the marker.
+    """
+    ti, sk = start + step, k + step
+    while 0 <= sk < len(seq):
+        if not 0 <= ti < len(parts):
+            return None
+        spend()
+        if parts[ti] == seq[sk]:
+            ti += step
+            sk += step
+        elif parts[ti] == REDACTED:
+            sk += step
+            after = ti + step
+            while 0 <= sk < len(seq) and not (0 <= after < len(parts) and parts[after] == seq[sk]):
+                spend()
+                sk += step
+            ti = after
+        else:
+            return None
+    return ti - step
+
+
+def _mask_noted_segments(text: str, noted: set[tuple[str, ...]]) -> str:
+    """Mask, in the slashed runs of `text`, every noted window found whole.
+
+    A window applies only where its CONSECUTIVE segments are all found (a marker
+    standing for several of them): a segment shared with a healthy path is never
+    touched on its own. Windows overlapping or nested add up. Verifications are
+    counted; a pathological text that exceeds the budget is masked by maximal window
+    (non-word segments and markers) holding a noted segment instead, which is linear
+    and only over-masks (ADR-006).
+    """
+    if not noted:
+        return text
+    index: dict[str, list[tuple[tuple[str, ...], int]]] = {}
+    for seq in noted:
+        for k, segment in enumerate(seq):
+            index.setdefault(segment, []).append((seq, k))
+    budget = _APPLY_BUDGET_FACTOR * (sum(len(seq) for seq in noted) + len(text.split("/")))
+
+    def spend() -> None:
+        nonlocal budget
+        budget -= 1
+        if budget < 0:
+            raise _BudgetExceeded
 
     def mask_run(match: re.Match[str]) -> str:
-        return "/".join(
-            REDACTED if part in noted else part for part in match.group(0).split("/")
-        )
+        parts = match.group(0).split("/")
+        hit = [False] * len(parts)
+        for i, part in enumerate(parts):
+            for seq, k in index.get(part, ()):
+                if hit[i]:
+                    break
+                spend()
+                left = _walk(parts, i, seq, k, -1, spend)
+                right = _walk(parts, i, seq, k, 1, spend) if left is not None else None
+                if left is not None and right is not None:
+                    for position in range(min(left, i), max(right, i) + 1):
+                        hit[position] = True
+        return "/".join(REDACTED if flag else part for part, flag in zip(parts, hit, strict=True))
 
-    return _MARKED_SLASHED_RUN.sub(mask_run, text)
+    known = {segment for seq in noted for segment in seq}
+
+    def mask_windows(match: re.Match[str]) -> str:
+        parts = match.group(0).split("/")
+        out: list[str] = []
+        window: list[str] = []
+
+        def close() -> None:
+            if any(part in known for part in window):
+                out.extend(REDACTED for _ in window)
+            else:
+                out.extend(window)
+            window.clear()
+
+        for part in parts:
+            if part != REDACTED and _path_word(part):
+                close()
+                out.append(part)
+            else:
+                window.append(part)
+        close()
+        return "/".join(out)
+
+    try:
+        return _MARKED_SLASHED_RUN.sub(mask_run, text)
+    except _BudgetExceeded:
+        return _MARKED_SLASHED_RUN.sub(mask_windows, text)
 
 
 _VENDOR: list[tuple[str, re.Pattern[str]]] = [
@@ -1034,7 +1133,7 @@ def redact(text: str) -> tuple[str, list[str]]:
     without a noted segment costs nothing more.
     """
     collector: set[str] = set()
-    token = _WINDOW_SEGMENTS.set(collector)
+    token = _WINDOWS.set(collector)
     try:
         text, found = _converge(text)
         for _ in range(_MAX_PASSES):
@@ -1047,7 +1146,7 @@ def redact(text: str) -> tuple[str, list[str]]:
             text, kinds = _converge(masked)
             found.extend(kinds)
     finally:
-        _WINDOW_SEGMENTS.reset(token)
+        _WINDOWS.reset(token)
     return text, found
 
 

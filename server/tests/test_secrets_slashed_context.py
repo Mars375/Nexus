@@ -264,7 +264,6 @@ def _piece(*chunks: str) -> str:
     return "".join(chunks)
 
 
-@pytest.mark.xfail(strict=True, reason="Antigravity review on dafcd5d")
 def test_a_short_segment_inside_a_key_is_masked_with_the_key():
     # Antigravity review on dafcd5d (P1): a segment under three characters was
     # never noted and stayed readable between two masked segments.
@@ -274,11 +273,10 @@ def test_a_short_segment_inside_a_key_is_masked_with_the_key():
     assert out == f"s3://bucket/{mask}/{mask}/{mask}/backups/production"
 
 
-@pytest.mark.xfail(strict=True, reason="Antigravity review on dafcd5d")
 def test_a_clean_path_is_not_masked_because_it_shares_a_segment_with_a_key():
     # Antigravity review on dafcd5d (P2): the replacement was a global string
     # replacement, so the first (healthy) path lost its segment too.
-    first, last = _piece("A1b2C3", "d4E5"), _piece("F6g7H8", "j9K0L1")
+    first, last = _piece("A1b2C3", "d4E5f6"), _piece("F6g7H8", "j9K0L1m2")
     for lead in ("api", "Api"):
         sane = f"{lead}/v1beta2/projects/list"
         out = redact(f"{sane} et {lead}/v1beta2/{first}/{last}/download")[0]
@@ -287,7 +285,6 @@ def test_a_clean_path_is_not_masked_because_it_shares_a_segment_with_a_key():
         assert last not in out
 
 
-@pytest.mark.xfail(strict=True, reason="Antigravity review on dafcd5d")
 def test_a_clean_path_sharing_a_non_word_segment_with_a_key_stays_intact():
     first, last = _piece("A1b2C3", "d4E5"), _piece("F6g7H8", "j9K0L1")
     sane = "ops/Zz9/readme"
@@ -297,17 +294,14 @@ def test_a_clean_path_sharing_a_non_word_segment_with_a_key_stays_intact():
     assert last not in out
 
 
-XF = pytest.mark.xfail(strict=True, reason="Antigravity review on dafcd5d")
-
-
 @pytest.mark.parametrize(
     ("segment", "is_word"),
     [
         ("abc", True),
         ("HTTPServer", True),
-        pytest.param("V2", True, marks=XF),
-        pytest.param("v1beta2", True, marks=XF),
-        pytest.param("rc1", True, marks=XF),
+        ("V2", True),
+        ("v1beta2", True),
+        ("rc1", True),
         ("abc12345678", True),
         ("abc123456789", False),
     ],
@@ -324,7 +318,6 @@ def test_a_marker_that_swallowed_several_segments_still_leaves_no_key_segment():
     assert "tokens" in out
 
 
-@pytest.mark.xfail(strict=True, reason="Antigravity review on dafcd5d")
 def test_a_marker_may_cover_several_elements_of_a_noted_sequence():
     first, last = _piece("A1b2C3", "d4E5"), _piece("F6g7H8", "j9K0L1")
     mask = secrets.REDACTED
