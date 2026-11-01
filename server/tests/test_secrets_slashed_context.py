@@ -58,46 +58,31 @@ def _no_segment_left(key: str, out: str) -> bool:
     return not any(part in out for part in key.split("/"))
 
 
-# (context, key, path words that must stay readable, xfail before the fix)
+# (context, key, path words that must stay readable)
 EXACT = [
     pytest.param("s3", _key_a, ("bucket", "backups", "production"), id="s3-a"),
     pytest.param("cat", _key_a, ("etc", "tokens"), id="cat-a"),
     pytest.param("windows", _key_a, ("Users", "loic", "AppData"), id="windows-a"),
     pytest.param("url", _key_a, ("api", "v1", "download"), id="url-a"),
     pytest.param("s3", _key_b, ("bucket", "backups", "production"), id="s3-b"),
-    # Already masked before the fix (the tail rule): regression guards.
+    # Already masked before the fix by the tail rule (cat-b, windows-b): regression guards.
     pytest.param("cat", _key_b, ("etc", "tokens"), id="cat-b"),
     pytest.param("windows", _key_b, ("Users",), id="windows-b"),
     pytest.param("url", _key_b, ("api", "v1", "download"), id="url-b"),
 ]
-_STILL_LEAKING_BEFORE = {"s3-a", "cat-a", "windows-a", "url-a", "s3-b", "url-b"}
 
 
-def _exact_params():
-    params = []
-    for param in EXACT:
-        marks = []
-        if param.id in _STILL_LEAKING_BEFORE:
-            marks.append(pytest.mark.xfail(strict=True, reason="issue #144"))
-        params.append(pytest.param(*param.values, id=param.id, marks=marks))
-    return params
-
-
-@pytest.mark.parametrize(("context", "make_key", "words"), _exact_params())
+@pytest.mark.parametrize(("context", "make_key", "words"), EXACT)
 def test_key_between_path_words_is_masked_and_the_words_stay(context, make_key, words):
     key = make_key()
     out = _masked(context, key)
 
     assert _no_segment_left(key, out), out
-    assert REDACTED_MARK in out
+    assert secrets.REDACTED in out
     for word in words:
         assert word in out, (word, out)
 
 
-REDACTED_MARK = secrets.REDACTED
-
-
-@pytest.mark.xfail(strict=True, reason="issue #144")
 def test_sample_of_400_keys_leaks_no_more_than_a_bare_key_plus_a_margin():
     # A key written alone is the floor of the scanner (limit of issue #84, a few
     # percent stay in the clear); a path around it must not add more than a

@@ -825,6 +825,52 @@ def _opaque_slashed(token: str) -> bool:
     return _opaque_chunks(parts)
 
 
+# Segments that read as path words and cut a slashed candidate into windows
+# (issue #144): a lowercase word with a short numeric suffix, digits alone, a
+# version tag, or a name in camelCase / PascalCase / SCREAMING style.
+_PATH_WORD = re.compile(r"[a-z]{3,}[0-9]{0,4}|[0-9]+|v[0-9]{1,3}")
+
+
+def _path_word(segment: str) -> bool:
+    return bool(_PATH_WORD.fullmatch(segment)) or _name_segment(segment)
+
+
+def _mask_opaque_windows(parts: list[str]) -> str | None:
+    """Mask the opaque windows between path words of a slashed candidate.
+
+    A key whose own slashes chop it into segments, written between path words
+    (`s3://bucket/<key>/backups/production`, `api/v1/<key>/download`), made the
+    words veto of `_opaque_slashed` rule the whole candidate a path, and the
+    tail rule never finds a tail free of words: the key leaked. Cutting the
+    candidate at every word leaves windows of consecutive non-word segments;
+    a window of two segments or more is judged by `_opaque_slashed` on its own
+    and replaced by one mask when opaque. Only adds masks (the caller applies
+    it when the candidate and its tail masked nothing), one pass over the
+    segments, each of them read once. Returns None when no window is opaque.
+    """
+    pieces: list[str] = []
+    window: list[str] = []
+    masked = False
+
+    def close() -> None:
+        nonlocal masked
+        if 2 <= len(window) < len(parts) and _opaque_slashed("/".join(window)):
+            pieces.append(REDACTED)
+            masked = True
+        else:
+            pieces.extend(window)
+        window.clear()
+
+    for part in parts:
+        if _path_word(part):
+            close()
+            pieces.append(part)
+        else:
+            window.append(part)
+    close()
+    return "/".join(pieces) if masked else None
+
+
 _VENDOR: list[tuple[str, re.Pattern[str]]] = [
     # Unanchored vendor formats (issue #101), applied by `redact` just before the entropy
     # pass and after every pass that reads a label, a URL, a header or a slashed value:
@@ -912,6 +958,12 @@ def _redact_once(text: str) -> tuple[str, list[str]]:
         if start is not None:
             found.append("high_entropy")
             return "/".join(parts[:start]) + "/" + REDACTED
+        # Neither the whole candidate nor its tail is opaque: path words may
+        # sit on BOTH sides of the value (`s3://bucket/<key>/backups/production`).
+        windowed = _mask_opaque_windows(parts)
+        if windowed is not None:
+            found.append("high_entropy")
+            return windowed
         return token
 
     # Labelled values run FIRST: a value that is itself a URL holding credentials
