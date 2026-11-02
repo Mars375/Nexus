@@ -1132,7 +1132,7 @@ def redact(text: str) -> tuple[str, list[str]]:
     the window rule only ever adds masks on top of the older rules' result. A text
     without a noted segment costs nothing more.
     """
-    collector: set[str] = set()
+    collector: set[tuple[str, ...]] = set()
     token = _WINDOWS.set(collector)
     try:
         text, found = _converge(text)

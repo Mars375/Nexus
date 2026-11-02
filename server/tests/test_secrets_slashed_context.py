@@ -299,6 +299,8 @@ def test_a_clean_path_sharing_a_non_word_segment_with_a_key_stays_intact():
     [
         ("abc", True),
         ("HTTPServer", True),
+        ("Users", True),
+        ("App", False),
         ("V2", True),
         ("v1beta2", True),
         ("rc1", True),
