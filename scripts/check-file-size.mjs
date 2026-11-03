@@ -95,6 +95,7 @@ function measure(root) {
     .toString("utf8")
     .split("\0")
     .filter(Boolean);
+  const tracked = new Set(listed);
   const files = {};
   for (const path of listed) {
     if (limitFor(path) === null) continue;
@@ -106,7 +107,7 @@ function measure(root) {
       if (error.code !== "ENOENT") throw error;
     }
   }
-  return files;
+  return { files, tracked };
 }
 
 // La référence du commit de base : null seulement quand ce commit n'en a pas (première version).
@@ -125,7 +126,11 @@ function baseOf(root, ref) {
   } catch {
     return null;
   }
-  return JSON.parse(git("show", `${ref}:file-size-baseline.json`));
+  try {
+    return JSON.parse(git("show", `${ref}:file-size-baseline.json`));
+  } catch (error) {
+    throw new Error(`Référence illisible dans le commit de base ${ref} : ${error.message}`);
+  }
 }
 
 function readBaseline(path) {
@@ -136,14 +141,37 @@ function readBaseline(path) {
   }
 }
 
+// `--base <commit>` ou `--base=<commit>` ; toute autre option inconnue est refusée plutôt qu'ignorée
+// (une base mal écrite ne doit pas désactiver la comparaison).
+function baseRef(args) {
+  let ref = "HEAD";
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--update") continue;
+    if (arg === "--base") {
+      ref = args[(i += 1)];
+    } else if (arg.startsWith("--base=")) {
+      ref = arg.slice("--base=".length);
+    } else {
+      throw new Error(`Option inconnue : ${arg} (options : --base <commit>, --update).`);
+    }
+  }
+  return ref;
+}
+
 function main() {
   const root = join(dirname(fileURLToPath(import.meta.url)), "..");
   const baselinePath = join(root, "file-size-baseline.json");
   const baseline = readBaseline(baselinePath);
-  const at = process.argv.indexOf("--base");
-  const ref = at === -1 ? "HEAD" : process.argv[at + 1];
-  const files = measure(root);
+  const ref = baseRef(process.argv.slice(2));
+  const { files, tracked } = measure(root);
   if (process.argv.includes("--update")) {
+    // Un fichier listé que l'arbre de travail ne montre plus mais que git suit (supprimé sans
+    // `git rm`, checkout partiel) ne doit pas perdre son entrée : elle ne pourrait pas y revenir.
+    const missing = Object.keys(baseline.files ?? {}).filter((path) => !(path in files) && tracked.has(path));
+    if (missing.length > 0) {
+      throw new Error(`Fichier listé absent de l'arbre de travail mais suivi : ${missing.join(", ")}. Restaure-le (git checkout) ou retire-le (git rm), puis relance --update.`);
+    }
     writeFileSync(baselinePath, `${JSON.stringify(lowered(files, baseline), null, 2)}\n`);
     return 0;
   }

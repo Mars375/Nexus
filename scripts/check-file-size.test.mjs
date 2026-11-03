@@ -72,7 +72,10 @@ function sandbox(baseline, files) {
   const dir = mkdtempSync(join(tmpdir(), "size-"));
   mkdirSync(join(dir, "scripts"));
   copyFileSync(SCRIPT, join(dir, "scripts", "check-file-size.mjs"));
-  const env = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
+  // Les variables GIT_* qu'un hook exporte (GIT_INDEX_FILE absolu pour `git commit -a`) ne doivent
+  // pas atteindre le dépôt temporaire, ni git ni le script.
+  const clean = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")));
+  const env = { ...clean, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
   const git = (...args) => execFileSync("git", args, { cwd: dir, env, stdio: "ignore" });
   const write = (state) => {
     for (const [path, lines] of Object.entries(state.files ?? {})) {
@@ -85,7 +88,7 @@ function sandbox(baseline, files) {
   write({ baseline, files });
   git("add", "-A");
   git("commit", "-q", "-m", "base");
-  const run = (...args) => spawnSync("node", ["scripts/check-file-size.mjs", ...args], { cwd: dir, encoding: "utf8" });
+  const run = (...args) => spawnSync("node", ["scripts/check-file-size.mjs", ...args], { cwd: dir, env: clean, encoding: "utf8" });
   return { dir, git, write, run, done: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
@@ -138,6 +141,56 @@ test("cli: --update lowers the reference and never raises it", () => {
     assert.equal(box.run().status, 1);
     assert.equal(box.run("--update").status, 0);
     assert.equal(box.run().status, 0);
+  } finally {
+    box.done();
+  }
+});
+
+test("cli: --base=<ref> is read, an unknown option is refused, a broken base reference is named", () => {
+  const box = sandbox({ files: { "a.py": 450 } }, { "a.py": 450 });
+  try {
+    const glued = box.run("--base=no-such-ref");
+    assert.equal(glued.status, 1);
+    assert.match(glued.stderr, /introuvable/);
+    const unknown = box.run("--bsae", "HEAD");
+    assert.equal(unknown.status, 1);
+    assert.match(unknown.stderr, /Option inconnue/);
+    writeFileSync(join(box.dir, "file-size-baseline.json"), "{ broken");
+    box.git("commit", "-q", "-a", "-m", "break");
+    writeFileSync(join(box.dir, "file-size-baseline.json"), JSON.stringify({ files: { "a.py": 450 } }));
+    const broken = box.run();
+    assert.equal(broken.status, 1);
+    assert.match(broken.stderr, /Référence illisible dans le commit de base HEAD/);
+  } finally {
+    box.done();
+  }
+});
+
+test("cli: a foreign GIT_INDEX_FILE (hook of `git commit -a`) does not break the sandbox", () => {
+  const before = process.env.GIT_INDEX_FILE;
+  process.env.GIT_INDEX_FILE = join(tmpdir(), "foreign-index.lock");
+  try {
+    const box = sandbox({ files: { "a.py": 450 } }, { "a.py": 450 });
+    try {
+      assert.equal(box.run().status, 0);
+    } finally {
+      box.done();
+    }
+  } finally {
+    if (before === undefined) delete process.env.GIT_INDEX_FILE;
+    else process.env.GIT_INDEX_FILE = before;
+  }
+});
+
+test("cli: --update refuses to drop a tracked file that is only missing from the work tree", () => {
+  const box = sandbox({ files: { "a.py": 450 } }, { "a.py": 450 });
+  try {
+    rmSync(join(box.dir, "a.py"));
+    const result = box.run("--update");
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /absent de l'arbre de travail mais suivi/);
+    box.git("rm", "-q", "--cached", "a.py");
+    assert.equal(box.run("--update").status, 0);
   } finally {
     box.done();
   }
