@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { check, countLines, limitFor, lowered } from "./check-file-size.mjs";
 
 test("physical lines, with or without a final newline", () => {
@@ -58,4 +63,82 @@ test("the reference may not be raised against the base commit", () => {
 
 test("without a reference in the base commit nothing is compared", () => {
   assert.equal(check({ "a.py": 500 }, { files: { "a.py": 500 } }, null).length, 0);
+});
+
+// Intégration : le script tourne dans un dépôt git temporaire, avec sa vraie ligne de commande.
+const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "check-file-size.mjs");
+
+function sandbox(baseline, files) {
+  const dir = mkdtempSync(join(tmpdir(), "size-"));
+  mkdirSync(join(dir, "scripts"));
+  copyFileSync(SCRIPT, join(dir, "scripts", "check-file-size.mjs"));
+  const env = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
+  const git = (...args) => execFileSync("git", args, { cwd: dir, env, stdio: "ignore" });
+  const write = (state) => {
+    for (const [path, lines] of Object.entries(state.files ?? {})) {
+      mkdirSync(dirname(join(dir, path)), { recursive: true });
+      writeFileSync(join(dir, path), `x = 1${String.fromCharCode(13, 10)}`.repeat(lines));
+    }
+    if (state.baseline) writeFileSync(join(dir, "file-size-baseline.json"), JSON.stringify(state.baseline));
+  };
+  git("init", "-q");
+  write({ baseline, files });
+  git("add", "-A");
+  git("commit", "-q", "-m", "base");
+  const run = (...args) => spawnSync("node", ["scripts/check-file-size.mjs", ...args], { cwd: dir, encoding: "utf8" });
+  return { dir, git, write, run, done: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+test("cli: growth with a raised ceiling fails, an unknown or missing base fails loudly", () => {
+  const box = sandbox({ files: { "big dir/é.py": 450 } }, { "big dir/é.py": 450 });
+  try {
+    assert.equal(box.run().status, 0);
+    box.write({ files: { "big dir/é.py": 480 }, baseline: { files: { "big dir/é.py": 480 } } });
+    const raised = box.run();
+    assert.equal(raised.status, 1);
+    assert.match(raised.stderr, /relevé de 450 à 480/);
+    const unknown = box.run("--base", "no-such-ref");
+    assert.equal(unknown.status, 1);
+    assert.match(unknown.stderr, /introuvable/);
+    const missing = box.run("--base");
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /demande un commit/);
+  } finally {
+    box.done();
+  }
+});
+
+test("cli: a base commit without a reference is the first version, nothing to compare", () => {
+  const box = sandbox(null, { "a.py": 10 });
+  try {
+    box.write({ baseline: { files: {} } });
+    assert.equal(box.run().status, 0);
+  } finally {
+    box.done();
+  }
+});
+
+test("cli: a missing reference file is a clear error, not a stack trace", () => {
+  const box = sandbox({ files: {} }, { "a.py": 10 });
+  try {
+    rmSync(join(box.dir, "file-size-baseline.json"));
+    const result = box.run();
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Référence illisible/);
+    assert.doesNotMatch(result.stderr, /at readFileSync/);
+  } finally {
+    box.done();
+  }
+});
+
+test("cli: --update lowers the reference and never raises it", () => {
+  const box = sandbox({ files: { "a.py": 450 } }, { "a.py": 450 });
+  try {
+    box.write({ files: { "a.py": 420 } });
+    assert.equal(box.run().status, 1);
+    assert.equal(box.run("--update").status, 0);
+    assert.equal(box.run().status, 0);
+  } finally {
+    box.done();
+  }
 });

@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 export const CODE_LIMIT = 400;
 export const TEST_LIMIT = 600;
 
-const CODE = /\.(py|ts|tsx|js|mjs|cjs)$/;
+const CODE = /\.(py|ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 const TEST = /(^|\/)(tests?|e2e)\/|\.(test|spec)\./;
 const SKIPPED = /^docs\/|\.d\.ts$/;
 
@@ -109,22 +109,37 @@ function measure(root) {
   return files;
 }
 
+// La référence du commit de base : null seulement quand ce commit n'en a pas (première version).
+// Un commit introuvable, un `--base` sans valeur ou un JSON illisible font échouer le contrôle :
+// la comparaison ne doit jamais s'éteindre en silence.
 function baseOf(root, ref) {
+  if (!ref || ref.startsWith("--")) throw new Error("--base demande un commit (par exemple HEAD ou HEAD^1).");
+  const git = (...args) => execFileSync("git", args, { cwd: root, stdio: ["ignore", "pipe", "ignore"] }).toString("utf8");
   try {
-    const text = execFileSync("git", ["show", `${ref}:file-size-baseline.json`], {
-      cwd: root,
-      stdio: ["ignore", "pipe", "ignore"],
-    }).toString("utf8");
-    return JSON.parse(text);
+    git("rev-parse", "--verify", `${ref}^{commit}`);
+  } catch {
+    throw new Error(`Commit de base introuvable : ${ref} (clone superficiel ? la CI récupère deux commits).`);
+  }
+  try {
+    git("cat-file", "-e", `${ref}:file-size-baseline.json`);
   } catch {
     return null;
+  }
+  return JSON.parse(git("show", `${ref}:file-size-baseline.json`));
+}
+
+function readBaseline(path) {
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    throw new Error(`Référence illisible (${path}) : ${error.code ?? error.message}. Restaure file-size-baseline.json.`);
   }
 }
 
 function main() {
   const root = join(dirname(fileURLToPath(import.meta.url)), "..");
   const baselinePath = join(root, "file-size-baseline.json");
-  const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
+  const baseline = readBaseline(baselinePath);
   const at = process.argv.indexOf("--base");
   const ref = at === -1 ? "HEAD" : process.argv[at + 1];
   const files = measure(root);
@@ -140,5 +155,10 @@ function main() {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  process.exitCode = main();
+  try {
+    process.exitCode = main();
+  } catch (error) {
+    console.error(`Taille des fichiers : ${error.message}`);
+    process.exitCode = 1;
+  }
 }
