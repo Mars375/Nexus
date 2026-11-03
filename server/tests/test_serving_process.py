@@ -16,8 +16,8 @@ import threading
 
 import pytest
 import uvicorn
+from serving_support import GUARD, TAIL, assert_refuses, free_port, http_get
 from sqlalchemy.orm import Session
-from test_serving import GUARD, TAIL, assert_refuses, free_port, http_get
 from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect
 
