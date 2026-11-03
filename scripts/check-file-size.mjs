@@ -33,7 +33,7 @@ export function countLines(text) {
 
 // `files`: { path: lignes }. `baseline`: { files: { path: lignes max }, exceptions: { path: raison } }.
 // `base`: la référence du commit de base, ou null. Retourne la liste des violations.
-export function check(files, baseline, base = null) {
+export function check(files, baseline, base = null, tracked = new Set()) {
   const problems = [];
   const known = baseline.files ?? {};
   if (base) {
@@ -65,9 +65,12 @@ export function check(files, baseline, base = null) {
     }
   }
   for (const path of Object.keys(known)) {
-    if (!(path in files)) {
-      problems.push(`${path} : absent du dépôt mais encore dans la référence. pnpm check:size --update.`);
-    }
+    if (path in files) continue;
+    problems.push(
+      tracked.has(path)
+        ? `${path} : absent de l'arbre de travail mais suivi par git. Restaure-le (git checkout ${path}), ou retire-le (git rm ${path}) si la suppression est voulue, puis pnpm check:size --update.`
+        : `${path} : absent du dépôt mais encore dans la référence. pnpm check:size --update.`,
+    );
   }
   return problems;
 }
@@ -113,12 +116,14 @@ function measure(root) {
 // La référence du commit de base : null seulement quand ce commit n'en a pas (première version).
 // Un commit introuvable, un `--base` sans valeur ou un JSON illisible font échouer le contrôle :
 // la comparaison ne doit jamais s'éteindre en silence.
-function baseOf(root, ref) {
-  if (!ref || ref.startsWith("--")) throw new Error("--base demande un commit (par exemple HEAD ou HEAD^1).");
+function baseOf(root, { ref, explicit }) {
   const git = (...args) => execFileSync("git", args, { cwd: root, stdio: ["ignore", "pipe", "ignore"] }).toString("utf8");
   try {
     git("rev-parse", "--verify", `${ref}^{commit}`);
   } catch {
+    // Dépôt sans aucun commit : le premier commit n'a rien à comparer. Une base donnée
+    // explicitement qui ne se résout pas, elle, est une erreur.
+    if (!explicit) return null;
     throw new Error(`Commit de base introuvable : ${ref} (clone superficiel ? la CI récupère deux commits).`);
   }
   try {
@@ -141,45 +146,54 @@ function readBaseline(path) {
   }
 }
 
-// `--base <commit>` ou `--base=<commit>` ; toute autre option inconnue est refusée plutôt qu'ignorée
-// (une base mal écrite ne doit pas désactiver la comparaison).
-function baseRef(args) {
-  let ref = "HEAD";
+// `--base <commit>`, `--base=<commit>` et `--update`, analysés une fois. Toute autre option est
+// refusée plutôt qu'ignorée, et une base sans valeur aussi : une base mal écrite ne doit pas
+// désactiver la comparaison.
+function parseArgs(args) {
+  const parsed = { update: false, base: { ref: "HEAD", explicit: false } };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
-    if (arg === "--update") continue;
-    if (arg === "--base") {
-      ref = args[(i += 1)];
-    } else if (arg.startsWith("--base=")) {
-      ref = arg.slice("--base=".length);
+    if (arg === "--update") {
+      parsed.update = true;
+    } else if (arg === "--base" || arg.startsWith("--base=")) {
+      const ref = arg === "--base" ? args[(i += 1)] : arg.slice("--base=".length);
+      if (!ref || ref.startsWith("--")) throw new Error("--base demande un commit (par exemple HEAD ou HEAD^1).");
+      parsed.base = { ref, explicit: true };
     } else {
       throw new Error(`Option inconnue : ${arg} (options : --base <commit>, --update).`);
     }
   }
-  return ref;
+  return parsed;
+}
+
+function report(problems) {
+  console.error("Taille des fichiers (AGENTS.md « Taille des fichiers », issue #39) :");
+  for (const problem of problems) console.error(`  - ${problem}`);
+  return 1;
 }
 
 function main() {
   const root = join(dirname(fileURLToPath(import.meta.url)), "..");
   const baselinePath = join(root, "file-size-baseline.json");
   const baseline = readBaseline(baselinePath);
-  const ref = baseRef(process.argv.slice(2));
+  const { update, base } = parseArgs(process.argv.slice(2));
   const { files, tracked } = measure(root);
-  if (process.argv.includes("--update")) {
+  if (update) {
     // Un fichier listé que l'arbre de travail ne montre plus mais que git suit (supprimé sans
     // `git rm`, checkout partiel) ne doit pas perdre son entrée : elle ne pourrait pas y revenir.
     const missing = Object.keys(baseline.files ?? {}).filter((path) => !(path in files) && tracked.has(path));
     if (missing.length > 0) {
       throw new Error(`Fichier listé absent de l'arbre de travail mais suivi : ${missing.join(", ")}. Restaure-le (git checkout) ou retire-le (git rm), puis relance --update.`);
     }
-    writeFileSync(baselinePath, `${JSON.stringify(lowered(files, baseline), null, 2)}\n`);
-    return 0;
+    const next = lowered(files, baseline);
+    writeFileSync(baselinePath, `${JSON.stringify(next, null, 2)}\n`);
+    // La mise à jour abaisse seulement : un nouveau fichier trop long ou une croissance restent
+    // des violations, et la commande ne doit pas annoncer un succès qui n'en est pas un.
+    const remaining = check(files, next, null, tracked);
+    return remaining.length === 0 ? 0 : report(remaining);
   }
-  const problems = check(files, baseline, baseOf(root, ref));
-  if (problems.length === 0) return 0;
-  console.error("Taille des fichiers (AGENTS.md « Taille des fichiers », issue #39) :");
-  for (const problem of problems) console.error(`  - ${problem}`);
-  return 1;
+  const problems = check(files, baseline, baseOf(root, base), tracked);
+  return problems.length === 0 ? 0 : report(problems);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

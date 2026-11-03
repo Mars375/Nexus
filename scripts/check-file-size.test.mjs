@@ -75,6 +75,11 @@ function sandbox(baseline, files) {
   // Les variables GIT_* qu'un hook exporte (GIT_INDEX_FILE absolu pour `git commit -a`) ne doivent
   // pas atteindre le dépôt temporaire, ni git ni le script.
   const clean = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")));
+  // Ni la configuration globale ni celle du système du développeur (commit.gpgsign, hooks globaux).
+  mkdirSync(join(dir, ".gitcfg"));
+  writeFileSync(join(dir, ".gitcfg", "empty"), "");
+  clean.GIT_CONFIG_GLOBAL = join(dir, ".gitcfg", "empty");
+  clean.GIT_CONFIG_NOSYSTEM = "1";
   const env = { ...clean, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
   const git = (...args) => execFileSync("git", args, { cwd: dir, env, stdio: "ignore" });
   const write = (state) => {
@@ -194,4 +199,66 @@ test("cli: --update refuses to drop a tracked file that is only missing from the
   } finally {
     box.done();
   }
+});
+
+test("cli: a signing git configuration of the developer does not break the sandbox", () => {
+  const home = mkdtempSync(join(tmpdir(), "home-"));
+  writeFileSync(join(home, ".gitconfig"), "[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = /nonexistent\n");
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  try {
+    const box = sandbox({ files: { "a.py": 450 } }, { "a.py": 450 });
+    try {
+      assert.equal(box.run().status, 0);
+    } finally {
+      box.done();
+    }
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("cli: --update exits 1 while violations remain, and --base without a value is refused with it", () => {
+  const box = sandbox({ files: { "a.py": 450 } }, { "a.py": 450 });
+  try {
+    box.write({ files: { "a.py": 480, "new.py": 500 } });
+    box.git("add", "-A");
+    const grown = box.run("--update");
+    assert.equal(grown.status, 1);
+    assert.match(grown.stderr, /new\.py : 500 lignes/);
+    const unvalued = box.run("--base", "--update");
+    assert.equal(unvalued.status, 1);
+    assert.match(unvalued.stderr, /demande un commit/);
+  } finally {
+    box.done();
+  }
+});
+
+test("cli: a repository without any commit has nothing to compare, an explicit base still must resolve", () => {
+  const dir = mkdtempSync(join(tmpdir(), "empty-"));
+  try {
+    mkdirSync(join(dir, "scripts"));
+    copyFileSync(SCRIPT, join(dir, "scripts", "check-file-size.mjs"));
+    const clean = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")));
+    execFileSync("git", ["init", "-q"], { cwd: dir, env: clean });
+    writeFileSync(join(dir, "file-size-baseline.json"), JSON.stringify({ files: {} }));
+    execFileSync("git", ["add", "-A"], { cwd: dir, env: clean });
+    const run = (...args) =>
+      spawnSync("node", ["scripts/check-file-size.mjs", ...args], { cwd: dir, env: clean, encoding: "utf8" });
+    assert.equal(run().status, 0);
+    assert.equal(run("--base", "HEAD").status, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a tracked listed file missing from the work tree gets the right advice", () => {
+  const message = check({}, { files: { "a.py": 500 } }, null, new Set(["a.py"]))[0];
+  assert.match(message, /absent de l'arbre de travail mais suivi/);
+  assert.match(message, /git checkout a\.py/);
 });
