@@ -5,7 +5,6 @@
     "server/src/nexus/secrets.py": 1220,
     "server/src/nexus/serving.py": 437,
     "server/src/nexus/tasks/service.py": 528,
-    "server/tests/test_approvals_answer.py": 991,
     "server/tests/test_demo_agent.py": 873,
     "web/src/live.test.ts": 741
   },
