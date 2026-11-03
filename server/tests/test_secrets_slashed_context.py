@@ -1,0 +1,380 @@
+"""Issue #144: a key chopped by its own slashes, written between path words.
+
+`s3://bucket/<key>/backups/production`, `cat /etc/tokens/<key>`,
+`C:/Users/loic/<key>/AppData` and `api/v1/<key>/download` used to leave the key
+in the clear: the path words made the whole candidate read as a path. Every key
+below is assembled at runtime so gitleaks never sees a secret in the repository.
+"""
+
+import random
+import time
+
+import pytest
+
+from nexus import secrets
+from nexus.secrets import redact
+
+CONTEXTS = {
+    "s3": "s3://bucket/{}/backups/production",
+    "cat": "cat /etc/tokens/{}",
+    "windows": "C:/Users/loic/{}/AppData",
+    "url": "api/v1/{}/download",
+}
+
+_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+
+def _key_a() -> str:
+    return "/".join(["F1qH6Yytw" + "Me4Lbyo", "Fz8+uZd" + "Zv8F", "KIBJl" + "5dz"])
+
+
+def _key_b() -> str:
+    return "/".join(["xJ8byUs17" + "mQNVb7DnqRJ", "IlatOVd" + "Vhdwas" + "WF", "JbUU" + "EY8"])
+
+
+def _sample(seed: int, count: int) -> list[str]:
+    """Keys of 40 characters drawn from the standard base64 alphabet."""
+    rng = random.Random(seed)
+    return ["".join(rng.choice(_ALPHABET) for _ in range(40)) for _ in range(count)]
+
+
+def _fragments(key: str, size: int = 8) -> set[str]:
+    return {key[i : i + size] for i in range(len(key) - size + 1)}
+
+
+def _whole_leaks(key: str, out: str) -> bool:
+    return key in out
+
+
+def _fragment_leaks(key: str, out: str) -> bool:
+    return any(fragment in out for fragment in _fragments(key))
+
+
+def _masked(context: str, key: str) -> str:
+    return redact(CONTEXTS[context].format(key))[0]
+
+
+def _no_segment_left(key: str, out: str) -> bool:
+    return not any(part in out for part in key.split("/"))
+
+
+# (context, key, path words that must stay readable)
+EXACT = [
+    pytest.param("s3", _key_a, ("bucket", "backups", "production"), id="s3-a"),
+    pytest.param("cat", _key_a, ("etc", "tokens"), id="cat-a"),
+    pytest.param("windows", _key_a, ("Users", "loic", "AppData"), id="windows-a"),
+    pytest.param("url", _key_a, ("api", "v1", "download"), id="url-a"),
+    pytest.param("s3", _key_b, ("bucket", "backups", "production"), id="s3-b"),
+    # Already masked before the fix by the tail rule (cat-b, windows-b): regression guards.
+    pytest.param("cat", _key_b, ("etc", "tokens"), id="cat-b"),
+    pytest.param("windows", _key_b, ("Users",), id="windows-b"),
+    pytest.param("url", _key_b, ("api", "v1", "download"), id="url-b"),
+]
+
+
+@pytest.mark.parametrize(("context", "make_key", "words"), EXACT)
+def test_key_between_path_words_is_masked_and_the_words_stay(context, make_key, words):
+    key = make_key()
+    out = _masked(context, key)
+
+    assert _no_segment_left(key, out), out
+    assert secrets.REDACTED in out
+    for word in words:
+        assert word in out, (word, out)
+
+
+def test_sample_of_400_keys_leaks_no_more_than_a_bare_key_plus_a_margin():
+    # A key written alone is the floor of the scanner (limit of issue #84, a few
+    # percent stay in the clear); a path around it must not add more than a
+    # margin of 5 whole keys and 10 keys with a fragment of 8 characters or more.
+    keys = _sample(95, 400)
+    alone_whole = sum(_whole_leaks(key, redact(key)[0]) for key in keys)
+    alone_fragment = sum(_fragment_leaks(key, redact(key)[0]) for key in keys)
+    for context in CONTEXTS:
+        outputs = [(key, _masked(context, key)) for key in keys]
+        whole = sum(_whole_leaks(key, out) for key, out in outputs)
+        fragment = sum(_fragment_leaks(key, out) for key, out in outputs)
+        assert whole <= alone_whole + 5, (context, whole, alone_whole)
+        assert fragment <= alone_fragment + 10, (context, fragment, alone_fragment)
+
+
+def test_the_new_rule_only_adds_masks(monkeypatch):
+    # Monotonicity: a fragment of 8 characters hidden without the window rule
+    # stays hidden with it. The rule is switched off by replacing its entry
+    # point (raising=False: the name does not exist before the fix, and the
+    # comparison is then trivially equal).
+    keys = _sample(95, 400)
+    with monkeypatch.context() as patch:
+        patch.setattr(secrets, "_mask_opaque_windows", lambda parts: None, raising=False)
+        before = {
+            (context, key): _masked(context, key) for context in CONTEXTS for key in keys
+        }
+    for (context, key), old in before.items():
+        new = _masked(context, key)
+        visible_now = {fragment for fragment in _fragments(key) if fragment in new}
+        visible_before = {fragment for fragment in _fragments(key) if fragment in old}
+        assert visible_now <= visible_before, (context, key)
+
+
+def _ordinary_paths() -> list[str]:
+    rng = random.Random(144)
+    hex24 = "".join(rng.choice("0123456789abcdef") for _ in range(24))
+    return [
+        "api/v1beta2/projects/list",
+        "api/v1beta2/rc1/arm64/download",
+        "releases/v1.2/linux/arm64/rc1/nexus",
+        "registry/images/arm64/v8/layers",
+        f"storage/objects/{hex24}/metadata",
+        f"api/v1/orders/{hex24}/items/download",
+        f"cat /var/lib/data/{hex24}/index/current",
+        "C:/Users/loic/AppData/Local/Temp/build42/output",
+        "s3://bucket/exports/2026/10/18/report/part-0001",
+        "deployments/20261018/rollout/blue/green",
+        "src/nexus/migrations/versions/0004_add_index",
+    ]
+
+
+@pytest.mark.parametrize("path", _ordinary_paths())
+def test_ordinary_rest_paths_are_not_over_masked(path):
+    assert redact(path)[0] == path
+
+
+def test_masking_a_path_around_a_key_reaches_a_fixed_point():
+    for context in CONTEXTS:
+        for key in _sample(2026, 60):
+            once = _masked(context, key)
+            assert redact(once)[0] == once, (context, key)
+
+
+def test_window_rule_cost_grows_linearly_with_the_segments():
+    # Relative bound as in the #134 test: four times the segments must cost about
+    # four times as long. Best of several runs, with the same generous absolute
+    # ceiling for a loaded runner.
+    def best_of(parts, runs=5):
+        sample = "s3://bucket/" + "/".join(["8SKDsHj+ePj"] * parts) + "/backups/production"
+        times = []
+        for _ in range(runs):
+            started = time.perf_counter()
+            redact(sample)
+            times.append(time.perf_counter() - started)
+        return min(times)
+
+    small, large = best_of(1000), best_of(4000)
+    assert large < 9 * max(small, 0.002) or large < 0.5, (small, large)
+
+
+def _cascade_text() -> str:
+    # Reviewer finding on PR 146: pass 1 masks the 24-character segment through
+    # the entropy pass and keeps `rkEj`; pass 2 then judges the whole candidate
+    # opaque. Built from pieces so no secret-looking literal sits in the repository.
+    return "/".join(
+        ["bkU2zUZo" + "1KtKuwgK", "backups", "MRS", "rkEj", "RvAskhR0" + "m2SH6VmZ7CVzoijr"]
+    )
+
+
+def test_the_window_rule_does_not_change_what_the_passes_of_master_mask():
+    text = _cascade_text()
+    assert redact(text)[0] == f"{secrets.REDACTED}/{secrets.REDACTED}"
+
+
+_SEGMENT_SIZES = (3, 4, 5, 6, 8, 12, 16, 24, 28, 32)
+_PATH_WORDS = ["backups", "MRS", "logs", "tokens", "api", "v1", "data", "releases", "12"]
+
+
+def _random_runs(
+    count: int, seed: int = 144, sizes: tuple[int, ...] = _SEGMENT_SIZES
+) -> list[str]:
+    """Slashed runs with 2 to 5 opaque segments mixed with path words."""
+    rng = random.Random(seed)
+    alphabet = _ALPHABET.replace("/", "")
+    runs = []
+    for _ in range(count):
+        parts = [
+            "".join(rng.choice(alphabet) for _ in range(rng.choice(sizes)))
+            for _ in range(rng.randint(2, 5))
+        ]
+        for _ in range(rng.randint(0, 4)):
+            parts.insert(rng.randint(0, len(parts)), rng.choice(_PATH_WORDS))
+        runs.append("/".join(parts))
+    return runs
+
+
+def _visible_fragments(source: str, out: str) -> set[str]:
+    return {source[i : i + 8] for i in range(len(source) - 7) if source[i : i + 8] in out}
+
+
+def test_the_rule_never_makes_a_hidden_fragment_readable_again(monkeypatch):
+    assert hasattr(secrets, "_mask_opaque_windows")
+    runs = _random_runs(20_000)
+    with monkeypatch.context() as patch:
+        patch.setattr(secrets, "_mask_opaque_windows", lambda parts: None, raising=True)
+        without = [redact(run)[0] for run in runs]
+    for run, old in zip(runs, without, strict=True):
+        new = redact(run)[0]
+        assert _visible_fragments(run, new) <= _visible_fragments(run, old), (run, old, new)
+
+
+def test_runs_reach_a_fixed_point_before_the_pass_bound(monkeypatch):
+    calls = 0
+    original = secrets._redact_once
+
+    def spy(value, *args):
+        nonlocal calls
+        calls += 1
+        return original(value, *args)
+
+    runs = _random_runs(3_000, seed=7)
+    for run in runs:
+        once = redact(run)[0]
+        monkeypatch.setattr(secrets, "_redact_once", spy)
+        calls = 0
+        again = redact(once)[0]
+        monkeypatch.setattr(secrets, "_redact_once", original)
+        assert again == once, run
+        assert calls < secrets._MAX_PASSES, (run, calls)
+
+
+def test_concurrent_calls_do_not_share_the_window_collector():
+    import threading
+
+    texts_a = _random_runs(300, seed=1)
+    texts_b = _random_runs(300, seed=2)
+    alone_a = [redact(text)[0] for text in texts_a]
+    alone_b = [redact(text)[0] for text in texts_b]
+    results: dict[str, list[str]] = {}
+    barrier = threading.Barrier(2)
+
+    def work(name: str, texts: list[str]) -> None:
+        barrier.wait()
+        results[name] = [redact(text)[0] for text in texts]
+
+    threads = [
+        threading.Thread(target=work, args=("a", texts_a)),
+        threading.Thread(target=work, args=("b", texts_b)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert results["a"] == alone_a
+    assert results["b"] == alone_b
+
+
+def _piece(*chunks: str) -> str:
+    return "".join(chunks)
+
+
+def test_a_short_segment_inside_a_key_is_masked_with_the_key():
+    # Antigravity review on dafcd5d (P1): a segment under three characters was
+    # never noted and stayed readable between two masked segments.
+    first, last = _piece("A1b2C3", "d4E5"), _piece("F6g7H8", "j9K0L1")
+    out = redact(f"s3://bucket/{first}/x/{last}/backups/production")[0]
+    mask = secrets.REDACTED
+    assert out == f"s3://bucket/{mask}/{mask}/{mask}/backups/production"
+
+
+def test_a_clean_path_is_not_masked_because_it_shares_a_segment_with_a_key():
+    # Antigravity review on dafcd5d (P2): the replacement was a global string
+    # replacement, so the first (healthy) path lost its segment too.
+    first, last = _piece("A1b2C3", "d4E5f6"), _piece("F6g7H8", "j9K0L1m2")
+    for lead in ("api", "Api"):
+        sane = f"{lead}/v1beta2/projects/list"
+        out = redact(f"{sane} et {lead}/v1beta2/{first}/{last}/download")[0]
+        assert out.startswith(f"{sane} et "), out
+        assert first not in out
+        assert last not in out
+
+
+def test_a_clean_path_sharing_a_non_word_segment_with_a_key_stays_intact():
+    first, last = _piece("A1b2C3", "d4E5"), _piece("F6g7H8", "j9K0L1")
+    sane = "ops/Zz9/readme"
+    out = redact(f"{sane} et s3://bucket/{first}/Zz9/{last}/backups/production")[0]
+    assert out.startswith(f"{sane} et "), out
+    assert first not in out
+    assert last not in out
+
+
+@pytest.mark.parametrize(
+    ("segment", "is_word"),
+    [
+        ("abc", True),
+        ("HTTPServer", True),
+        ("Users", True),
+        ("App", False),
+        ("aBcdef", True),
+        ("getUsers", True),
+        ("HTTP2", True),
+        ("getX", False),
+        ("Api", False),
+        ("apiV2", True),
+        ("Users1", True),
+        ("AB", False),
+        ("V2", True),
+        ("v1beta2", True),
+        ("rc1", True),
+        ("abc12345678", True),
+        ("abc123456789", False),
+    ],
+)
+def test_path_word_rule_is_what_the_security_doc_promises(segment, is_word):
+    assert secrets._path_word(segment) is is_word
+
+
+def test_a_marker_that_swallowed_several_segments_still_leaves_no_key_segment():
+    first, last = _piece("A1b2C3", "d4E5"), _piece("F6g7H8", "j9K0L1")
+    out = redact(f"cat /etc/tokens/abcdef/v1/Nop0/{first}/{last}")[0]
+    assert first not in out
+    assert last not in out
+    assert "tokens" in out
+
+
+def test_a_marker_may_cover_several_elements_of_a_noted_sequence():
+    first, last = _piece("A1b2C3", "d4E5"), _piece("F6g7H8", "j9K0L1")
+    mask = secrets.REDACTED
+    text = f"tokens/abcdef/v1/Nop0/{mask}"
+    noted = {("Nop0", first, last)}
+    assert secrets._mask_noted_segments(text, noted) == f"tokens/abcdef/v1/{mask}/{mask}"
+
+
+@pytest.mark.xfail(strict=False, reason="limite #84, issue #147")
+def test_a_key_of_one_or_two_character_segments_between_path_words():
+    key = "/".join(["AB", "CD", "E5", "f6", "G7", "h8", "I9", "j0", "K1", "12"])
+    out = redact(f"s3://bucket/{key}/backups/production")[0]
+    assert "AB" not in out
+
+
+def test_shared_segment_across_many_sequences_costs_linearly():
+    # Pathological shape: the same segment heads many distinct windows.
+    def best_of(count, runs=5):
+        rng = random.Random(count)
+        alphabet = _ALPHABET.replace("/", "")
+        lines = [
+            "s3://bucket/Q7xK9p/{}/backups/production".format(
+                "".join(rng.choice(alphabet) for _ in range(22))
+            )
+            for _ in range(count)
+        ]
+        text = "\n".join(lines)
+        times = []
+        for _ in range(runs):
+            started = time.perf_counter()
+            redact(text)
+            times.append(time.perf_counter() - started)
+        return min(times)
+
+    small, large = best_of(500), best_of(2000)
+    assert large < 6 * max(small, 0.002) or large < 0.5, (small, large)
+
+
+_SHORT_SIZES = (1, 2, 3)
+
+
+def test_short_segment_keys_only_add_masks_and_reach_a_fixed_point(monkeypatch):
+    runs = _random_runs(6_000, seed=3, sizes=_SHORT_SIZES)
+    with monkeypatch.context() as patch:
+        patch.setattr(secrets, "_mask_opaque_windows", lambda parts: None, raising=True)
+        without = [redact(run)[0] for run in runs]
+    for run, old in zip(runs, without, strict=True):
+        new = redact(run)[0]
+        assert _visible_fragments(run, new) <= _visible_fragments(run, old), (run, old, new)
+        assert redact(new)[0] == new, (run, new)

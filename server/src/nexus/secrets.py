@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from collections.abc import Callable
+from contextvars import ContextVar
 from functools import cache
 from math import log2
 from typing import Any
@@ -825,6 +826,177 @@ def _opaque_slashed(token: str) -> bool:
     return _opaque_chunks(parts)
 
 
+# Segments that read as path words and cut a slashed candidate into windows
+# (issue #144): a lowercase word with a short numeric suffix, digits alone, a
+# version tag (`v1`, `V2`, `v1beta2`, `v2rc1`), a release candidate (`rc1`), or a
+# name in camelCase / PascalCase / SCREAMING style (`_name_segment`).
+_PATH_WORD = re.compile(
+    r"[a-z]{3,}[0-9]{0,4}|[0-9]+|[vV][0-9]{1,3}(?:(?:alpha|beta|rc)[0-9]+)?|rc[0-9]+"
+)
+
+
+def _path_word(segment: str) -> bool:
+    return bool(_PATH_WORD.fullmatch(segment)) or _name_segment(segment)
+
+
+# Opaque windows (tuples of consecutive segments) met by the passes of ONE `redact` call
+# (issue #144).
+# A ContextVar, never a module global: the scanner runs in concurrent workers, and
+# each call (each thread, each task) sees only its own collector. None outside
+# `redact`: the rule then collects nothing.
+_WINDOWS: ContextVar[set[tuple[str, ...]] | None] = ContextVar("opaque_windows", default=None)
+
+
+def _mask_opaque_windows(parts: list[str]) -> None:
+    """Note the opaque windows between path words of a candidate.
+
+    A key whose own slashes chop it into segments, written between path words
+    (`s3://bucket/<key>/backups/production`, `api/v1/<key>/download`), made the
+    words veto of `_opaque_slashed` rule the whole candidate a path, and the
+    tail rule never finds a tail free of words: the key leaked. Cutting the
+    candidate at every word leaves windows of consecutive non-word segments;
+    a window of two segments or more that `_opaque_slashed` judges opaque is
+    noted, as the ordered tuple of its segments, in the collector of the running
+    `redact` call.
+
+    Nothing is rewritten here: masking a window during a pass changed what the
+    next passes of the fixed point saw (`<16>/backups/MRS/rkEj/<24>` lost its
+    entropy-masked tail and kept 16 opaque characters readable, PR 146 review).
+    `redact` applies the noted windows once the passes of the existing rules
+    reached their fixed point. One pass over the segments, each read once.
+    """
+    collector = _WINDOWS.get()
+    if collector is None:
+        return
+    window: list[str] = []
+
+    def close() -> None:
+        if 2 <= len(window) < len(parts) and _opaque_slashed("/".join(window)):
+            collector.add(tuple(window))
+        window.clear()
+
+    for part in parts:
+        if _path_word(part):
+            close()
+        else:
+            window.append(part)
+    close()
+
+
+# A slashed run of the output of the passes: its segments may be `[REDACTED]` markers.
+_MARKED_SLASHED_RUN = re.compile(
+    r"(?<![A-Za-z0-9+])(?:\[REDACTED\]|[A-Za-z0-9+]+={0,2})"
+    r"(?:/(?:\[REDACTED\]|[A-Za-z0-9+]+={0,2}))+"
+)
+
+
+# Verification budget of `_mask_noted_segments`, per segment read (windows noted + parts of
+# the slashed runs): beyond it the output is masked by maximal window instead.
+_APPLY_BUDGET_FACTOR = 16
+
+
+class _BudgetExceeded(Exception):
+    pass
+
+
+def _walk(
+    parts: list[str], start: int, seq: tuple[str, ...], k: int, step: int, spend: Callable[[], None]
+) -> int | None:
+    """Follow `seq` from element `k` (exclusive) and text part `start` (exclusive) in
+    direction `step`; return the last part index reached, None when the text differs.
+
+    A `[REDACTED]` marker may stand for one element or more (the tail rule and the
+    labelled values swallow several segments in one mask): it eats elements up to the
+    next one equal to the part after the marker.
+    """
+    ti, sk = start + step, k + step
+    while 0 <= sk < len(seq):
+        if not 0 <= ti < len(parts):
+            return None
+        spend()
+        if parts[ti] == seq[sk]:
+            ti += step
+            sk += step
+        elif parts[ti] == REDACTED:
+            sk += step
+            after = ti + step
+            while 0 <= sk < len(seq) and not (0 <= after < len(parts) and parts[after] == seq[sk]):
+                spend()
+                sk += step
+            ti = after
+        else:
+            return None
+    return ti - step
+
+
+def _mask_noted_segments(text: str, noted: set[tuple[str, ...]]) -> str:
+    """Mask, in the slashed runs of `text`, every noted window found whole.
+
+    A window applies only where its CONSECUTIVE segments are all found (a marker
+    standing for several of them): a segment shared with a healthy path is never
+    touched on its own. Windows overlapping or nested add up. Verifications are
+    counted; a pathological text that exceeds the budget is masked by maximal window
+    (non-word segments and markers) holding a noted segment instead, which is linear
+    and only over-masks (ADR-006).
+    """
+    if not noted:
+        return text
+    index: dict[str, list[tuple[tuple[str, ...], int]]] = {}
+    for seq in noted:
+        for k, segment in enumerate(seq):
+            index.setdefault(segment, []).append((seq, k))
+    budget = _APPLY_BUDGET_FACTOR * (sum(len(seq) for seq in noted) + len(text.split("/")))
+
+    def spend() -> None:
+        nonlocal budget
+        budget -= 1
+        if budget < 0:
+            raise _BudgetExceeded
+
+    def mask_run(match: re.Match[str]) -> str:
+        parts = match.group(0).split("/")
+        hit = [False] * len(parts)
+        for i, part in enumerate(parts):
+            for seq, k in index.get(part, ()):
+                if hit[i]:
+                    break
+                spend()
+                left = _walk(parts, i, seq, k, -1, spend)
+                right = _walk(parts, i, seq, k, 1, spend) if left is not None else None
+                if left is not None and right is not None:
+                    for position in range(min(left, i), max(right, i) + 1):
+                        hit[position] = True
+        return "/".join(REDACTED if flag else part for part, flag in zip(parts, hit, strict=True))
+
+    known = {segment for seq in noted for segment in seq}
+
+    def mask_windows(match: re.Match[str]) -> str:
+        parts = match.group(0).split("/")
+        out: list[str] = []
+        window: list[str] = []
+
+        def close() -> None:
+            if any(part in known for part in window):
+                out.extend(REDACTED for _ in window)
+            else:
+                out.extend(window)
+            window.clear()
+
+        for part in parts:
+            if part != REDACTED and _path_word(part):
+                close()
+                out.append(part)
+            else:
+                window.append(part)
+        close()
+        return "/".join(out)
+
+    try:
+        return _MARKED_SLASHED_RUN.sub(mask_run, text)
+    except _BudgetExceeded:
+        return _MARKED_SLASHED_RUN.sub(mask_windows, text)
+
+
 _VENDOR: list[tuple[str, re.Pattern[str]]] = [
     # Unanchored vendor formats (issue #101), applied by `redact` just before the entropy
     # pass and after every pass that reads a label, a URL, a header or a slashed value:
@@ -912,6 +1084,10 @@ def _redact_once(text: str) -> tuple[str, list[str]]:
         if start is not None:
             found.append("high_entropy")
             return "/".join(parts[:start]) + "/" + REDACTED
+        # Neither the whole candidate nor its tail is opaque: path words may
+        # sit on BOTH sides of the value (`s3://bucket/<key>/backups/production`).
+        # The rule only notes the segments; `redact` masks them afterwards.
+        _mask_opaque_windows(parts)
         return token
 
     # Labelled values run FIRST: a value that is itself a URL holding credentials
@@ -931,12 +1107,8 @@ def _redact_once(text: str) -> tuple[str, list[str]]:
     return text, sorted(set(found))
 
 
-def redact(text: str) -> tuple[str, list[str]]:
-    """Mask text until a fixed point, at most `_MAX_PASSES` passes.
-
-    Return the masked text and every kind of secret found along the way, duplicates
-    included: a later pass only reports what it actually masked.
-    """
+def _converge(text: str) -> tuple[str, list[str]]:
+    """Run `_redact_once` until a fixed point, at most `_MAX_PASSES` passes."""
     found: list[str] = []
     for _ in range(_MAX_PASSES):
         masked, kinds = _redact_once(text)
@@ -944,6 +1116,37 @@ def redact(text: str) -> tuple[str, list[str]]:
         if masked == text:
             break
         text = masked
+    return text, found
+
+
+def redact(text: str) -> tuple[str, list[str]]:
+    """Mask text until a fixed point, at most `_MAX_PASSES` passes.
+
+    Return the masked text and every kind of secret found along the way, duplicates
+    included: a later pass only reports what it actually masked.
+
+    The passes first reach the fixed point of the older rules, while the window rule
+    (issue #144) only notes the opaque segments it meets in a collector local to this
+    call. Those segments are then masked in the slashed runs of the output and the
+    passes run again with the collection still active, at most `_MAX_PASSES` rounds:
+    the window rule only ever adds masks on top of the older rules' result. A text
+    without a noted segment costs nothing more.
+    """
+    collector: set[tuple[str, ...]] = set()
+    token = _WINDOWS.set(collector)
+    try:
+        text, found = _converge(text)
+        for _ in range(_MAX_PASSES):
+            if not collector:
+                break
+            masked = _mask_noted_segments(text, collector)
+            if masked == text:
+                break
+            found.append("high_entropy")
+            text, kinds = _converge(masked)
+            found.extend(kinds)
+    finally:
+        _WINDOWS.reset(token)
     return text, found
 
 
