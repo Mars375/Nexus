@@ -7,7 +7,6 @@
     "server/src/nexus/tasks/service.py": 528,
     "server/tests/test_approvals_answer.py": 991,
     "server/tests/test_demo_agent.py": 873,
-    "server/tests/test_secrets.py": 1363,
     "server/tests/test_serving.py": 1110,
     "web/src/live.test.ts": 741
   },

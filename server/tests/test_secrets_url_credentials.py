@@ -271,3 +271,111 @@ def test_a_raw_slash_in_the_password_is_masked():
     cleaned, found = redact(template.format(PW))
     assert cleaned == template.format(REDACTED)
     assert found == ["url_credentials"]
+
+
+def test_url_with_password_and_no_username_is_masked():
+    # issue #15: redis strips usernames, the password alone sits between // and @.
+    # The masked URL keeps its exact shape: the colon of the empty username stays.
+    cleaned, found = redact("REDIS_URL=redis://:hunter2@localhost/0")
+    assert cleaned == f"REDIS_URL=redis://:{REDACTED}@localhost/0"
+    assert found == ["url_credentials"]
+
+
+def test_url_with_username_and_no_password_is_kept():
+    # A bare username is not a credential (git clone URLs stay readable).
+    text = "git clone https://git@github.com/Mars375/Nexus"
+    assert redact(text) == (text, [])
+
+
+def test_url_without_credentials_in_a_query_is_kept():
+    # issue #84, third disposition: without the user-class restriction, the query
+    # fed the « user » role and `alice` was erased.
+    text = "https://example.org?redirect=mailto:alice@example.net"
+    assert redact(text) == (text, [])
+
+
+def test_url_credentials_before_a_query_are_still_masked():
+    cleaned, found = redact("postgresql://alice:hunter2@db.example/nexus?sslmode=require")
+    assert cleaned == f"postgresql://alice:{REDACTED}@db.example/nexus?sslmode=require"
+    assert found == ["url_credentials"]
+
+
+def test_url_with_a_port_and_a_query_is_masked_by_choice():
+    # « Masqué à tort, assumé » (Loïc, 2026-10-20: dans le doute, on masque). Without
+    # credentials, `host:8080?email=alice@…` has the exact shape of a connection URL
+    # whose password is `8080?email=alice`: no rule tells them apart without risking
+    # a password in the clear (Antigravity, PR #97), so the lookalike is masked and
+    # only the port and query head are lost.
+    for text, expected in (
+        ("http://localhost:8080?email=alice@example.com", "http://localhost:{}@example.com"),
+        ("https://example.org:8080#redirect=mailto:bob@example.net", "https://example.org:{}@example.net"),
+        ("http://localhost:8080#top@example.com", "http://localhost:{}@example.com"),
+        ("https://example.org:8080?lang=fr@example.net", "https://example.org:{}@example.net"),
+    ):
+        cleaned, found = redact(text)
+        assert cleaned == expected.format(REDACTED)
+        assert found == ["url_credentials"]
+
+
+def test_url_credentials_before_a_port_and_a_query_stay_masked():
+    # A real password followed by a host:port and a query stays masked.
+    cleaned, found = redact("https://alice:hunter2@host:8443/x?y=1")
+    assert cleaned == f"https://alice:{REDACTED}@host:8443/x?y=1"
+    assert found == ["url_credentials"]
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "postgresql://alice:{}@db.example/nexus",
+        "DATABASE_URL=postgresql://nexus:{}@db:5432/nexus",
+        "mysql://root:{}@localhost:3306/app",
+        "redis://:{}@localhost/0",
+        "amqp://guest:{}@rabbit:5672/vhost",
+    ],
+)
+@pytest.mark.parametrize("separator", ["#", "?", "#a?b"])
+def test_url_password_with_a_hash_or_a_question_mark_is_masked(template, separator):
+    # issue #92 (regression of #87): a `?` or `#` inside an unencoded password ended
+    # the match before the `@` and the password came out in the clear. Built at run time.
+    password = "hunt" + separator + "er2"
+    cleaned, found = redact(template.format(password))
+    assert cleaned == template.format(REDACTED)
+    assert found == ["url_credentials"]
+
+
+@pytest.mark.parametrize(
+    "template, head",
+    [
+        ("redis://:{}@localhost/0", "1234#ab"),  # no host before the colon: never a port
+        ("postgresql://alice:{}@db.example/nexus", "123456#ab"),  # over five digits
+        ("postgresql://nexus:{}@db:5432/nexus", "2024#Pa" + "ris"),  # no key=value
+        ("amqp://guest:{}@rabbit:5672/vhost", "123?ab" + "c"),
+    ],
+)
+def test_url_password_starting_with_digits_then_a_hash_is_masked(template, head):
+    # A numeric password head is masked, with or without a `key=value` after it.
+    cleaned, found = redact(template.format(head))
+    assert cleaned == template.format(REDACTED)
+    assert found == ["url_credentials"]
+
+
+@pytest.mark.parametrize(
+    "head", ["12#a=b", "12?a=b", "123?env=prod", "2024#build=7", "8080#a=b", "12345?k=v&x"]
+)
+@pytest.mark.parametrize(
+    "template",
+    [
+        "postgresql://alice:{}@db/nexus",
+        "mysql://root:{}@localhost:3306/app",
+        "amqp://guest:{}@rabbit:5672/vhost",
+        "redis://:{}@cache.example",
+    ],
+)
+def test_url_password_that_reads_as_a_port_and_a_query_is_masked(template, head):
+    # Antigravity, PR #97 (P1): a real password made of digits, `?`/`#` and `=` looks
+    # like `host:port?key=value`. A secret never stays in the clear, whatever it looks
+    # like (ADR-006, Loïc 2026-10-20): the lookalike is masked.
+    cleaned, found = redact(template.format(head))
+    assert cleaned == template.format(REDACTED)
+    assert found == ["url_credentials"]
