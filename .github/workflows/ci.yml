@@ -25,6 +25,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          # Deux commits : le contrôle de taille compare la référence à celle du parent
+          # (pour une PR, le sommet de master ; pour un push, le commit précédent).
+          fetch-depth: 2
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -48,6 +51,9 @@ jobs:
 
       - name: Typecheck
         run: pnpm typecheck
+
+      - name: File size
+        run: pnpm check:size --base HEAD^1
 
       - name: Build web
         run: pnpm --dir web build

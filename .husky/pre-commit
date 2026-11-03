@@ -61,6 +61,9 @@ fi
 # 4. Lint des fichiers indexés (ruff, oxlint).
 pnpm exec lint-staged
 
-# 5. Typage et tests rapides. La suite Playwright se lance avant d'ouvrir la PR.
+# 5. Taille des fichiers : cliquet sur file-size-baseline.json (issue #39).
+pnpm check:size
+
+# 6. Typage et tests rapides. La suite Playwright se lance avant d'ouvrir la PR.
 pnpm typecheck
 pnpm test

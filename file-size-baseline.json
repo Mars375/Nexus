@@ -1,0 +1,17 @@
+{
+  "files": {
+    "server/src/nexus/demo_agent.py": 419,
+    "server/src/nexus/events/service.py": 593,
+    "server/src/nexus/secrets.py": 1220,
+    "server/src/nexus/serving.py": 437,
+    "server/src/nexus/tasks/service.py": 528,
+    "server/tests/test_approvals_answer.py": 991,
+    "server/tests/test_demo_agent.py": 873,
+    "server/tests/test_secrets.py": 1363,
+    "server/tests/test_serving.py": 1110,
+    "web/src/live.test.ts": 741
+  },
+  "exceptions": {
+    "server/src/nexus/demo_agent.py": "Reste un seul fichier : sa docstring dit qu'il doit pouvoir se copier seul (issue #39)."
+  }
+}
