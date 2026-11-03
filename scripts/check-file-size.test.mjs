@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { check, countLines, limitFor, lowered } from "./check-file-size.mjs";
+import { check, countLines, limitFor, lowered, shapeError } from "./check-file-size.mjs";
 
 test("physical lines, with or without a final newline", () => {
   assert.equal(countLines(""), 0);
@@ -292,6 +292,46 @@ test("cli: --update leaves an invalid reference untouched and exits 1", () => {
       assert.match(result.stderr, /plafond invalide/);
       assert.equal(readFileSync(path, "utf8"), text, "la référence n'est pas réécrite");
     }
+  } finally {
+    box.done();
+  }
+});
+
+test("a reference of the wrong shape is named, never read as empty", () => {
+  for (const bad of [null, [], "x", 3, {}, { files: [] }, { files: null }, { files: {}, exceptions: [] }, { files: {}, exceptions: "x" }]) {
+    assert.match(shapeError(bad, "la référence"), /mal formée/, JSON.stringify(bad));
+  }
+  assert.equal(shapeError({ files: {} }, "x"), null);
+  assert.equal(shapeError({ files: { "a.py": 450 }, exceptions: { "a.py": "raison" } }, "x"), null);
+});
+
+test("cli: a malformed reference, in the work tree or in the base commit, is a clear error", () => {
+  const box = sandbox({ files: { "a.py": 450 } }, { "a.py": 450 });
+  try {
+    const path = join(box.dir, "file-size-baseline.json");
+    writeFileSync(path, "null");
+    const tree = box.run();
+    assert.equal(tree.status, 1);
+    assert.match(tree.stderr, /mal formée/);
+    assert.doesNotMatch(tree.stderr, /Cannot read properties/);
+    writeFileSync(path, JSON.stringify([]));
+    box.git("commit", "-q", "-a", "-m", "broken base");
+    writeFileSync(path, JSON.stringify({ files: { "a.py": 450 } }));
+    const base = box.run();
+    assert.equal(base.status, 1);
+    assert.match(base.stderr, /mal formée dans le commit de base HEAD/);
+  } finally {
+    box.done();
+  }
+});
+
+test("cli: --update also compares to the base commit and does not announce a false success", () => {
+  const box = sandbox({ files: { "a.py": 900 } }, { "a.py": 900 });
+  try {
+    box.write({ files: { "a.py": 950 }, baseline: { files: { "a.py": 950 } } });
+    const result = box.run("--update");
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /relevé de 900 à 950/);
   } finally {
     box.done();
   }

@@ -32,6 +32,17 @@ export function countLines(text) {
 }
 
 // `files`: { path: lignes }. `baseline`: { files: { path: lignes max }, exceptions: { path: raison } }.
+const plain = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+
+// La forme attendue : un objet avec `files` (objet), et `exceptions` (objet) s'il existe. Une autre
+// forme (`null`, tableau, chaîne) est refusée avec un message qui nomme la référence concernée.
+export function shapeError(value, where) {
+  if (!plain(value) || !plain(value.files) || (value.exceptions !== undefined && !plain(value.exceptions))) {
+    return `Référence mal formée dans ${where} : un objet avec « files » (et « exceptions » s'il existe) est attendu.`;
+  }
+  return null;
+}
+
 export function ceilingProblems(entries, where) {
   return Object.entries(entries)
     .filter(([, ceiling]) => !Number.isInteger(ceiling) || ceiling < 0)
@@ -148,19 +159,27 @@ function baseOf(root, { ref, explicit }) {
   } catch {
     return null;
   }
+  let parsed;
   try {
-    return JSON.parse(git("show", `${ref}:file-size-baseline.json`));
+    parsed = JSON.parse(git("show", `${ref}:file-size-baseline.json`));
   } catch (error) {
     throw new Error(`Référence illisible dans le commit de base ${ref} : ${error.message}`);
   }
+  const bad = shapeError(parsed, `le commit de base ${ref}`);
+  if (bad) throw new Error(bad);
+  return parsed;
 }
 
 function readBaseline(path) {
+  let parsed;
   try {
-    return JSON.parse(readFileSync(path, "utf8"));
+    parsed = JSON.parse(readFileSync(path, "utf8"));
   } catch (error) {
     throw new Error(`Référence illisible (${path}) : ${error.code ?? error.message}. Restaure file-size-baseline.json.`);
   }
+  const bad = shapeError(parsed, path);
+  if (bad) throw new Error(`${bad} Restaure file-size-baseline.json.`);
+  return parsed;
 }
 
 // `--base <commit>`, `--base=<commit>` et `--update`, analysés une fois. Toute autre option est
@@ -209,7 +228,7 @@ function main() {
     writeFileSync(baselinePath, `${JSON.stringify(next, null, 2)}\n`);
     // La mise à jour abaisse seulement : un nouveau fichier trop long ou une croissance restent
     // des violations, et la commande ne doit pas annoncer un succès qui n'en est pas un.
-    const remaining = check(files, next, null, tracked);
+    const remaining = check(files, next, baseOf(root, base), tracked);
     return remaining.length === 0 ? 0 : report(remaining);
   }
   const problems = check(files, baseline, baseOf(root, base), tracked);
