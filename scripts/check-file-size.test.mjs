@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -270,4 +270,29 @@ test("a ceiling that is not a non-negative integer is refused before any compari
     assert.match(problems[0], /plafond invalide/);
   }
   assert.equal(check({ "a.py": 500 }, { files: { "a.py": 500 } }, { files: { "a.py": 500 } }).length, 0);
+});
+
+test("an invalid ceiling in the base commit is refused, never compared silently", () => {
+  for (const bad of ["abc", null, -1, 1.5, true]) {
+    const problems = check({ "a.py": 950 }, { files: { "a.py": 950 } }, { files: { "a.py": bad } });
+    assert.equal(problems.length, 1, JSON.stringify(bad));
+    assert.match(problems[0], /plafond invalide dans la référence du commit de base/);
+  }
+});
+
+test("cli: --update leaves an invalid reference untouched and exits 1", () => {
+  const box = sandbox({ files: { "a.py": 450 } }, { "a.py": 450 });
+  try {
+    const path = join(box.dir, "file-size-baseline.json");
+    for (const bad of [null, "NaN", -1]) {
+      const text = JSON.stringify({ files: { "a.py": bad } });
+      writeFileSync(path, text);
+      const result = box.run("--update");
+      assert.equal(result.status, 1, String(bad));
+      assert.match(result.stderr, /plafond invalide/);
+      assert.equal(readFileSync(path, "utf8"), text, "la référence n'est pas réécrite");
+    }
+  } finally {
+    box.done();
+  }
 });

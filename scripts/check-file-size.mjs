@@ -32,18 +32,27 @@ export function countLines(text) {
 }
 
 // `files`: { path: lignes }. `baseline`: { files: { path: lignes max }, exceptions: { path: raison } }.
+export function ceilingProblems(entries, where) {
+  return Object.entries(entries)
+    .filter(([, ceiling]) => !Number.isInteger(ceiling) || ceiling < 0)
+    .map(
+      ([path, ceiling]) =>
+        `${path} : plafond invalide dans ${where} (${JSON.stringify(ceiling)}), un entier positif ou nul est attendu.`,
+    );
+}
+
 // `base`: la référence du commit de base, ou null. Retourne la liste des violations.
 export function check(files, baseline, base = null, tracked = new Set()) {
   const problems = [];
   const known = baseline.files ?? {};
   // Un plafond qui n'est pas un entier positif ou nul (`"NaN"`, `null`, `-1`, `"500"`) rend toutes
-  // les comparaisons fausses, donc silencieuses : la référence est refusée avant d'être lue.
-  for (const [path, ceiling] of Object.entries(known)) {
-    if (!Number.isInteger(ceiling) || ceiling < 0) {
-      problems.push(`${path} : plafond invalide dans la référence (${JSON.stringify(ceiling)}), un entier positif ou nul est attendu.`);
-    }
-  }
-  if (problems.length > 0) return problems;
+  // les comparaisons fausses, donc silencieuses : la référence est refusée avant d'être lue, celle
+  // du commit de base comme celle de l'arbre de travail.
+  const invalid = [
+    ...ceilingProblems(known, "la référence"),
+    ...(base ? ceilingProblems(base.files ?? {}, "la référence du commit de base") : []),
+  ];
+  if (invalid.length > 0) return invalid;
   if (base) {
     const before = base.files ?? {};
     for (const [path, ceiling] of Object.entries(known)) {
@@ -193,6 +202,9 @@ function main() {
     if (missing.length > 0) {
       throw new Error(`Fichier listé absent de l'arbre de travail mais suivi : ${missing.join(", ")}. Restaure-le (git checkout) ou retire-le (git rm), puis relance --update.`);
     }
+    // Une référence invalide est refusée avant d'être réécrite : le fichier reste intact.
+    const broken = ceilingProblems(baseline.files ?? {}, "la référence");
+    if (broken.length > 0) return report(broken);
     const next = lowered(files, baseline);
     writeFileSync(baselinePath, `${JSON.stringify(next, null, 2)}\n`);
     // La mise à jour abaisse seulement : un nouveau fichier trop long ou une croissance restent
