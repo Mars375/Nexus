@@ -45,3 +45,17 @@ test("update lowers, drops what is back under the limit and never admits a newco
   const kept = lowered({ "b.py": 460 }, { files: { "b.py": 470 }, exceptions: { "b.py": "raison" } });
   assert.deepEqual(kept.exceptions, { "b.py": "raison" });
 });
+
+test("the reference may not be raised against the base commit", () => {
+  const base = { files: { "a.py": 500 } };
+  const same = { "a.py": 500 };
+  assert.equal(check(same, { files: { "a.py": 500 } }, base).length, 0);
+  assert.equal(check({ "a.py": 450 }, { files: { "a.py": 450 } }, base).length, 0);
+  assert.match(check({ "a.py": 520 }, { files: { "a.py": 520 } }, base)[0], /relevé de 500 à 520/);
+  const added = check({ "b.py": 450 }, { files: { "b.py": 450 } }, base);
+  assert.match(added[0], /ajouté à la référence/);
+});
+
+test("without a reference in the base commit nothing is compared", () => {
+  assert.equal(check({ "a.py": 500 }, { files: { "a.py": 500 } }, null).length, 0);
+});

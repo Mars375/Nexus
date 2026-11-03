@@ -4,6 +4,10 @@
 // figure dans `file-size-baseline.json`, et sa taille ne peut que baisser : le fichier de
 // référence est un cliquet. `--update` l'abaisse (jamais ne le relève) et retire les fichiers
 // revenus sous le seuil. `exceptions` note la raison d'un fichier qui reste volontairement entier.
+// La référence de l'arbre de travail est aussi comparée à celle d'un commit de base (`--base`,
+// HEAD par défaut) : relever un plafond ou y ajouter un fichier est refusé, même dans un commit
+// qui modifie la référence. Sans référence dans le commit de base (première version), pas de
+// comparaison.
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -28,10 +32,20 @@ export function countLines(text) {
 }
 
 // `files`: { path: lignes }. `baseline`: { files: { path: lignes max }, exceptions: { path: raison } }.
-// Retourne la liste des violations (vide quand tout est bon).
-export function check(files, baseline) {
+// `base`: la référence du commit de base, ou null. Retourne la liste des violations.
+export function check(files, baseline, base = null) {
   const problems = [];
   const known = baseline.files ?? {};
+  if (base) {
+    const before = base.files ?? {};
+    for (const [path, ceiling] of Object.entries(known)) {
+      if (!(path in before)) {
+        problems.push(`${path} : ajouté à la référence ; un fichier trop long se découpe, il n'entre pas dans la référence.`);
+      } else if (ceiling > before[path]) {
+        problems.push(`${path} : plafond relevé de ${before[path]} à ${ceiling} ; la référence ne se relève pas.`);
+      }
+    }
+  }
   for (const [path, lines] of Object.entries(files)) {
     const limit = limitFor(path);
     if (limit === null) continue;
@@ -86,23 +100,39 @@ function measure(root) {
     if (limitFor(path) === null) continue;
     try {
       files[path] = countLines(readFileSync(join(root, path), "utf8"));
-    } catch {
+    } catch (error) {
       // Supprimé de l'arbre de travail mais encore suivi : le prochain commit le retire.
+      // Toute autre erreur (droits, verrou) ne doit pas faire sortir le fichier du contrôle.
+      if (error.code !== "ENOENT") throw error;
     }
   }
   return files;
+}
+
+function baseOf(root, ref) {
+  try {
+    const text = execFileSync("git", ["show", `${ref}:file-size-baseline.json`], {
+      cwd: root,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).toString("utf8");
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 function main() {
   const root = join(dirname(fileURLToPath(import.meta.url)), "..");
   const baselinePath = join(root, "file-size-baseline.json");
   const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
+  const at = process.argv.indexOf("--base");
+  const ref = at === -1 ? "HEAD" : process.argv[at + 1];
   const files = measure(root);
   if (process.argv.includes("--update")) {
     writeFileSync(baselinePath, `${JSON.stringify(lowered(files, baseline), null, 2)}\n`);
     return 0;
   }
-  const problems = check(files, baseline);
+  const problems = check(files, baseline, baseOf(root, ref));
   if (problems.length === 0) return 0;
   console.error("Taille des fichiers (AGENTS.md « Taille des fichiers », issue #39) :");
   for (const problem of problems) console.error(`  - ${problem}`);
