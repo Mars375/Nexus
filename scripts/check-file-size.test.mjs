@@ -262,3 +262,12 @@ test("a tracked listed file missing from the work tree gets the right advice", (
   assert.match(message, /absent de l'arbre de travail mais suivi/);
   assert.match(message, /git checkout a\.py/);
 });
+
+test("a ceiling that is not a non-negative integer is refused before any comparison", () => {
+  for (const bad of ["NaN", "500", null, -1, 1.5, true]) {
+    const problems = check({ "a.py": 9000 }, { files: { "a.py": bad } }, { files: { "a.py": 500 } });
+    assert.equal(problems.length, 1, JSON.stringify(bad));
+    assert.match(problems[0], /plafond invalide/);
+  }
+  assert.equal(check({ "a.py": 500 }, { files: { "a.py": 500 } }, { files: { "a.py": 500 } }).length, 0);
+});

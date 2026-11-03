@@ -36,6 +36,14 @@ export function countLines(text) {
 export function check(files, baseline, base = null, tracked = new Set()) {
   const problems = [];
   const known = baseline.files ?? {};
+  // Un plafond qui n'est pas un entier positif ou nul (`"NaN"`, `null`, `-1`, `"500"`) rend toutes
+  // les comparaisons fausses, donc silencieuses : la référence est refusée avant d'être lue.
+  for (const [path, ceiling] of Object.entries(known)) {
+    if (!Number.isInteger(ceiling) || ceiling < 0) {
+      problems.push(`${path} : plafond invalide dans la référence (${JSON.stringify(ceiling)}), un entier positif ou nul est attendu.`);
+    }
+  }
+  if (problems.length > 0) return problems;
   if (base) {
     const before = base.files ?? {};
     for (const [path, ceiling] of Object.entries(known)) {
