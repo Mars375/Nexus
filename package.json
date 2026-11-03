@@ -4,11 +4,12 @@
   "scripts": {
     "bootstrap": "uv sync --directory server && pnpm --dir web install",
     "dev": "concurrently -k -n server,web -c blue,green \"uv run --directory server nexus-dev\" \"pnpm --dir web dev\"",
-    "test": "uv run --directory server pytest -q && pnpm --dir web test",
+    "test": "node --test scripts/check-file-size.test.mjs && uv run --directory server pytest -q && pnpm --dir web test",
     "lint": "uv run --directory server ruff check . && pnpm --dir web lint",
     "e2e": "pnpm --dir web e2e",
     "prepare": "husky",
-    "typecheck": "pnpm --dir web exec tsc -b"
+    "typecheck": "pnpm --dir web exec tsc -b",
+    "check:size": "node scripts/check-file-size.mjs"
   },
   "devDependencies": {
     "concurrently": "^10.0.5",

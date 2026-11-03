@@ -49,6 +49,9 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: File size
+        run: pnpm check:size
+
       - name: Build web
         run: pnpm --dir web build
 

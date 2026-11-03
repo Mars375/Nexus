@@ -13,7 +13,7 @@
 
 ## Taille des fichiers
 
-- Seuil indicatif : **400 lignes** pour un fichier de code source, **600** pour un fichier de test (lignes physiques, hors verrous et images). Ce n'est pas un blocage automatique.
+- Seuil indicatif : **400 lignes** pour un fichier de code source, **600** pour un fichier de test (lignes physiques, hors verrous et images). `pnpm check:size` (hook `.husky/pre-commit` et CI) l'applique par un cliquet : un fichier au-dessus du seuil doit figurer dans `file-size-baseline.json` et sa taille ne peut que baisser (`pnpm check:size --update` abaisse la référence, ne la relève jamais) ; un nouveau fichier au-dessus du seuil est refusé.
 - Au-delà du seuil, découper une fois par sujet, sans changer un test ni son nom, avec les mêmes résultats avant/après (`pnpm test`, `pnpm lint`, e2e pour le web). Si aucun seam lisible n'existe, noter la raison dans l'issue #39 plutôt que de forcer un découpage.
 - Une PR par fichier ou par sujet ; les plans historiques de `docs/superpowers/plans/` ne se découpent pas.
 
