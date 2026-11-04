@@ -11,7 +11,6 @@ import json
 import logging
 import re
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from sqlalchemy import select, true
 from sqlalchemy.exc import IntegrityError
@@ -22,27 +21,23 @@ from nexus import secrets
 from nexus.actors import HUMANS
 from nexus.clock import now
 from nexus.events import rules
-from nexus.events.limits import (
-    ANSWER_ID_PREFIX,
-    EVENT_ID_MAX,
-    EVIDENCE_REF_MAX,
-    RUN_MAX,
-    SUBJECT_MAX,
-)
+from nexus.events.checks import _check_lengths, _check_scalars, _text_list, parse_task_ref
+from nexus.events.effects import _apply_effects
+from nexus.events.limits import ANSWER_ID_PREFIX
 from nexus.events.rules import Envelope
+from nexus.events.runs import RUN_CLOSERS as RUN_CLOSERS
+from nexus.events.runs import _runs
 from nexus.models import Approval, Event, Task
-from nexus.permissions import Forbidden
 from nexus.tasks import service as tasks
 from nexus.tasks.rules import RuleViolation
 from nexus.validation import API_STRIP, has_unencodable
 
 log = logging.getLogger("nexus.events")
 
-# Returned by an effect that finds nothing left to do (it wrote nothing).
-ALREADY = object()
 
 RUN_OPEN_ATTEMPTS = 3
-EFFECT_ATTEMPTS = 3
+
+
 # Nom d'adaptateur (api, hermes, codex…) : jamais une valeur libre, qui pourrait porter un secret.
 _ORIGIN = re.compile(r"[a-z][a-z0-9-]{0,31}")
 
@@ -55,70 +50,6 @@ class EventNotFound(Exception):
         # Jamais la valeur reçue : elle pourrait être un secret collé par erreur.
         super().__init__(f"événement introuvable : {ref}" if ref.startswith("nx-evt-") else
                          "événement introuvable : référence invalide")
-
-
-def parse_task_ref(ref: str) -> int:
-    raw = ref.removeprefix("nx-task-")
-    if not re.fullmatch(r"[0-9]{1,12}", raw):
-        # La valeur reçue n'est jamais recopiée (elle pourrait être un secret).
-        raise RuleViolation("unknown_task", "référence de tâche invalide")
-    return int(raw)
-
-
-def _text_list(value: Any, name: str) -> list[str]:
-    # An adapter may pass a tuple: normalise to the list the database will re-read, otherwise the
-    # fingerprint (read-back, anti-noise) compares a tuple to a list.
-    if not isinstance(value, list | tuple) or not all(isinstance(v, str) for v in value):
-        raise RuleViolation(f"invalid_{name}", f"{name} doit être une liste de textes")
-    return list(value)
-
-
-# (field, violation code, message): required text, then optional text. The received value is never
-# echoed in the message (it could be a secret).
-_REQUIRED_TEXT = (
-    ("actor", "invalid_actor", "actor doit être un texte"),
-    ("kind", "invalid_kind", "kind doit être un texte"),
-    ("subject", "invalid_subject", "subject doit être un texte"),
-)
-_OPTIONAL_TEXT = (
-    ("task", "invalid_task", "task doit être un texte ou absente"),
-    ("run", "invalid_run", "run doit être un texte ou absent"),
-    ("body", "invalid_body", "body doit être un texte ou absent"),
-)
-
-
-def _check_scalars(envelope: Envelope, actor_event_id: object) -> None:
-    """Refuse a wrong scalar type from a direct call (the API's Pydantic models guarantee them).
-
-    Only the type is checked: empty or unknown values keep the behaviour of `rules.validate`.
-    """
-    for name, code, message in _REQUIRED_TEXT:
-        if not isinstance(getattr(envelope, name), str):
-            raise RuleViolation(code, message)
-    for name, code, message in _OPTIONAL_TEXT:
-        value = getattr(envelope, name)
-        if value is not None and not isinstance(value, str):
-            raise RuleViolation(code, message)
-    if not isinstance(actor_event_id, str):
-        raise RuleViolation("invalid_event_id", "id doit être un texte")
-
-
-def _check_lengths(envelope: Envelope, actor_event_id: str) -> None:
-    """Refuse a value longer than the API accepts (same constants, same measure).
-
-    Run after the type checks, before redaction: the API measures the raw received length (the
-    evidence items after stripping, as `Ref` does). The value is never echoed.
-    """
-    if len(actor_event_id) > EVENT_ID_MAX:
-        raise RuleViolation("too_long_id", f"id : {EVENT_ID_MAX} caractères au plus")
-    if envelope.run is not None and len(envelope.run) > RUN_MAX:
-        raise RuleViolation("too_long_run", f"run : {RUN_MAX} caractères au plus")
-    if len(envelope.subject) > SUBJECT_MAX:
-        raise RuleViolation("too_long_subject", f"subject : {SUBJECT_MAX} caractères au plus")
-    if any(len(API_STRIP.validate_python(item)) > EVIDENCE_REF_MAX for item in envelope.evidence):
-        raise RuleViolation(
-            "too_long_evidence", f"evidence : {EVIDENCE_REF_MAX} caractères au plus par élément"
-        )
 
 
 def publish(
@@ -385,29 +316,6 @@ def _same(existing: Event, e: Envelope, task: Task | None) -> bool:
     )
 
 
-# Ce qui clôt ou suspend un run : après l'un d'eux, l'agent peut en ouvrir un autre.
-RUN_CLOSERS = frozenset({"done", "review", "failed", "handoff", "blocked"})
-
-
-def _runs(
-    session: Session, actor: str, task: Task, before_id: int | None = None
-) -> tuple[str | None, set[str | None]]:
-    """Runs de l'agent sur la tâche : (référence du run actif ou None, références closes).
-
-    Une clôture ne ferme que le run qu'elle nomme, et pour de bon : une clôture tardive d'un
-    ancien run ne libère pas le run actif, et un `working` tardif d'un run clos ne le rouvre pas.
-    """
-    query = select(Event).where(Event.actor == actor, Event.task_id == task.id)
-    if before_id is not None:
-        query = query.where(Event.id < before_id)
-    history = list(session.scalars(query.order_by(Event.id.desc())))
-    closed = {e.run_ref for e in history if e.kind in RUN_CLOSERS}
-    for previous in history:
-        if previous.kind == "working" and previous.run_ref not in closed:
-            return previous.run_ref, closed
-    return None, closed
-
-
 def _refuse_second_active_run(session: Session, e: Envelope, task: Task | None) -> None:
     """Un seul run actif par agent et par tâche (EVENT-PROTOCOL §4)."""
     if task is None:
@@ -447,147 +355,3 @@ def _refuse_noise(
                 "cet événement vient déjà d'être publié à l'identique : rien de nouveau, "
                 "rien à publier",
             )
-
-
-def _stale_run(session: Session, event: Event, task: Task) -> str | None:
-    """Si l'événement ne vise pas le run actif de l'agent, la raison de l'ignorer.
-
-    Ex. : `done(r1)` arrivé après `working(r2)` ne clôt pas la tâche pendant que r2 tourne ;
-    un `done` sans run non plus, puisque rien ne dit qu'il ne vient pas de r1.
-    """
-    active, closed = _runs(session, event.actor, task, before_id=event.id)
-    if event.kind == "working":
-        if event.run_ref in closed:
-            return f"le run {event.run_ref} de {event.actor} est déjà clos : ouvre un nouveau run"
-        return None
-    if active is None or event.run_ref == active:
-        # Pas d'autre run en cours : une clôture tardive d'un run déjà clos (done(r1) après
-        # handoff(r1)) ne rejoue pas pour autant son effet.
-        if event.run_ref is not None and event.run_ref in closed:
-            return f"le run {event.run_ref} de {event.actor} est déjà clos : ouvre un nouveau run"
-        return None
-    if event.run_ref is None:
-        return (
-            f"ne nomme aucun run, alors que le run actif de {event.actor} est {active} : "
-            "précise le run concerné"
-        )
-    return (
-        f"concerne le run {event.run_ref}, alors que le run actif de {event.actor} "
-        f"est {active}"
-    )
-
-
-def _apply_effects(session: Session, event: Event, e: Envelope, task: Task) -> list[dict]:
-    """Traduit l'événement en mutations de la tâche, chacune tentée dans un point de sauvegarde."""
-    effects: list[dict] = []
-
-    def attempt(
-        action: str, fn, watched: tuple[str, ...] = (), unchanged: str = ""
-    ) -> str:
-        """Try `fn` in a savepoint, retrying on a version conflict. Returns what happened:
-        "applied", "refused" (the reason is consigned), "gave_up", or "already" when `fn`
-        reports that nothing was left to do (it wrote nothing)."""
-        # Un conflit de version (la tâche a changé depuis sa lecture) n'est pas un refus : on
-        # relit la tâche et on retente, les règles jugeant alors son état à jour.
-        for _ in range(EFFECT_ATTEMPTS):
-            savepoint = session.begin_nested()
-            try:
-                before = [getattr(task, f) for f in watched]
-                outcome = fn()
-                if outcome is ALREADY:
-                    savepoint.rollback()
-                    return "already"
-                if watched and before == [getattr(task, f) for f in watched]:
-                    # update_task writes nothing when nothing differs: not an applied effect.
-                    raise RuleViolation("effect_unchanged", unchanged)
-                savepoint.commit()
-                effects.append({"action": action, "applied": True})
-                return "applied"
-            except StaleDataError:
-                savepoint.rollback()
-                session.refresh(task)
-            except (RuleViolation, Forbidden, IntegrityError) as exc:
-                # A right the actor never has (ADR-020) is refused like a broken rule: the event
-                # stays recorded, only its effect on the task is not applied.
-                savepoint.rollback()
-                session.refresh(task)
-                message = exc.message if isinstance(exc, RuleViolation | Forbidden) else (
-                    "conflit en base"
-                )
-                effects.append({"action": action, "applied": False, "reason": message})
-                return "refused"
-        effects.append({"action": action, "applied": False,
-                        "reason": "conflit en base : trop d'écritures concurrentes"})
-        return "gave_up"
-
-    def move(target: str, **kwargs: Any) -> None:
-        stale = _stale_run(session, event, task)
-        if stale:
-            effects.append({"action": f"status:{target}", "applied": False, "reason": stale})
-            return
-        evidence = kwargs.get("evidence")
-
-        def change() -> object:
-            # Judged on every attempt, on the task as just read: after a version conflict the
-            # task may already be in the target status (a defence: see the design, §2).
-            session.refresh(task)
-            if task.status == target:
-                return ALREADY
-            tasks.change_status(session, task, target, event.actor, **kwargs)
-            return None
-
-        # Review: an already-reviewed task still takes the evidence, and says nothing else.
-        if attempt(f"status:{target}", change) != "already":
-            return
-        if not (target == "review" and evidence):
-            effects.append(
-                {"action": f"status:{target}", "applied": False, "reason": f"déjà en {target}"}
-            )
-        if evidence and target in ("review", "done"):
-            # Its own attempt: a refusal of the evidence is its own effect, never the status's.
-            attempt("evidence", lambda: tasks.attach_evidence(
-                session, task, evidence, event.actor
-            ))
-
-    match event.kind:
-        case "claimed":
-            session.refresh(task)  # jugé sur l'état courant, pas sur la lecture initiale
-            if task.lead_agent != event.actor:
-                attempt(
-                    "lead_agent",
-                    lambda: tasks.update_task(
-                        session, task, {"lead_agent": event.actor}, event.actor
-                    ),
-                    watched=("lead_agent",),
-                    unchanged=f"{event.actor} est déjà l'agent principal",
-                )
-        case "working":
-            move("in_progress")
-        case "blocked":
-            follow_up = e.payload.get("follow_up_at")
-            move(
-                "blocked",
-                block_cause=rules.cause_of(e),
-                block_plan=e.payload.get("plan"),
-                follow_up_at=datetime.fromisoformat(follow_up) if follow_up else None,
-            )
-        case "review":
-            move("review", evidence=event.evidence)
-        case "done":
-            move("done", evidence=event.evidence)
-        case "handoff":
-            stale = _stale_run(session, event, task)
-            if stale:
-                effects.append({"action": "handoff", "applied": False, "reason": stale})
-                return effects
-            session.refresh(task)  # judged on the current task, not the copy read before the event
-            lead, next_action = e.needs[0], e.payload["next_action"].strip()
-            attempt(
-                "handoff",
-                lambda: tasks.update_task(
-                    session, task, {"lead_agent": lead, "next_action": next_action}, event.actor
-                ),
-                watched=("lead_agent", "next_action"),
-                unchanged=f"{lead} a déjà la main, avec la même prochaine action",
-            )
-    return effects

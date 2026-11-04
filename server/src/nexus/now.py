@@ -66,7 +66,7 @@ def _transitions(session: Session, tasks: list[Task], status: str) -> dict[int, 
 def _open_runs(session: Session) -> dict[str, Event]:
     """Par agent, le `working` le plus récent dont le run n'est pas clos.
 
-    Même règle que `events.service._runs` : une clôture ne ferme que le run qu'elle nomme,
+    Même règle que `events.runs._runs` : une clôture ne ferme que le run qu'elle nomme,
     pour cet agent et cette tâche, et pour de bon (un `working` tardif ne le rouvre pas).
     Le filtre se fait en SQL : seuls les `working` encore ouverts sont lus, pas l'historique.
     """
