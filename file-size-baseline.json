@@ -1,7 +1,6 @@
 {
   "files": {
     "server/src/nexus/demo_agent.py": 419,
-    "server/src/nexus/serving.py": 437,
     "server/src/nexus/tasks/service.py": 528
   },
   "exceptions": {
