@@ -4,7 +4,6 @@
     "server/src/nexus/events/service.py": 593,
     "server/src/nexus/serving.py": 437,
     "server/src/nexus/tasks/service.py": 528,
-    "server/tests/test_demo_agent.py": 873,
     "web/src/live.test.ts": 741
   },
   "exceptions": {
