@@ -1,7 +1,6 @@
 {
   "files": {
-    "server/src/nexus/demo_agent.py": 419,
-    "server/src/nexus/tasks/service.py": 528
+    "server/src/nexus/demo_agent.py": 419
   },
   "exceptions": {
     "server/src/nexus/demo_agent.py": "Reste un seul fichier : sa docstring dit qu'il doit pouvoir se copier seul (issue #39)."

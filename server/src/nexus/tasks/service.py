@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import logging
-import re
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus import permissions, secrets
@@ -15,16 +13,36 @@ from nexus.clock import now
 from nexus.events.limits import EVIDENCE_REF_MAX
 from nexus.models import Task, TaskComment, TaskDependency, TaskHistory
 from nexus.tasks import rules
+from nexus.tasks.checks import (
+    _checked_evidence,
+    _drop_blank_expectation,
+    _follows_ref,
+    parse_follows,
+)
+from nexus.tasks.queries import (
+    TaskNotFound,
+    _advanced_dependents,
+    _depends_on,
+    _other_main_in_progress,
+    _pending_dependencies,
+    get_task,
+)
+from nexus.tasks.queries import (
+    comments_of as comments_of,
+)
+from nexus.tasks.queries import (
+    dependencies_of as dependencies_of,
+)
+from nexus.tasks.queries import (
+    history_of as history_of,
+)
+from nexus.tasks.queries import (
+    list_tasks as list_tasks,
+)
 from nexus.tasks.rules import RuleViolation
-from nexus.validation import API_STRIP, has_unencodable
+from nexus.validation import API_STRIP
 
 log = logging.getLogger("nexus.tasks")
-
-
-class TaskNotFound(Exception):
-    def __init__(self, ref: str) -> None:
-        super().__init__(f"tâche introuvable : {ref}")
-        self.ref = ref
 
 
 UPDATABLE = frozenset({
@@ -38,33 +56,6 @@ UPDATABLE = frozenset({
 ROLE_STATUSES = frozenset({"backlog", "todo", "in_progress"})
 
 
-def _drop_blank_expectation(values: dict[str, Any]) -> dict[str, Any]:
-    """Une preuve attendue réduite à un secret masqué n'exprime aucune attente : on l'efface."""
-    if "expected_evidence" in values and secrets.is_blank(values["expected_evidence"]):
-        values = values | {"expected_evidence": None}
-    return values
-
-
-_FOLLOWS = re.compile(r"nx-task-[0-9]{1,12}")
-
-
-def parse_follows(value: Any) -> int | None:
-    """The task id behind a `follows` reference, or None for no link.
-
-    ASCII digits only, read as a number once: `nx-task-0007` is task 7, and everything after
-    (comparison, lookup, history) works on that integer, never on the received text.
-    """
-    if value is None:
-        return None
-    if not isinstance(value, str) or not _FOLLOWS.fullmatch(value):
-        raise RuleViolation("invalid_follows", "follows : référence de tâche invalide")
-    return int(value.removeprefix("nx-task-"))
-
-
-def _follows_ref(task_id: int | None) -> str | None:
-    return None if task_id is None else f"nx-task-{task_id}"
-
-
 def _follows_target(session: Session, task_id: int) -> Task:
     """The task a follow-up links to: it must exist (404) and be done (409)."""
     target = get_task(session, task_id)
@@ -75,40 +66,6 @@ def _follows_target(session: Session, task_id: int) -> Task:
             "tâche terminée",
         )
     return target
-
-
-def get_task(session: Session, task_id: int) -> Task:
-    task = session.get(Task, task_id)
-    if task is None:
-        raise TaskNotFound(f"nx-task-{task_id}")
-    return task
-
-
-def list_tasks(
-    session: Session,
-    *,
-    statuses: list[str] | None = None,
-    agent: str | None = None,
-    owner: str | None = None,
-    priority: str | None = None,
-    role: str | None = None,
-    due_before: datetime | None = None,
-) -> list[Task]:
-    query = select(Task).order_by(Task.updated_at.desc(), Task.id.desc())
-    if statuses:
-        query = query.where(Task.status.in_(statuses))
-    if owner:
-        query = query.where(Task.human_owner == owner)
-    if priority:
-        query = query.where(Task.priority == priority)
-    if role:
-        query = query.where(Task.operation_role == role)
-    tasks = list(session.scalars(query))
-    if agent:
-        tasks = [t for t in tasks if t.lead_agent == agent or agent in t.collaborators]
-    if due_before:
-        tasks = [t for t in tasks if t.due_at is not None and t.due_at < due_before]
-    return tasks
 
 
 def create_task(session: Session, data: dict[str, Any], actor: str) -> Task:
@@ -334,26 +291,6 @@ def add_comment(session: Session, task: Task, actor: str, body: str) -> TaskComm
     return comment
 
 
-def comments_of(session: Session, task: Task) -> list[TaskComment]:
-    return list(session.scalars(
-        select(TaskComment).where(TaskComment.task_id == task.id).order_by(TaskComment.id)
-    ))
-
-
-def history_of(session: Session, task: Task) -> list[TaskHistory]:
-    return list(session.scalars(
-        select(TaskHistory).where(TaskHistory.task_id == task.id).order_by(TaskHistory.id)
-    ))
-
-
-def dependencies_of(session: Session, task: Task) -> list[int]:
-    return list(session.scalars(
-        select(TaskDependency.depends_on_id)
-        .where(TaskDependency.task_id == task.id)
-        .order_by(TaskDependency.depends_on_id)
-    ))
-
-
 def add_dependency(session: Session, task: Task, other: Task, actor: str) -> None:
     if task.id == other.id:
         raise RuleViolation("self_dependency", "une tâche ne peut pas dépendre d'elle-même")
@@ -375,24 +312,6 @@ def add_dependency(session: Session, task: Task, other: Task, actor: str) -> Non
     session.add(TaskDependency(task_id=task.id, depends_on_id=other.id))
     task.updated_at = now()
     _record(session, task, actor, "linked", {"depends_on": [None, other.ref]})
-
-
-def _checked_evidence(evidence: object) -> list[str]:
-    """Checks evidence from a direct caller as the API does and returns the stripped items.
-
-    Texts only, encodable, stripped as Pydantic strips, none blank. The API refuses a blank
-    item (422) and publish() answers invalid_evidence: a direct caller gets no silent drop.
-    """
-    if not isinstance(evidence, list | tuple) or not all(isinstance(e, str) for e in evidence):
-        raise RuleViolation("invalid_evidence", "evidence : liste de textes attendue")
-    if has_unencodable(list(evidence)):
-        raise RuleViolation(
-            "invalid_value", "valeur non encodable : demi-paire UTF-16, NaN ou Infinity"
-        )
-    stripped = [API_STRIP.validate_python(e) for e in evidence]
-    if not all(stripped):
-        raise RuleViolation("invalid_evidence", "evidence : éléments non vides requis")
-    return stripped
 
 
 def attach_evidence(session: Session, task: Task, evidence: list[str], actor: str) -> None:
@@ -433,62 +352,6 @@ def remove_dependency(session: Session, task: Task, other: Task, actor: str) -> 
     session.delete(link)
     task.updated_at = now()
     _record(session, task, actor, "unlinked", {"depends_on": [other.ref, None]})
-
-
-def _advanced_dependents(session: Session, task: Task) -> list[str]:
-    rows = session.execute(
-        select(Task.id, Task.status)
-        .join(TaskDependency, TaskDependency.task_id == Task.id)
-        .where(TaskDependency.depends_on_id == task.id)
-        .order_by(Task.id)
-    )
-    return [
-        f"nx-task-{dep_id} ({status})"
-        for dep_id, status in rows
-        if status in rules.GATED_BY_DEPENDENCIES
-    ]
-
-
-def _pending_dependencies(session: Session, task: Task) -> list[str]:
-    rows = session.execute(
-        select(Task.id, Task.status)
-        .join(TaskDependency, TaskDependency.depends_on_id == Task.id)
-        .where(TaskDependency.task_id == task.id)
-        .order_by(Task.id)
-    )
-    return [
-        f"nx-task-{dep_id} ({status})"
-        for dep_id, status in rows
-        if status not in rules.DEPENDENCY_RESOLVED
-    ]
-
-
-def _depends_on(session: Session, start: int, target: int) -> bool:
-    """`start` dépend-elle, directement ou non, de `target` ?"""
-    seen, stack = set(), [start]
-    while stack:
-        current = stack.pop()
-        if current == target:
-            return True
-        if current in seen:
-            continue
-        seen.add(current)
-        stack.extend(session.scalars(
-            select(TaskDependency.depends_on_id).where(TaskDependency.task_id == current)
-        ))
-    return False
-
-
-def _other_main_in_progress(session: Session, task: Task) -> bool:
-    query = select(Task.id).where(
-        Task.human_owner == task.human_owner,
-        Task.status == "in_progress",
-        Task.operation_role == "main",
-        Task.id != task.id,
-    )
-    # Pas d'écriture anticipée des changements en cours : la règle doit répondre avant l'index.
-    with session.no_autoflush:
-        return session.scalar(query) is not None
 
 
 def _record(session: Session, task: Task, actor: str, action: str, changes: dict) -> None:
