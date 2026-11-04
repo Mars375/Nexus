@@ -55,7 +55,8 @@ test('créer, déplacer, commenter et filtrer une tâche', async ({ page }) => {
 
   await pane.getByLabel('Agent principal').selectOption('helios')
   await pane.getByRole('button', { name: 'Enregistrer' }).click()
-  await expect(page.getByText('Modifications enregistrées')).toBeVisible()
+  // Premier enregistrement sur un serveur neuf : échec intermittent en CI avec les 5 s par défaut (#154).
+  await expect(page.getByText('Modifications enregistrées')).toBeVisible({ timeout: 15_000 })
   // L'historique suit tout de suite, sans attendre le rafraîchissement périodique (10 s).
   await expect(pane.getByText('Loïc a confié la tâche à Helios')).toBeVisible({ timeout: 3_000 })
   await expect(pane.getByText('Agent principal : Helios')).toBeVisible()
