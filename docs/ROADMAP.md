@@ -59,7 +59,7 @@ Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un 
 - **Process agents :** conventions de branches/PR/langue, fusion automatique quand les relectures sont OK, routage de modèles (sonnet principal, architect/reviewer en Opus) (PR #34, #45, #73, #96, #120).
 - **Découpage (#39) :** tests de l'API des événements (#89) et de `Floor` (#91) scindés par thème, `TaskPane.tsx` (#103) et `iso.ts` (#105) séparés par sous-modules, sans changer un test ni l'API publique ; puis `secrets.py` (#150), `serving.py` (#157), `events/service.py` (#158) et `tasks/service.py` (#159) en modules frères et les gros fichiers de tests (`test_secrets` #151, `test_serving` #152, `test_approvals_answer` #153, `test_demo_agent` #155, `live.test.ts` #156), tous en déplacements purs prouvés (AST identique, aucune ligne perdue, mêmes identifiants de tests) ; seuil de 400 lignes de code et 600 de test inscrit dans `AGENTS.md` (#108) et appliqué par `pnpm check:size` (hook, CI et `pnpm test`, #149) avec une référence qui ne fait que baisser ; seule exception, `demo_agent.py` (419 lignes), qui doit rester copiable seul. Hors cette exception, plus aucun fichier de code au-dessus du seuil.
 
-**Sortie de Phase 1 :** Loïc clôt la Phase 1 le 2026-11-01. #101 (les identifiants générés restent refusés, décision du 2026-10-29 ; ajouts de détection #135 et consigne d'id #139), #126 (PR #140), #134 (PR #142) et #138 (PR #141) sont fermés ; la CI GitHub Actions (#130) est fusionnée. Le suivi P3 de #95 est soldé : #121, #122, #114, #123, #124 et #133 ; le point de #88 sur `touch_sessionmaker` a été écarté le 2026-10-22 ; le sur-masquage d'un chemin entier est accepté et documenté dans `docs/SECURITY.md` (#145). #144 (clé à barres obliques laissée en clair entre des mots de chemin) est corrigé par la PR #146, avec un résidu accepté d'environ 2 à 3 % de clés entières (2,2 à 2,8 % mesurés), au niveau d'une clé seule, documenté dans `docs/SECURITY.md`. Les résidus de cette règle (#147 : clés faites de segments de 1 à 2 caractères, tête de clé lisible quand la queue d'un chemin est avalée) sont des limites connues, documentées dans `docs/SECURITY.md` et acceptées par Loïc le 2026-11-04 ; #147 est fermée. Reste en suivi : #154 (test e2e instable en CI, délai élargi par #161). Sont faits : #15, #17, #57, #58 et #59 (PR #80, #85, #74, #88 et #76), #39 (seuil de taille dans `AGENTS.md`, PR #108), #47 (origine de la WebView, PR #112), #86 (P3 de #74 : point 1 couvert par #98, point 2 conservé sous dérogation ADR-021, point 3 vérifié sur Helios), #104 et #106 (fuites du scanner de secrets, PR #114 et #116), #107 (ticket WebSocket qui survivait à la suppression de son jeton, PR #115) et #125 (test e2e qui lisait le rôle d'opération avant sa résolution, PR #129).
+**Sortie de Phase 1 :** Loïc clôt la Phase 1 le 2026-11-01. #101 (les identifiants générés restent refusés, décision du 2026-10-29 ; ajouts de détection #135 et consigne d'id #139), #126 (PR #140), #134 (PR #142) et #138 (PR #141) sont fermés ; la CI GitHub Actions (#130) est fusionnée. Le suivi P3 de #95 est soldé : #121, #122, #114, #123, #124 et #133 ; le point de #88 sur `touch_sessionmaker` a été écarté le 2026-10-22 ; le sur-masquage d'un chemin entier est accepté et documenté dans `docs/SECURITY.md` (#145). #144 (clé à barres obliques laissée en clair entre des mots de chemin) est corrigé par la PR #146, avec un résidu accepté d'environ 2 à 3 % de clés entières (2,2 à 2,8 % mesurés), au niveau d'une clé seule, documenté dans `docs/SECURITY.md`. Les résidus de cette règle (#147 : clés faites de segments de 1 à 2 caractères, tête de clé lisible quand la queue d'un chemin est avalée) sont des limites connues, documentées dans `docs/SECURITY.md` et acceptées par Loïc le 2026-11-04 ; #147 est fermée. #154 (test e2e `work.spec.ts:31` : le toast « Modifications enregistrées » n'était pas visible après 5 s dans 2 exécutions de CI sur environ 40) est fermée sans cause démontrée, le 2026-11-05 : le délai de l'assertion est porté à 15 s (#161), et l'issue se rouvre avec le journal de CI si l'échec revient. Sont faits : #15, #17, #57, #58 et #59 (PR #80, #85, #74, #88 et #76), #39 (seuil de taille dans `AGENTS.md`, PR #108), #47 (origine de la WebView, PR #112), #86 (P3 de #74 : point 1 couvert par #98, point 2 conservé sous dérogation ADR-021, point 3 vérifié sur Helios), #104 et #106 (fuites du scanner de secrets, PR #114 et #116), #107 (ticket WebSocket qui survivait à la suppression de son jeton, PR #115) et #125 (test e2e qui lisait le rôle d'opération avant sa résolution, PR #129).
 
 ## Phase 2 — Exécution
 
@@ -95,6 +95,12 @@ Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un 
 **Livrables :** Tauri 2 encapsulant l'UI existante ; serveur FastAPI en sidecar ; origine de la WebView autorisée côté serveur (CORS REST + WebSocket, faite en phase 1, #112) ; icône de barre des tâches, notifications Windows, démarrage automatique ; installeur.
 
 **Critère de sortie :** Nexus s'ouvre comme une application Windows, sans navigateur, avec les mêmes vues.
+
+## Jalon transversal — Application mobile
+
+**Quand :** plus tard, au moment choisi par Loïc ; ne bloque aucune phase. Pas d'issue ni de cadrage pour l'instant.
+
+**Point de départ :** l'UI parle déjà uniquement à l'API (ADR-017) et le serveur sait écouter sur le tailnet (ADR-021), donc un navigateur mobile peut déjà joindre Nexus. À décider au cadrage : application installable (PWA ou Tauri mobile), notifications, vues prioritaires sur petit écran.
 
 ## Phase 4 — Inbox et planning
 
@@ -136,7 +142,7 @@ Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un 
 
 ## Prochaine action immédiate
 
-**Phase 1 :** close le 2026-11-01. **Suite :** ouvrir la Phase 2 (Exécution) au moment choisi par Loïc ; #154 reste en suivi.
+**Phase 1 :** close le 2026-11-01. **Suite :** ouvrir la Phase 2 (Exécution) au moment choisi par Loïc.
 
 ---
 
