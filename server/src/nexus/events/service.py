@@ -25,6 +25,7 @@ from nexus.events.checks import _check_lengths, _check_scalars, _text_list, pars
 from nexus.events.effects import _apply_effects
 from nexus.events.limits import ANSWER_ID_PREFIX
 from nexus.events.rules import Envelope
+from nexus.events.runrefs import check_run_refs
 from nexus.events.runs import RUN_CLOSERS as RUN_CLOSERS
 from nexus.events.runs import _runs
 from nexus.models import Approval, Event, Task
@@ -137,6 +138,7 @@ def publish(
 
     kind = rules.validate(envelope)
     task = _task(session, envelope.task)
+    check_run_refs(session, envelope, task)  # the `nx-run-` prefix is reserved (ADR-023)
 
     existing = session.scalar(
         select(Event).where(Event.actor == envelope.actor, Event.actor_event_id == actor_event_id)

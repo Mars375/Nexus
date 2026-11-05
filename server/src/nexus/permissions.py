@@ -72,3 +72,16 @@ def check_status(actor: str, target: str) -> None:
             "statut dropped : réservé aux humains ; propose l'abandon avec un événement "
             "needs_human",
         )
+
+
+def check_dispatch(actor: str) -> None:
+    """Handing work to an agent, or cancelling a run, is for humans only (ADR-023, D2).
+
+    An agent that wants more work asks with a `needs_human` event; it never starts a run.
+    """
+    if actor not in HUMANS:
+        raise Forbidden(
+            "human_only",
+            "confier une tâche ou annuler un run : réservé aux humains ; propose-le avec un "
+            "événement needs_human",
+        )

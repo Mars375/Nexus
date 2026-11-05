@@ -19,6 +19,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.actors import ACTORS
 from nexus.db import AwareDateTime, Base
+from nexus.runs.states import ACTIVE, STATUSES
 
 
 class AppMeta(Base):
@@ -210,3 +211,56 @@ class ActorToken(Base):
     @property
     def ref(self) -> str:
         return f"nx-tok-{self.id}"
+
+
+def _in_list(values: tuple[str, ...]) -> str:
+    return ", ".join(f"'{v}'" for v in values)
+
+
+class Run(Base):
+    """Work handed to an executor from Nexus (DATA-MODEL §2.5, ADR-023).
+
+    Lives next to the immutable event journal: the events of a run carry its reference
+    (`nx-run-<n>`), this row carries what events cannot (external reference, cancellation,
+    watch cursor). `executor` is the actor that signs the run's events, `agent` the one the work
+    is given to (they differ for Hermes: agent `helios`, executor `hermes`, ADR-023 D5).
+    """
+
+    __tablename__ = "runs"
+    __table_args__ = (
+        # A double click is one run (ADR-023, D1).
+        UniqueConstraint("dispatched_by", "client_key", name="uq_runs_dispatched_by_client_key"),
+        # One live run per agent and task, guaranteed by the database even under two requests.
+        Index(
+            "uq_runs_one_active_per_agent_task", "task_id", "agent", unique=True,
+            sqlite_where=text(f"status IN ({_in_list(ACTIVE)})"),
+        ),
+        CheckConstraint(f"status IN ({_in_list(STATUSES)})", name="ck_runs_status"),
+        CheckConstraint("length(client_key) BETWEEN 1 AND 128", name="ck_runs_client_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True)
+    executor: Mapped[str] = mapped_column(String(32))
+    agent: Mapped[str] = mapped_column(String(32))
+    dispatched_by: Mapped[str] = mapped_column(String(32))
+    client_key: Mapped[str] = mapped_column(String(128))
+    # What Loïc wrote, masked by the secret scanner before it is stored (ADR-006).
+    brief: Mapped[str] = mapped_column(Text)
+    workdir: Mapped[str | None] = mapped_column(Text)
+    external_ref: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16))
+    # The executor's own word for the state, shown as such and never interpreted (ADR-005).
+    native_status: Mapped[str | None] = mapped_column(String(64))
+    watch_cursor: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(AwareDateTime)
+    ended_at: Mapped[datetime | None] = mapped_column(AwareDateTime)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(AwareDateTime)
+    # Optimistic lock: a cancel and a finish that both started from the same state cannot both win.
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __mapper_args__ = {"version_id_col": version}
+
+    @property
+    def ref(self) -> str:
+        return f"nx-run-{self.id}"

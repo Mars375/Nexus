@@ -19,6 +19,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from nexus import backup, live, migrate, nodes
 from nexus import now as now_view
+from nexus.adapters.registry import AdapterRegistry
 from nexus.approvals import api as approvals_api
 from nexus.approvals.service import ApprovalNotFound
 from nexus.auth import tokens
@@ -32,6 +33,9 @@ from nexus.events.service import EventNotFound
 from nexus.hosts import HostCheckMiddleware
 from nexus.logs import AccessLogMiddleware
 from nexus.permissions import Forbidden
+from nexus.runs import api as runs_api
+from nexus.runs import supervisor
+from nexus.runs.service import RunNotFound
 from nexus.tasks import api as tasks_api
 from nexus.tasks.rules import RuleViolation
 from nexus.tasks.service import TaskNotFound
@@ -117,9 +121,13 @@ def create_app(
         app.state.nodes = nodes.pending_snapshot()
         first_read = asyncio.create_task(refresh_nodes(app))
         await asyncio.wait({first_read}, timeout=FIRST_NODES_READ_SECONDS)
+        # Runs that were being watched when the previous process stopped: tracking is lost, and
+        # nothing is relaunched on its own (ADR-023, D3).
+        supervisor.mark_lost(app.state.sessionmaker)
         tasks = [
             asyncio.create_task(backup_loop()),
             asyncio.create_task(nodes_loop(app, first_read)),
+            asyncio.create_task(supervisor.loop(app.state.sessionmaker, app.state.adapters)),
         ]
         try:
             yield
@@ -155,9 +163,12 @@ def create_app(
         HostCheckMiddleware, allowed_hosts=settings.allowed_hosts | settings.host_literals
     )
     app.state.settings = settings
+    # Empty by default: no executor is wired in this build (ADR-023, lot B), dispatching is a 409.
+    app.state.adapters = AdapterRegistry()
     app.include_router(tasks_api.router)
     app.include_router(events_api.router)
     app.include_router(approvals_api.router)
+    app.include_router(runs_api.router)
     app.include_router(now_view.router)
     # WebSocket: single-use ticket (#57); POST /api/ws-ticket itself requires a token.
     app.include_router(live.router)
@@ -191,6 +202,7 @@ def create_app(
     @app.exception_handler(TaskNotFound)
     @app.exception_handler(EventNotFound)
     @app.exception_handler(ApprovalNotFound)
+    @app.exception_handler(RunNotFound)
     def _not_found(_request: Request, exc: Exception) -> JSONResponse:
         return JSONResponse(
             status_code=404, content={"detail": {"code": "not_found", "message": str(exc)}}
