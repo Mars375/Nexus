@@ -39,7 +39,7 @@ Deux familles :
 ### 2. Claude Code, Codex, Orca (Phase 2)
 
 - Claude Code : sessions locales (`~/.claude`) ; Codex : `codex exec -p <profil>`, `~/.codex` ; Orca : CLI `orca`, worktrees/devcontainers.
-- `dispatch` : lance une session non interactive sur la tâche (brief = objectif + contexte + preuves attendues) ; l'agent publie ses événements via l'API Nexus.
+- `dispatch` : lance une session non interactive sur la tâche (brief = objectif + contexte + preuves attendues) ; l'adaptateur traduit la sortie de l'agent en événements Nexus (l'agent ne reçoit aucun jeton, ADR-023).
 - `watch` : suit le processus/la session ; relie `run ↔ session ↔ artefacts`.
 - **DONE ≠ preuve** : la preuve est relue, pas supposée.
 
