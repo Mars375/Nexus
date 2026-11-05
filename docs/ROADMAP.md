@@ -2,7 +2,7 @@
 
 **Version :** 0.2 (refonte : application autonome — ADR-011)
 **Date :** 2026-09-28
-**Mise à jour d'état :** 2026-11-04
+**Mise à jour d'état :** 2026-11-05
 
 ---
 
@@ -48,7 +48,7 @@
 
 **Critère de sortie :** Loïc gère ses tâches dans Nexus au quotidien ; un agent lancé à la main déclare `claimed` → `done` + preuve via l'API ; « retrouver l'état d'une tâche < 30 s ».
 
-### État au 2026-11-04
+### État au 2026-11-05
 
 Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un ensemble cohérent : découpage de `iso.ts` (#105) et de `TaskPane.tsx` (#103), cinq rondes tailnet confirmées sans rebind (#98), origine de la WebView autorisée côté serveur pour Tauri, REST et WebSocket (#112, qui ferme #47), seuil indicatif de taille des fichiers inscrit dans `AGENTS.md` (#108, qui ferme #39), puis les corrections du scanner de secrets (mots de passe d'URL #104 par #114, guillemets dans les valeurs #106 par #116), du ticket WebSocket lié à l'empreinte du jeton (#107 par #115), la stabilisation du test e2e qui lisait le rôle d'opération avant sa résolution (#125 par #129), les ajouts de détection du scanner (#101 par #135), la stabilisation du test de course des approbations (#138, #141) le test sur `last_used_at` après un 403 (#124), le masquage du scanner jusqu'au point fixe (#126 par #140), les bornes de temps relatives du scanner (#134 par #142), la consigne d'id d'événement court et lisible (#101 par #139), la CI GitHub Actions qui vérifie chaque PR (#130), CodeRabbit exigé seulement quand il est disponible (#143) les limites connues du scanner de secrets (#145) la clé à barres obliques écrite entre des mots de chemin (#144 par #146), le garde-fou automatique de taille de fichier (#149) et le découpage des derniers gros fichiers (#150 à #159).
 
@@ -100,7 +100,7 @@ Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un 
 
 **Quand :** plus tard, au moment choisi par Loïc ; ne bloque aucune phase. Pas d'issue ni de cadrage pour l'instant.
 
-**Point de départ :** l'UI parle déjà uniquement à l'API (ADR-017) et le serveur sait écouter sur le tailnet (ADR-021), donc un navigateur mobile peut déjà joindre Nexus. À décider au cadrage : application installable (PWA ou Tauri mobile), notifications, vues prioritaires sur petit écran.
+**Point de départ :** l'UI parle déjà uniquement à l'API (ADR-017) et le serveur sait écouter sur le tailnet (ADR-021). Le serveur ne sert pas l'interface : un téléphone atteint l'API, mais ne charge pas l'UI. À décider au cadrage : service de l'interface sur le tailnet, application installable (PWA ou Tauri mobile), notifications, vues prioritaires sur petit écran.
 
 ## Phase 4 — Inbox et planning
 
