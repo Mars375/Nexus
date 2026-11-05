@@ -71,7 +71,7 @@ L'unité de travail durable. Vit dans **`nexus.db`** (ADR-012).
 
 ### 2.5 Run — native (miroir d'un travail externe)
 
-Une exécution concrète, créée par « confier à » ou déclarée par un agent.
+Une exécution concrète, créée par « confier à » (table `runs`, ADR-023, pas encore implémentée) ; les événements du run porteront sa référence `nx-run-<n>`, préfixe réservé.
 
 | Champ | Notes |
 |---|---|
