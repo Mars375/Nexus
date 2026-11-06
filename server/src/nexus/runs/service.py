@@ -92,9 +92,10 @@ def create_run(
         rules.check_dispatchable(
             session, task, executor=data.executor, agent=data.agent, registry=registry
         )
-    except RuleViolation as exc:
+    except RuleViolation:
         # The click that won the race may have committed since the first look: it is a resend.
-        if exc.code == "run_already_active" and (replay := known()) is not None:
+        # Whatever rule it tripped, the winner's effects may be the cause: re-read the key first.
+        if (replay := known()) is not None:
             return replay
         raise
     run = Run(

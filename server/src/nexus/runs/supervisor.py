@@ -76,17 +76,18 @@ def _publish(
 
 
 def _finish(
-    factory: sessionmaker[Session], run: RunInfo, **changes: str | None
+    factory: sessionmaker[Session], run: RunInfo, *, strict: bool = False, **changes: str | None
 ) -> tuple[RunInfo, bool]:
     """Write what was learned about the run; returns its fresh snapshot and cancel flag.
 
     A status is written only from the state the supervisor started from: if a human changed the
     run since (a cancel), `StaleDataError` is raised and the run is read again on the next tick,
-    where the cancel wins. Other facts (reference, cursor) are written whatever happened.
+    where the cancel wins. Other facts (reference, cursor) are written whatever happened, unless
+    `strict`: the launch marker must not slip in after a cancel, or the executor would be started.
     """
     with factory() as session:
         row = session.get(Run, run.run_id)
-        if changes.get("status") is not None and row.version != run.version:
+        if (changes.get("status") is not None or strict) and row.version != run.version:
             raise StaleDataError("run modifié depuis sa lecture")
         service.update_run(session, row, **changes)
         session.commit()
@@ -110,13 +111,16 @@ def _journal_end(factory: sessionmaker[Session], run: RunInfo) -> str | None:
     supervisor just before a crash: the run follows the journal, it never contradicts it.
     """
     with factory() as session:
-        kind = session.scalar(
-            select(Event.kind)
+        last = session.execute(
+            select(Event.kind, Event.actor_event_id)
             .where(Event.run_ref == run.ref, Event.actor == run.executor,
                    Event.kind.in_(RUN_CLOSERS))
             .order_by(Event.id.desc()).limit(1)
-        )
-    return STATUS_OF_EVENT.get(kind) if kind else None
+        ).first()
+    if last is None:
+        return None
+    # The closing `failed` of a cancel is the supervisor's own: the run is `cancelled`, not failed.
+    return "cancelled" if last[1] == f"{run.ref}-cancelled" else STATUS_OF_EVENT.get(last[0])
 
 
 def mark_lost(factory: sessionmaker[Session]) -> None:
@@ -128,8 +132,8 @@ def mark_lost(factory: sessionmaker[Session]) -> None:
     with factory() as session:
         ids = list(session.scalars(select(Run.id).where(Run.status.in_(WATCHED))))
     for run_id in ids:
-        run, cancel_requested = _load(factory, run_id)
-        ended = None if cancel_requested else _journal_end(factory, run)
+        run, _ = _load(factory, run_id)
+        ended = _journal_end(factory, run)
         if ended is not None:
             _finish(factory, run, status=ended)
             continue
@@ -193,7 +197,7 @@ def _dispatch(
     The marker is written BEFORE the call: if the process dies or the write after it fails, the
     outcome is uncertain and the launch is never repeated (see `_step`).
     """
-    run, _ = _finish(factory, run, native_status=DISPATCHING)
+    run, _ = _finish(factory, run, strict=True, native_status=DISPATCHING)
     try:
         sent = adapter.dispatch(run)
     except Exception as exc:
@@ -223,6 +227,9 @@ def _watch(factory: sessionmaker[Session], adapter: Adapter, run: RunInfo) -> No
         step = STATUS_OF_EVENT.get(kept or "")
         if step is not None and status not in SETTLED:
             status = step  # the journal closes a run for good: a late `working` reopens nothing
+    ended = _journal_end(factory, run)
+    if ended is not None:
+        status = ended  # a close published meanwhile (API, earlier tick) wins over what we saw
     _finish(
         factory, run, status=status, native_status=result.native_status,
         watch_cursor=_safe_cursor(result.cursor),

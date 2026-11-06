@@ -199,3 +199,90 @@ def test_a_cancel_of_a_run_never_launched_needs_no_adapter(client):
     tick(client)
 
     assert row(client).status == "cancelled"
+
+
+# --- Third review: cancel never overwritten, the journal wins, resends always replayed ------
+
+
+def test_a_cancel_posed_before_the_launch_marker_stops_the_launch(client, monkeypatch):
+    adapter = register(client)
+    dispatch(client, make_task(client))
+    real = supervisor._ready_code
+
+    def cancelled_meanwhile(*args):
+        client.post("/api/runs/nx-run-1/cancel")
+        return real(*args)
+
+    monkeypatch.setattr(supervisor, "_ready_code", cancelled_meanwhile)
+
+    tick(client)
+
+    assert adapter.dispatched == [] and row(client).cancel_requested_at is not None
+    monkeypatch.setattr(supervisor, "_ready_code", real)
+    tick(client)
+    assert row(client).status == "cancelled"
+
+
+def test_a_failed_launch_never_overwrites_a_concurrent_cancel(client):
+    adapter = register(client)
+    dispatch(client, make_task(client))
+    adapter.fail_dispatch = True
+    adapter.on_dispatch = lambda: client.post("/api/runs/nx-run-1/cancel")
+
+    tick(client)
+
+    first = row(client)
+    assert first.status != "failed" and first.cancel_requested_at is not None
+    adapter.on_dispatch = None
+    tick(client)
+    assert row(client).status == "cancelled"
+
+
+def test_a_late_working_does_not_reopen_a_run_the_journal_already_closed(client):
+    adapter = register(client, adapter=FakeAdapter(
+        [RunEvent(seq=1, at=T1, kind="working", subject="encore")]))
+    task = make_task(client)
+    dispatch(client, task)
+    adapter.on_watch = lambda: as_codex(client, "failed", task, run="nx-run-1", body="cause")
+
+    tick(client)
+
+    assert row(client).status == "failed"
+
+
+def test_a_lost_run_with_a_cancel_already_in_the_journal_is_not_marked_unknown(client):
+    register(client)
+    task = make_task(client)
+    dispatch(client, task)
+    client.post("/api/runs/nx-run-1/cancel")
+    closed = as_codex(
+        client, "failed", task, run="nx-run-1", body="annulé", id="nx-run-1-cancelled")
+    assert closed.status_code == 201
+
+    supervisor.mark_lost(client.app.state.sessionmaker)
+
+    assert row(client).status == "cancelled"
+    assert [e["kind"] for e in events_of(client, task)] == ["failed"]
+
+
+def test_a_resend_is_replayed_whatever_rule_the_winner_changed(client, monkeypatch):
+    from nexus.runs import rules
+    from nexus.tasks.rules import RuleViolation
+
+    register(client)
+    task = make_task(client)
+    real = rules.check_dispatchable
+    state = {"first": True}
+
+    def winner_first(*args, **kwargs):
+        if state["first"]:
+            state["first"] = False
+            assert dispatch(client, task).status_code == 201  # the click that won the race
+            raise RuleViolation("executor_busy", "pris par le gagnant")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(rules, "check_dispatchable", winner_first)
+
+    res = dispatch(client, task)
+
+    assert res.status_code == 200 and res.json()["id"] == "nx-run-1"
