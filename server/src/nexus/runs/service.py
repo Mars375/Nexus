@@ -111,6 +111,11 @@ def create_run(
         # carries our key it is the same click, else another run holds the agent.
         if (replay := known()) is not None:
             return replay
+        # Lost on one of the live-run indexes: judge again on what the winner committed, so the
+        # refusal names the right rule (same agent on the task, or executor already busy).
+        rules.check_dispatchable(
+            session, task, executor=data.executor, agent=data.agent, registry=registry
+        )
         raise rules.already_active("un autre run") from exc
     return run, True
 

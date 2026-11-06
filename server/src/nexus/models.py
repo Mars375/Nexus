@@ -235,6 +235,11 @@ class Run(Base):
             "uq_runs_one_active_per_agent_task", "task_id", "agent", unique=True,
             sqlite_where=text(f"status IN ({_in_list(ACTIVE)})"),
         ),
+        # ... and one per executor whatever the task (ADR-023, D7).
+        Index(
+            "uq_runs_one_active_per_executor", "executor", unique=True,
+            sqlite_where=text(f"status IN ({_in_list(ACTIVE)})"),
+        ),
         CheckConstraint(f"status IN ({_in_list(STATUSES)})", name="ck_runs_status"),
         CheckConstraint("length(client_key) BETWEEN 1 AND 128", name="ck_runs_client_key"),
     )

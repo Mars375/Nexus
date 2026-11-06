@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 
 from sqlalchemy import or_, select
 from sqlalchemy.exc import OperationalError
@@ -23,15 +24,18 @@ from nexus.adapters.registry import AdapterRegistry
 from nexus.clock import now
 from nexus.events import service as events
 from nexus.events.rules import Envelope
-from nexus.models import Run
-from nexus.runs import service
-from nexus.runs.states import CANCELLABLE, STATUS_OF_EVENT, WATCHED
+from nexus.events.runs import RUN_CLOSERS
+from nexus.models import Event, Run, Task
+from nexus.runs import rules, service
+from nexus.runs.states import CANCELLABLE, SETTLED, STATUS_OF_EVENT, WATCHED
 from nexus.tasks.rules import RuleViolation
 
 log = logging.getLogger("nexus.runs")
 
 POLL_SECONDS = 2.0
 CURSOR_MAX = 512
+# `native_status` written before the executor is reached: a launch of unknown outcome.
+DISPATCHING = "dispatching"
 # Transient: the run is left as it was and retried on the next tick.
 TRANSIENT = (StaleDataError, OperationalError)
 
@@ -99,14 +103,36 @@ def _own_event(kind: str, subject: str, **payload: object) -> RunEvent:
     return RunEvent(seq=0, at=now(), kind=kind, subject=subject, payload=dict(payload))
 
 
+def _journal_end(factory: sessionmaker[Session], run: RunInfo) -> str | None:
+    """The status the journal already gives the run, from its latest closing event, else None.
+
+    Covers an end published through the API by the executor itself, and one published by the
+    supervisor just before a crash: the run follows the journal, it never contradicts it.
+    """
+    with factory() as session:
+        kind = session.scalar(
+            select(Event.kind)
+            .where(Event.run_ref == run.ref, Event.actor == run.executor,
+                   Event.kind.in_(RUN_CLOSERS))
+            .order_by(Event.id.desc()).limit(1)
+        )
+    return STATUS_OF_EVENT.get(kind) if kind else None
+
+
 def mark_lost(factory: sessionmaker[Session]) -> None:
     """At startup: every run that was being watched becomes `unknown`, with an event (ADR-005).
 
-    Nothing is relaunched or guessed: a human decides what to do with it.
+    A run whose end is already in the journal keeps that end. Nothing is relaunched or guessed:
+    a human decides what to do with the others.
     """
     with factory() as session:
-        lost = [info_of(r) for r in session.scalars(select(Run).where(Run.status.in_(WATCHED)))]
-    for run in lost:
+        ids = list(session.scalars(select(Run.id).where(Run.status.in_(WATCHED))))
+    for run_id in ids:
+        run, cancel_requested = _load(factory, run_id)
+        ended = None if cancel_requested else _journal_end(factory, run)
+        if ended is not None:
+            _finish(factory, run, status=ended)
+            continue
         event = _own_event(
             "unknown", "suivi perdu au redémarrage de Nexus", last_check_at=now().isoformat()
         )
@@ -122,30 +148,71 @@ def _safe_cursor(cursor: str | None) -> str | None:
     return cursor
 
 
-def _cancel(factory: sessionmaker[Session], adapter: Adapter, run: RunInfo) -> None:
-    try:
-        adapter.cancel(run)
-    except Exception as exc:  # the adapter's message could carry a secret: type only
-        log.warning("annulation de %s : %s", run.ref, type(exc).__name__)
+def _fail(factory: sessionmaker[Session], adapter: Adapter, run: RunInfo, cause: str) -> None:
+    event = _own_event("failed", cause, cause=cause)
+    _publish(factory, run, adapter.name, event, f"{run.ref}-failed")
+    _finish(factory, run, status="failed")
+
+
+def _cancel(factory: sessionmaker[Session], adapter: Adapter | None, run: RunInfo) -> None:
+    """Stop the executor, then close the run. No adapter: the run was never launched."""
+    if adapter is not None:
+        try:
+            adapter.cancel(run)
+        except Exception as exc:  # the message could carry a secret: type only
+            # Still possibly running: the run stays open and the cancel is retried next tick.
+            log.warning("annulation de %s : %s", run.ref, type(exc).__name__)
+            return
     # `failed` closes the run in the event journal, so the executor may open another one.
     event = _own_event("failed", "run annulé", cause="annulé à la demande d'un humain")
-    _publish(factory, run, adapter.name, event, f"{run.ref}-cancelled")
+    _publish(factory, run, adapter.name if adapter else "nexus", event, f"{run.ref}-cancelled")
     _finish(factory, run, status="cancelled")
+
+
+def _launched(run: RunInfo) -> bool:
+    """The executor may have been reached: a reference, or the marker written before the call."""
+    return run.external_ref is not None or run.native_status == DISPATCHING
+
+
+def _ready_code(factory: sessionmaker[Session], run: RunInfo) -> str | None:
+    """Why the task could no longer start (a human finished it since), or None if it can."""
+    with factory() as session:
+        task = session.get(Task, int(run.task.removeprefix("nx-task-")))
+        try:
+            rules.check_task_ready(session, task)
+        except RuleViolation as exc:
+            return exc.code
+    return None
 
 
 def _dispatch(
     factory: sessionmaker[Session], adapter: Adapter, run: RunInfo
 ) -> tuple[RunInfo, bool] | None:
-    """Hand the work over once; the fresh snapshot and cancel flag, or None when it failed."""
+    """Hand the work over once; the fresh snapshot and cancel flag, or None when it failed.
+
+    The marker is written BEFORE the call: if the process dies or the write after it fails, the
+    outcome is uncertain and the launch is never repeated (see `_step`).
+    """
+    run, _ = _finish(factory, run, native_status=DISPATCHING)
     try:
         sent = adapter.dispatch(run)
     except Exception as exc:
         log.warning("lancement de %s : %s", run.ref, type(exc).__name__)
-        event = _own_event("failed", "lancement impossible", cause="lancement impossible")
-        _publish(factory, run, adapter.name, event, f"{run.ref}-failed")
-        _finish(factory, run, status="failed")
+        _fail(factory, adapter, run, "lancement impossible")
         return None
-    return _finish(factory, run, external_ref=sent.external_ref, native_status=sent.native_status)
+    if not isinstance(sent.external_ref, str) or secrets.redact(sent.external_ref)[1]:
+        # A reference the scanner would mask cannot be stored usable: stop the executor with the
+        # real one, which only lives in memory, and fail the run.
+        try:
+            adapter.cancel(replace(run, external_ref=sent.external_ref))
+        except Exception as exc:
+            log.warning("annulation de %s : %s", run.ref, type(exc).__name__)
+        _fail(factory, adapter, run, "référence de l'exécutant inutilisable")
+        return None
+    return _finish(
+        factory, run, external_ref=sent.external_ref,
+        native_status=sent.native_status or "started",
+    )
 
 
 def _watch(factory: sessionmaker[Session], adapter: Adapter, run: RunInfo) -> None:
@@ -153,7 +220,9 @@ def _watch(factory: sessionmaker[Session], adapter: Adapter, run: RunInfo) -> No
     status = None
     for event in sorted(result.events, key=lambda e: e.seq):
         kept = _publish(factory, run, adapter.name, event, f"{run.ref}-{event.seq}")
-        status = STATUS_OF_EVENT.get(kept or "", status)
+        step = STATUS_OF_EVENT.get(kept or "")
+        if step is not None and status not in SETTLED:
+            status = step  # the journal closes a run for good: a late `working` reopens nothing
     _finish(
         factory, run, status=status, native_status=result.native_status,
         watch_cursor=_safe_cursor(result.cursor),
@@ -163,14 +232,29 @@ def _watch(factory: sessionmaker[Session], adapter: Adapter, run: RunInfo) -> No
 def _step(factory: sessionmaker[Session], registry: AdapterRegistry, run_id: int) -> None:
     run, cancel_requested = _load(factory, run_id)
     adapter = registry.get(run.executor)
+    if cancel_requested and run.status in CANCELLABLE:
+        if adapter is not None or not _launched(run):
+            _cancel(factory, adapter, run)
+        return
     if adapter is None:
         return  # no adapter in this process: the run is left alone, not guessed at
-    if cancel_requested and run.status in CANCELLABLE:
-        _cancel(factory, adapter, run)
-        return
     if run.status not in WATCHED:
         return
+    ended = _journal_end(factory, run)
+    if ended is not None:
+        _finish(factory, run, status=ended)
+        return
     if run.status == "dispatched" and run.external_ref is None:
+        if run.native_status == DISPATCHING:
+            # A previous launch may have started the work and lost its trace: never repeat it.
+            event = _own_event("unknown", "lancement incertain", last_check_at=now().isoformat())
+            _publish(factory, run, adapter.name, event, f"{run.ref}-uncertain")
+            _finish(factory, run, status="unknown")
+            return
+        code = _ready_code(factory, run)
+        if code is not None:
+            _fail(factory, adapter, run, f"la tâche ne peut plus démarrer ({code})")
+            return
         dispatched = _dispatch(factory, adapter, run)
         if dispatched is None:
             return

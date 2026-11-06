@@ -159,7 +159,8 @@ def test_a_second_active_run_for_the_same_agent_is_refused(client):
     res = dispatch(client, task, client_key="k2")
 
     assert (res.status_code, code_of(res)) == (409, "run_already_active")
-    other_agent = dispatch(client, task, client_key="k3", agent="helios")
+    register(client, "hermes")
+    other_agent = dispatch(client, task, client_key="k3", executor="hermes", agent="helios")
     assert other_agent.status_code == 201  # one active run per (task, agent), not per task
 
 
@@ -173,10 +174,12 @@ def test_a_missing_run_or_task_is_a_404(client):
 
 def test_the_list_is_per_task_and_newest_first(client):
     register(client)
+    register(client, "hermes")
+    register(client, "claude")
     one, two = make_task(client), make_task(client)
     dispatch(client, one, client_key="a")
-    dispatch(client, one, client_key="b", agent="helios")
-    dispatch(client, two, client_key="c")
+    dispatch(client, one, client_key="b", executor="hermes", agent="helios")
+    dispatch(client, two, client_key="c", executor="claude", agent="claude")
 
     listed = client.get(f"/api/tasks/{one}/runs").json()
 

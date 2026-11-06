@@ -42,7 +42,8 @@ def test_0008_creates_runs_matching_the_models_and_drops_it_again(settings):
     conn = sqlite3.connect(settings.db_path)
     indexes = {r[1] for r in conn.execute("PRAGMA index_list('runs')")}
     conn.close()
-    assert {"uq_runs_one_active_per_agent_task", "ix_runs_task_id"} <= indexes
+    assert {"uq_runs_one_active_per_agent_task", "uq_runs_one_active_per_executor",
+            "ix_runs_task_id"} <= indexes
 
     command.downgrade(cfg, "0007")
 

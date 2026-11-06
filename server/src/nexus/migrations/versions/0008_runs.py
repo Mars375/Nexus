@@ -55,8 +55,14 @@ def upgrade() -> None:
         sqlite_where=sa.text(f"status IN ({_in_list(ACTIVE)})"),
     )
 
+    op.create_index(
+        "uq_runs_one_active_per_executor", "runs", ["executor"], unique=True,
+        sqlite_where=sa.text(f"status IN ({_in_list(ACTIVE)})"),
+    )
+
 
 def downgrade() -> None:
+    op.drop_index("uq_runs_one_active_per_executor", table_name="runs")
     # Only the runs are lost: tasks and events (which carry the run references) are untouched.
     op.drop_index("uq_runs_one_active_per_agent_task", table_name="runs")
     op.drop_index("ix_runs_task_id", table_name="runs")

@@ -33,6 +33,8 @@ class FakeAdapter:
         self.fail_dispatch = False
         self.on_dispatch = None  # called while the executor is being reached, like a click
         self.on_watch = None
+        self.fail_cancel = False
+        self.external_ref = None  # overrides the reference given at dispatch
 
     def probe(self) -> bool:
         return True
@@ -43,7 +45,8 @@ class FakeAdapter:
         if self.fail_dispatch:
             raise RuntimeError("boom token=secret")
         self.dispatched.append(run.ref)
-        return Dispatched(external_ref=f"ext-{run.run_id}", native_status="started")
+        return Dispatched(
+            external_ref=self.external_ref or f"ext-{run.run_id}", native_status="started")
 
     def watch(self, run) -> WatchResult:
         self.watched.append(run.ref)
@@ -52,6 +55,8 @@ class FakeAdapter:
         return WatchResult(events=tuple(self.script), cursor="c1", native_status="seen")
 
     def cancel(self, run) -> None:
+        if self.fail_cancel:
+            raise RuntimeError("cancel failed")
         self.cancelled.append(run.ref)
 
     def recover(self, run):

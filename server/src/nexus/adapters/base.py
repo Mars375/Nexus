@@ -2,8 +2,9 @@
 
 An adapter translates the native world of an executor (a process, a board, a log) into Nexus
 events. Its methods block (a process, a network call): the supervisor calls them from a worker
-thread. They never receive a Nexus token (D4) and never echo a secret in an exception message:
-the supervisor logs only the exception type.
+thread, one run after the other, so each must return in bounded time. They never receive a
+Nexus token (D4) and never echo a secret in an exception message: the supervisor logs only the
+exception type.
 """
 
 from __future__ import annotations

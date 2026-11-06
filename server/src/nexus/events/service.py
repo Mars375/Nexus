@@ -138,7 +138,6 @@ def publish(
 
     kind = rules.validate(envelope)
     task = _task(session, envelope.task)
-    check_run_refs(session, envelope, task)  # the `nx-run-` prefix is reserved (ADR-023)
 
     existing = session.scalar(
         select(Event).where(Event.actor == envelope.actor, Event.actor_event_id == actor_event_id)
@@ -153,6 +152,9 @@ def publish(
             f"id : déjà utilisé par {envelope.actor} pour un autre événement ; un événement "
             "ne se réécrit pas, publie une correction",
         )
+    # The `nx-run-` prefix is reserved (ADR-023). Judged on a NEW event only, like the rules below:
+    # an event stored before runs existed is replayed, not refused.
+    check_run_refs(session, envelope, task)
     # What only a NEW event must satisfy, judged after the read-back above so that an identical
     # resend of a known event is replayed (even after its deadline, or from before the rule).
     received = now()
