@@ -170,3 +170,72 @@ def test_a_run_whose_adapter_is_gone_is_left_alone(client):
 
     assert run_row(client).status == "dispatched"
 
+
+
+def test_a_cancel_posed_while_the_executor_is_watched_wins_over_its_end(client):
+    adapter = register(client)
+    task = make_task(client)
+    dispatch(client, task)
+    adapter.on_watch = lambda: client.post("/api/runs/nx-run-1/cancel")
+
+    tick(client)  # the executor says "done" after the human clicked cancel
+
+    row = run_row(client)
+    assert row.status != "done" and row.cancel_requested_at is not None
+    adapter.on_watch = None
+    tick(client)
+    assert run_row(client).status == "cancelled"
+    assert adapter.cancelled == ["nx-run-1"]
+
+
+def test_a_cancel_posed_while_the_executor_is_dispatched_stops_it_at_once(client):
+    adapter = register(client)
+    task = make_task(client)
+    dispatch(client, task)
+    adapter.on_dispatch = lambda: client.post("/api/runs/nx-run-1/cancel")
+
+    tick(client)
+
+    row = run_row(client)
+    assert (row.status, row.external_ref) == ("cancelled", "ext-1")  # the reference is kept
+    assert adapter.cancelled == ["nx-run-1"] and adapter.watched == []
+
+
+def test_after_blocked_the_agent_is_free_for_a_new_run(client):
+    script = [
+        RunEvent(seq=1, at=T1, kind="working", subject="go"),
+        RunEvent(seq=2, at=T2, kind="blocked", subject="bloqué", body="attente",
+                 payload={"plan": "relancer"}),
+    ]
+    register(client, adapter=FakeAdapter(script))
+    task = make_task(client)
+    dispatch(client, task)
+    tick(client)
+    first = run_row(client)
+    assert first.status == "blocked" and first.ended_at is not None
+
+    again = dispatch(client, task, client_key="k2")
+
+    assert again.status_code == 201
+    tick(client)
+    working = [e for e in events_of(client, task) if e["run"] == "nx-run-2"][0]
+    assert working["kind"] == "working" and working["effects"][0]["applied"] is True
+
+
+def test_a_lost_run_keeps_the_agent_until_it_is_cancelled(client):
+    adapter = register(client)
+    task = make_task(client)
+    dispatch(client, task)
+    supervisor.mark_lost(client.app.state.sessionmaker)
+
+    refused = dispatch(client, task, client_key="k2")
+    assert (refused.status_code, refused.json()["detail"]["code"]) == (409, "run_already_active")
+
+    client.post("/api/runs/nx-run-1/cancel")
+    tick(client)
+    assert adapter.cancelled == ["nx-run-1"]
+    assert dispatch(client, task, client_key="k2").status_code == 201
+    tick(client)
+    working = [e for e in events_of(client, task) if e["run"] == "nx-run-2"]
+    assert [e["kind"] for e in working][:2] == ["claimed", "working"]
+    assert working[1]["effects"][0]["applied"] is True

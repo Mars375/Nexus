@@ -31,11 +31,15 @@ class FakeAdapter:
         self.cancelled: list[str] = []
         self.watched: list[str] = []
         self.fail_dispatch = False
+        self.on_dispatch = None  # called while the executor is being reached, like a click
+        self.on_watch = None
 
     def probe(self) -> bool:
         return True
 
     def dispatch(self, run) -> Dispatched:
+        if self.on_dispatch:
+            self.on_dispatch()
         if self.fail_dispatch:
             raise RuntimeError("boom token=secret")
         self.dispatched.append(run.ref)
@@ -43,6 +47,8 @@ class FakeAdapter:
 
     def watch(self, run) -> WatchResult:
         self.watched.append(run.ref)
+        if self.on_watch:
+            self.on_watch()
         return WatchResult(events=tuple(self.script), cursor="c1", native_status="seen")
 
     def cancel(self, run) -> None:

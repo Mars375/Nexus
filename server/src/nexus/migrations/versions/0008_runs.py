@@ -17,7 +17,7 @@ depends_on = None
 STATUSES = (
     "dispatched", "running", "blocked", "review", "done", "failed", "cancelled", "unknown",
 )
-ACTIVE = ("dispatched", "running", "blocked")
+ACTIVE = ("dispatched", "running", "unknown")
 TS = sa.String(length=40)  # AwareDateTime : ISO-8601 UTC
 
 

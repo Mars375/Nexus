@@ -25,7 +25,7 @@ from nexus.events import service as events
 from nexus.events.rules import Envelope
 from nexus.models import Run
 from nexus.runs import service
-from nexus.runs.states import ACTIVE, CANCELLABLE, STATUS_OF_EVENT
+from nexus.runs.states import CANCELLABLE, STATUS_OF_EVENT, WATCHED
 from nexus.tasks.rules import RuleViolation
 
 log = logging.getLogger("nexus.runs")
@@ -41,6 +41,7 @@ def info_of(run: Run) -> RunInfo:
         run_id=run.id, ref=run.ref, task=f"nx-task-{run.task_id}", executor=run.executor,
         agent=run.agent, brief=run.brief, workdir=run.workdir, external_ref=run.external_ref,
         status=run.status, native_status=run.native_status, watch_cursor=run.watch_cursor,
+        version=run.version,
     )
 
 
@@ -70,10 +71,28 @@ def _publish(
         return stored.kind
 
 
-def _finish(factory: sessionmaker[Session], run_id: int, **changes: str | None) -> None:
+def _finish(
+    factory: sessionmaker[Session], run: RunInfo, **changes: str | None
+) -> tuple[RunInfo, bool]:
+    """Write what was learned about the run; returns its fresh snapshot and cancel flag.
+
+    A status is written only from the state the supervisor started from: if a human changed the
+    run since (a cancel), `StaleDataError` is raised and the run is read again on the next tick,
+    where the cancel wins. Other facts (reference, cursor) are written whatever happened.
+    """
     with factory() as session:
-        service.update_run(session, session.get(Run, run_id), **changes)
+        row = session.get(Run, run.run_id)
+        if changes.get("status") is not None and row.version != run.version:
+            raise StaleDataError("run modifié depuis sa lecture")
+        service.update_run(session, row, **changes)
         session.commit()
+        return info_of(row), row.cancel_requested_at is not None
+
+
+def _load(factory: sessionmaker[Session], run_id: int) -> tuple[RunInfo, bool]:
+    with factory() as session:
+        row = session.get(Run, run_id)
+        return info_of(row), row.cancel_requested_at is not None
 
 
 def _own_event(kind: str, subject: str, **payload: object) -> RunEvent:
@@ -86,14 +105,14 @@ def mark_lost(factory: sessionmaker[Session]) -> None:
     Nothing is relaunched or guessed: a human decides what to do with it.
     """
     with factory() as session:
-        lost = [info_of(r) for r in session.scalars(select(Run).where(Run.status.in_(ACTIVE)))]
+        lost = [info_of(r) for r in session.scalars(select(Run).where(Run.status.in_(WATCHED)))]
     for run in lost:
         event = _own_event(
             "unknown", "suivi perdu au redémarrage de Nexus", last_check_at=now().isoformat()
         )
         # Event first, then status: a crash in between is replayed (the event id is fixed).
         _publish(factory, run, "nexus", event, f"{run.ref}-lost")
-        _finish(factory, run.run_id, status="unknown")
+        _finish(factory, run, status="unknown")
 
 
 def _safe_cursor(cursor: str | None) -> str | None:
@@ -111,22 +130,22 @@ def _cancel(factory: sessionmaker[Session], adapter: Adapter, run: RunInfo) -> N
     # `failed` closes the run in the event journal, so the executor may open another one.
     event = _own_event("failed", "run annulé", cause="annulé à la demande d'un humain")
     _publish(factory, run, adapter.name, event, f"{run.ref}-cancelled")
-    _finish(factory, run.run_id, status="cancelled")
+    _finish(factory, run, status="cancelled")
 
 
-def _dispatch(factory: sessionmaker[Session], adapter: Adapter, run: RunInfo) -> RunInfo | None:
-    """Hand the work over once. None when it failed (the run is then `failed`)."""
+def _dispatch(
+    factory: sessionmaker[Session], adapter: Adapter, run: RunInfo
+) -> tuple[RunInfo, bool] | None:
+    """Hand the work over once; the fresh snapshot and cancel flag, or None when it failed."""
     try:
         sent = adapter.dispatch(run)
     except Exception as exc:
         log.warning("lancement de %s : %s", run.ref, type(exc).__name__)
         event = _own_event("failed", "lancement impossible", cause="lancement impossible")
         _publish(factory, run, adapter.name, event, f"{run.ref}-failed")
-        _finish(factory, run.run_id, status="failed")
+        _finish(factory, run, status="failed")
         return None
-    _finish(factory, run.run_id, external_ref=sent.external_ref, native_status=sent.native_status)
-    with factory() as session:
-        return info_of(session.get(Run, run.run_id))
+    return _finish(factory, run, external_ref=sent.external_ref, native_status=sent.native_status)
 
 
 def _watch(factory: sessionmaker[Session], adapter: Adapter, run: RunInfo) -> None:
@@ -136,28 +155,29 @@ def _watch(factory: sessionmaker[Session], adapter: Adapter, run: RunInfo) -> No
         kept = _publish(factory, run, adapter.name, event, f"{run.ref}-{event.seq}")
         status = STATUS_OF_EVENT.get(kept or "", status)
     _finish(
-        factory, run.run_id, status=status, native_status=result.native_status,
+        factory, run, status=status, native_status=result.native_status,
         watch_cursor=_safe_cursor(result.cursor),
     )
 
 
 def _step(factory: sessionmaker[Session], registry: AdapterRegistry, run_id: int) -> None:
-    with factory() as session:
-        row = session.get(Run, run_id)
-        run, cancel_requested = info_of(row), row.cancel_requested_at is not None
+    run, cancel_requested = _load(factory, run_id)
     adapter = registry.get(run.executor)
     if adapter is None:
         return  # no adapter in this process: the run is left alone, not guessed at
     if cancel_requested and run.status in CANCELLABLE:
         _cancel(factory, adapter, run)
         return
-    if run.status not in ACTIVE:
+    if run.status not in WATCHED:
         return
     if run.status == "dispatched" and run.external_ref is None:
         dispatched = _dispatch(factory, adapter, run)
         if dispatched is None:
             return
-        run = dispatched
+        run, cancel_requested = dispatched
+        if cancel_requested:  # clicked while the executor was being reached: stop it, no watch
+            _cancel(factory, adapter, run)
+            return
     _watch(factory, adapter, run)
 
 
@@ -166,7 +186,7 @@ def tick(factory: sessionmaker[Session], registry: AdapterRegistry) -> None:
     with factory() as session:
         ids = list(session.scalars(
             select(Run.id).where(or_(
-                Run.status.in_(ACTIVE),
+                Run.status.in_(WATCHED),
                 (Run.status == "unknown") & Run.cancel_requested_at.is_not(None),
             )).order_by(Run.id)
         ))

@@ -82,9 +82,9 @@ Une exécution concrète, créée par « confier à » (table `runs`, migration 
 | `brief` | ce que Loïc a écrit, masqué par le scanner de secrets avant écriture |
 | `workdir` | dossier de travail demandé (facultatif) |
 | `external_ref` | id chez l'exécutant (ex. `hermes:default#t_abcd`, session Claude), donné par l'adaptateur au lancement |
-| `created_at`, `ended_at` | `ended_at` est posé quand le run finit (`done`, `failed`, `cancelled`) ou s'arrête en `review` |
+| `created_at`, `ended_at` | `ended_at` est posé quand le run finit (`done`, `failed`, `cancelled`) ou s'arrête (`review`, `blocked`) |
 | `cancel_requested_at` | quand un humain a demandé l'annulation ; le superviseur arrête l'exécutant puis passe le run en `cancelled` |
-| `status` | `dispatched`, `running`, `blocked`, `review`, `done`, `failed`, `cancelled`, `unknown` ; un index unique partiel sur `(task, agent)` garantit un seul run **actif** (`dispatched`, `running`, `blocked`) par agent et par tâche |
+| `status` | `dispatched`, `running`, `blocked`, `review`, `done`, `failed`, `cancelled`, `unknown` ; un index unique partiel sur `(task, agent)` garantit un seul run **actif** (`dispatched`, `running`, `unknown`) par agent et par tâche. `blocked` et `review` sont des états réglés (le journal clôt le run, EVENT-PROTOCOL §4 : pour reprendre, on ouvre un nouveau run) ; `unknown` retient l'agent tant que Loïc n'a pas annulé le run perdu (l'annulation publie le `failed` de clôture) |
 | `native_status` | valeur brute de l'exécutant (ex. Hermes `running`, outcome `crashed`), affichée telle quelle, jamais interprétée |
 | `watch_cursor` | position opaque de l'adaptateur pour reprendre la lecture (interne, non exposée) |
 | `version` | verrou optimiste : une annulation et une fin lues dans le même état ne gagnent pas toutes les deux (409 `concurrent_update`) |

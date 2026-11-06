@@ -28,6 +28,8 @@ class RunInfo:
     status: str
     native_status: str | None
     watch_cursor: str | None
+    # Row version when the snapshot was taken: the supervisor writes an end only from this state.
+    version: int
 
 
 @dataclass(frozen=True)

@@ -183,7 +183,7 @@ def test_the_list_is_per_task_and_newest_first(client):
     assert [r["id"] for r in listed] == ["nx-run-2", "nx-run-1"]
 
 
-@pytest.mark.parametrize("status", ["done", "failed", "cancelled", "review"])
+@pytest.mark.parametrize("status", ["done", "failed", "cancelled", "review", "blocked"])
 def test_cancelling_a_settled_run_is_refused(client, status):
     from nexus.models import Run
 

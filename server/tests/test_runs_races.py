@@ -7,7 +7,7 @@ from runs_support import code_of, dispatch, make_task, register
 from sqlalchemy.orm.exc import StaleDataError
 
 from nexus.models import Run
-from nexus.runs import service
+from nexus.runs import rules, service
 
 
 def race(calls):
@@ -43,10 +43,19 @@ def test_two_simultaneous_dispatches_leave_one_active_run(client):
     assert len(client.get(f"/api/tasks/{task}/runs").json()) == 1
 
 
-def test_simultaneous_clicks_with_the_same_key_are_one_row(client):
+def test_simultaneous_clicks_with_the_same_key_are_one_row(client, monkeypatch):
     register(client)
     task = make_task(client)
     client.token_for("loic")
+    # Every click has looked for its key and found nothing before any of them writes.
+    gate = threading.Barrier(3)
+    real = rules.check_dispatchable
+
+    def gated(*args, **kwargs):
+        gate.wait(timeout=10)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(rules, "check_dispatchable", gated)
 
     results = race([lambda: dispatch(client, task) for _ in range(3)])
 

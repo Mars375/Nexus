@@ -88,9 +88,15 @@ def create_run(
 
     if (replay := known()) is not None:
         return replay
-    rules.check_dispatchable(
-        session, task, executor=data.executor, agent=data.agent, registry=registry
-    )
+    try:
+        rules.check_dispatchable(
+            session, task, executor=data.executor, agent=data.agent, registry=registry
+        )
+    except RuleViolation as exc:
+        # The click that won the race may have committed since the first look: it is a resend.
+        if exc.code == "run_already_active" and (replay := known()) is not None:
+            return replay
+        raise
     run = Run(
         task_id=task_id, executor=data.executor, agent=data.agent, dispatched_by=actor,
         client_key=data.client_key, brief=brief, workdir=workdir, status="dispatched",
@@ -101,9 +107,10 @@ def create_run(
         session.flush()
     except IntegrityError as exc:
         session.rollback()
-        if "client_key" in str(exc.orig):
-            if (replay := known()) is not None:
-                return replay
+        # Lost on the client key: re-read the winner. Lost on the live-run index: if the winner
+        # carries our key it is the same click, else another run holds the agent.
+        if (replay := known()) is not None:
+            return replay
         raise rules.already_active("un autre run") from exc
     return run, True
 
