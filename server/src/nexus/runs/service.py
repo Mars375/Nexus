@@ -70,7 +70,10 @@ def create_run(
     brief = secrets.redact(data.brief)[0]
     if secrets.is_blank(brief):
         raise RuleViolation("brief_required", "brief : un texte lisible est requis")
-    workdir = secrets.redact(data.workdir)[0] if data.workdir else None
+    if data.workdir and secrets.redact(data.workdir)[1]:
+        # A path is compared and handed to the executor: masked, two paths would become equal.
+        raise RuleViolation("secret_in_workdir", "workdir : ne doit contenir aucun secret")
+    workdir = data.workdir or None
     task_id = task.id
 
     def known() -> tuple[Run, bool] | None:

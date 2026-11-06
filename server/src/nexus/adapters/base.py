@@ -9,9 +9,14 @@ exception type.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
+
+# What `Adapter.name` may be, because it becomes the `origin` of the events: `publish()` accepts
+# nothing else, and a free value could carry a secret.
+ADAPTER_NAME = re.compile(r"[a-z][a-z0-9-]{0,31}")
 
 
 @dataclass(frozen=True)
@@ -68,7 +73,7 @@ class WatchResult:
 
 
 class Adapter(Protocol):
-    name: str  # origin of the events it publishes: lowercase letters, digits, hyphen
+    name: str  # origin of the events it publishes: matches ADAPTER_NAME (checked at registration)
 
     def probe(self) -> bool:
         """Whether the executor is usable right now (binary present, service reachable)."""

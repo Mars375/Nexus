@@ -123,19 +123,25 @@ def create_app(
         await asyncio.wait({first_read}, timeout=FIRST_NODES_READ_SECONDS)
         # Runs that were being watched when the previous process stopped: tracking is lost, and
         # nothing is relaunched on its own (ADR-023, D3).
-        supervisor.mark_lost(app.state.sessionmaker)
-        tasks = [
-            asyncio.create_task(backup_loop()),
-            asyncio.create_task(nodes_loop(app, first_read)),
-            asyncio.create_task(supervisor.loop(app.state.sessionmaker, app.state.adapters)),
-        ]
+        tasks: list[asyncio.Task] = []
         try:
+            supervisor.mark_lost(app.state.sessionmaker)
+            tasks = [
+                asyncio.create_task(backup_loop()),
+                asyncio.create_task(nodes_loop(app, first_read)),
+                asyncio.create_task(supervisor.loop(app.state.sessionmaker, app.state.adapters)),
+            ]
             yield
         finally:
+            # Also when startup fails above: the first read and the engines are always released.
             for task in tasks:
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
+            first_read.cancel()
+            # Its own failure was already logged by nodes_loop: it must not mask the shutdown.
+            with suppress(asyncio.CancelledError, Exception):
+                await first_read
             app.state.engine.dispose()
             app.state.touch_engine.dispose()
 

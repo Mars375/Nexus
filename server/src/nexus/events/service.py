@@ -19,6 +19,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from nexus import secrets
 from nexus.actors import HUMANS
+from nexus.adapters.base import ADAPTER_NAME
 from nexus.clock import now
 from nexus.events import rules
 from nexus.events.checks import _check_lengths, _check_scalars, _text_list, parse_task_ref
@@ -40,7 +41,7 @@ RUN_OPEN_ATTEMPTS = 3
 
 
 # Nom d'adaptateur (api, hermes, codex…) : jamais une valeur libre, qui pourrait porter un secret.
-_ORIGIN = re.compile(r"[a-z][a-z0-9-]{0,31}")
+_ORIGIN = ADAPTER_NAME
 
 # Anti-bruit (EVENT-PROTOCOL §7) : le même fait republié dans cette fenêtre est refusé.
 NOISE_WINDOW = timedelta(minutes=10)

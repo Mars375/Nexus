@@ -114,6 +114,7 @@ def _journal_end(factory: sessionmaker[Session], run: RunInfo) -> str | None:
         last = session.execute(
             select(Event.kind, Event.actor_event_id)
             .where(Event.run_ref == run.ref, Event.actor == run.executor,
+                   Event.task_id == int(run.task.removeprefix("nx-task-")),
                    Event.kind.in_(RUN_CLOSERS))
             .order_by(Event.id.desc()).limit(1)
         ).first()

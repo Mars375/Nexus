@@ -286,3 +286,75 @@ def test_a_resend_is_replayed_whatever_rule_the_winner_changed(client, monkeypat
     res = dispatch(client, task)
 
     assert res.status_code == 200 and res.json()["id"] == "nx-run-1"
+
+
+# --- Fourth review ------------------------------------------------------------------------
+
+
+def test_a_closer_of_another_task_with_the_same_reference_does_not_settle_the_run(client):
+    adapter = register(client)
+    dispatch(client, make_task(client))
+    other = make_task(client, title="Autre")  # nx-task-2, with a historic close naming nx-run-1
+    with client.app.state.sessionmaker() as session:
+        session.add(Event(
+            actor="codex", actor_event_id="old-done", at=datetime.fromisoformat(AT),
+            received_at=datetime.fromisoformat(AT), task_id=int(other.removeprefix("nx-task-")),
+            run_ref="nx-run-1", kind="done", subject="s", body=None, payload={},
+            evidence=["commit:abc"], needs=[], redacted=[], origin="api", effects=[]))
+        session.commit()
+
+    tick(client)
+
+    assert adapter.dispatched == ["nx-run-1"]
+    assert row(client).status == "done"  # settled by ITS script, not by the foreign close
+    assert adapter.watched == ["nx-run-1"]
+
+
+def test_a_workdir_with_a_secret_is_refused_without_echo(client):
+    register(client)
+    secret = "ghp_" + "E" * 36
+
+    res = dispatch(client, make_task(client), workdir=f"F:/Projet/{secret}")
+
+    assert (res.status_code, code_of(res)) == (409, "secret_in_workdir")
+    assert secret not in res.text
+
+
+def test_an_adapter_name_the_events_would_refuse_is_not_registered(client):
+    import pytest
+
+    class Named(FakeAdapter):
+        name = "Bad Name"
+
+    with pytest.raises(ValueError, match="nom"):
+        client.app.state.adapters.register("codex", Named())
+    assert client.app.state.adapters.executors() == []
+
+
+def test_a_failing_mark_lost_still_releases_the_engines(settings, monkeypatch):
+    import pytest
+    from conftest import ActorClient, tailscale_json
+    from sqlalchemy.engine import Engine
+
+    from nexus.app import create_app
+
+    disposed = []
+    real = Engine.dispose
+
+    def counting(self, *args, **kwargs):
+        disposed.append(1)
+        return real(self)
+
+    monkeypatch.setattr(Engine, "dispose", counting)
+
+    def boom(_factory):
+        raise RuntimeError("mark_lost failed")
+
+    monkeypatch.setattr(supervisor, "mark_lost", boom)
+
+    with pytest.raises(RuntimeError, match="mark_lost failed"), ActorClient(
+        create_app(settings, nodes_runner=tailscale_json)
+    ):
+        pass
+
+    assert len(disposed) >= 2
