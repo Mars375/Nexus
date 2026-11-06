@@ -50,13 +50,19 @@ def info_of(run: Run) -> RunInfo:
 
 
 def _publish(
-    factory: sessionmaker[Session], run: RunInfo, origin: str, event: RunEvent, event_id: str
+    factory: sessionmaker[Session],
+    run: RunInfo,
+    origin: str,
+    event: RunEvent,
+    event_id: str,
+    refusals: list[str] | None = None,
 ) -> str | None:
     """Publish one fact of the run; the effective event kind, or None when it was not kept.
 
     A refusal of the protocol (anti-noise 409 included) never stops the supervisor: the fact is
     skipped and only its code is logged, never a message that could repeat a received value.
-    A transient database failure propagates: the run is retried whole.
+    A transient database failure propagates: the run is retried whole. The code of a refusal
+    other than noise is appended to `refusals`, so a caller can avoid moving past a lost fact.
     """
     envelope = Envelope(
         actor=run.executor, kind=event.kind, subject=event.subject, task=run.task, run=run.ref,
@@ -71,6 +77,8 @@ def _publish(
             session.rollback()
             if exc.code != "noise":
                 log.warning("événement de %s refusé (%s)", run.ref, exc.code)
+                if refusals is not None:
+                    refusals.append(exc.code)
             return None
         return stored.kind
 
@@ -223,8 +231,11 @@ def _dispatch(
 def _watch(factory: sessionmaker[Session], adapter: Adapter, run: RunInfo) -> None:
     result = adapter.watch(run)
     status = None
+    refusals: list[str] = []
     for event in sorted(result.events, key=lambda e: e.seq):
-        kept = _publish(factory, run, adapter.name, event, f"{run.ref}-{event.seq}")
+        kept = _publish(
+            factory, run, adapter.name, event, f"{run.ref}-{event.seq}", refusals=refusals
+        )
         step = STATUS_OF_EVENT.get(kept or "")
         if step is not None and status not in SETTLED:
             status = step  # the journal closes a run for good: a late `working` reopens nothing
@@ -233,7 +244,9 @@ def _watch(factory: sessionmaker[Session], adapter: Adapter, run: RunInfo) -> No
         status = ended  # a close published meanwhile (API, earlier tick) wins over what we saw
     _finish(
         factory, run, status=status, native_status=result.native_status,
-        watch_cursor=_safe_cursor(result.cursor),
+        # A refused fact (an id already taken, say) is not moved past: the adapter is read again
+        # from the same place on the next tick, and the cause is in the log.
+        watch_cursor=None if refusals else _safe_cursor(result.cursor),
     )
 
 
@@ -241,7 +254,9 @@ def _step(factory: sessionmaker[Session], registry: AdapterRegistry, run_id: int
     run, cancel_requested = _load(factory, run_id)
     adapter = registry.get(run.executor)
     if cancel_requested and run.status in CANCELLABLE:
-        if adapter is not None or not _launched(run):
+        if not _launched(run):
+            _cancel(factory, None, run)  # nothing to stop: no call to the executor, whoever it is
+        elif adapter is not None:
             _cancel(factory, adapter, run)
         return
     if adapter is None:

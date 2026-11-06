@@ -88,7 +88,8 @@ class Adapter(Protocol):
         ...
 
     def cancel(self, run: RunInfo) -> None:
-        """Stop the work, best effort."""
+        """Stop the work. Raise if the stop is not confirmed: the run then stays open and the
+        supervisor tries again, instead of freeing the executor while it may still be working."""
         ...
 
     def recover(self, run: RunInfo) -> str | None:

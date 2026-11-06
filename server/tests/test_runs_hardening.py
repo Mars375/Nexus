@@ -179,6 +179,9 @@ def test_a_cancel_the_executor_could_not_perform_keeps_the_run_open(client):
     adapter = register(client)
     task = make_task(client)
     dispatch(client, task)
+    with client.app.state.sessionmaker() as session:  # launched: the executor may be working
+        session.get(Run, 1).external_ref = "ext-1"
+        session.commit()
     client.post("/api/runs/nx-run-1/cancel")
     adapter.fail_cancel = True
 
@@ -358,3 +361,32 @@ def test_a_failing_mark_lost_still_releases_the_engines(settings, monkeypatch):
         pass
 
     assert len(disposed) >= 2
+
+
+# --- Fifth review -------------------------------------------------------------------------
+
+
+def test_a_run_never_launched_is_cancelled_without_calling_the_adapter(client):
+    adapter = register(client)
+    adapter.fail_cancel = True  # would keep the run open if it were called
+    dispatch(client, make_task(client))
+    client.post("/api/runs/nx-run-1/cancel")
+
+    tick(client)
+
+    assert row(client).status == "cancelled" and adapter.cancelled == []
+
+
+def test_a_refused_closer_does_not_advance_the_cursor(client):
+    adapter = register(client)
+    task = make_task(client)
+    dispatch(client, task)
+    # The executor itself already used the id the supervisor derives for its third fact.
+    clash = as_codex(client, "progress", task, run="nx-run-1", body="x", id="nx-run-1-3")
+    assert clash.status_code == 201
+
+    tick(client)
+
+    assert adapter.watched == ["nx-run-1"]
+    got = row(client)
+    assert got.status == "running" and got.watch_cursor is None  # retried on the next tick

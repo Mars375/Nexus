@@ -141,7 +141,8 @@ def test_a_cancel_request_stops_the_executor_and_closes_the_run(client):
 
     tick(client)
 
-    assert adapter.cancelled == ["nx-run-1"] and adapter.watched == []
+    # Never launched: cancelled on our side, the executor is not even called.
+    assert adapter.cancelled == [] and adapter.watched == []
     assert run_row(client).status == "cancelled" and run_row(client).ended_at is not None
     [closer] = events_of(client, task)
     assert (closer["kind"], closer["run"]) == ("failed", "nx-run-1")
@@ -159,7 +160,7 @@ def test_a_lost_run_can_be_cancelled_to_free_the_agent(client):
     assert client.post("/api/runs/nx-run-1/cancel").status_code == 200
     tick(client)
 
-    assert adapter.cancelled == ["nx-run-1"] and run_row(client).status == "cancelled"
+    assert adapter.cancelled == [] and run_row(client).status == "cancelled"
 
 
 def test_a_run_whose_adapter_is_gone_is_left_alone(client):
@@ -234,7 +235,7 @@ def test_a_lost_run_keeps_the_agent_until_it_is_cancelled(client):
 
     client.post("/api/runs/nx-run-1/cancel")
     tick(client)
-    assert adapter.cancelled == ["nx-run-1"]
+    assert adapter.cancelled == []  # it was never launched
     assert dispatch(client, task, client_key="k2").status_code == 201
     tick(client)
     working = [e for e in events_of(client, task) if e["run"] == "nx-run-2"]
