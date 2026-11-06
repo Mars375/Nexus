@@ -39,7 +39,9 @@ def test_two_simultaneous_dispatches_leave_one_active_run(client):
 
     assert sorted(r.status_code for r in results) == [201, 409]
     loser = next(r for r in results if r.status_code == 409)
-    assert code_of(loser) == "run_already_active"
+    # Same task, agent and executor: whichever unique index the loser meets first refuses it, and
+    # both refusals are the right answer (the rule check races the insert, so it varies).
+    assert code_of(loser) in {"run_already_active", "executor_busy"}
     assert len(client.get(f"/api/tasks/{task}/runs").json()) == 1
 
 
