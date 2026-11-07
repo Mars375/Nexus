@@ -7,6 +7,7 @@ l'ajouter ici, et un paramètre de chemin inconnu fait échouer le test au lieu 
 from datetime import datetime
 
 import pytest
+from runs_support import dispatch, register
 
 AT = "2026-09-29T09:05:00+02:00"
 
@@ -50,7 +51,8 @@ def check_entity(entity) -> None:
 
 
 def seed(client) -> dict[str, str]:
-    res = client.post("/api/tasks", json={"title": "Pont", "objective": "Lire"})
+    res = client.post("/api/tasks", json={"title": "Pont", "objective": "Lire",
+                                          "next_action": "lancer"})
     assert res.status_code == 201, (
         f"POST /api/tasks → {res.status_code} {res.text}"
     )
@@ -80,7 +82,12 @@ def seed(client) -> dict[str, str]:
     assert res.status_code == 200, (
         f"POST /api/approvals/{{approval}}/answer → {res.status_code} {res.text}"
     )
-    return {"task_ref": task, "event_ref": event, "approval_ref": approval}
+    # A run (ADR-023): the dispatch route needs an adapter, here the fake one of the tests.
+    register(client)
+    res = dispatch(client, task)
+    assert res.status_code == 201, f"POST /api/tasks/{{task}}/runs → {res.status_code} {res.text}"
+    return {"task_ref": task, "event_ref": event, "approval_ref": approval,
+            "run_ref": res.json()["id"]}
 
 
 def api_get_routes(app) -> list[str]:

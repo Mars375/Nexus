@@ -19,12 +19,14 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from nexus import secrets
 from nexus.actors import HUMANS
+from nexus.adapters.base import ADAPTER_NAME
 from nexus.clock import now
 from nexus.events import rules
 from nexus.events.checks import _check_lengths, _check_scalars, _text_list, parse_task_ref
 from nexus.events.effects import _apply_effects
 from nexus.events.limits import ANSWER_ID_PREFIX
 from nexus.events.rules import Envelope
+from nexus.events.runrefs import check_run_refs
 from nexus.events.runs import RUN_CLOSERS as RUN_CLOSERS
 from nexus.events.runs import _runs
 from nexus.models import Approval, Event, Task
@@ -39,7 +41,7 @@ RUN_OPEN_ATTEMPTS = 3
 
 
 # Nom d'adaptateur (api, hermes, codex…) : jamais une valeur libre, qui pourrait porter un secret.
-_ORIGIN = re.compile(r"[a-z][a-z0-9-]{0,31}")
+_ORIGIN = ADAPTER_NAME
 
 # Anti-bruit (EVENT-PROTOCOL §7) : le même fait republié dans cette fenêtre est refusé.
 NOISE_WINDOW = timedelta(minutes=10)
@@ -151,6 +153,9 @@ def publish(
             f"id : déjà utilisé par {envelope.actor} pour un autre événement ; un événement "
             "ne se réécrit pas, publie une correction",
         )
+    # The `nx-run-` prefix is reserved (ADR-023). Judged on a NEW event only, like the rules below:
+    # an event stored before runs existed is replayed, not refused.
+    check_run_refs(session, envelope, task)
     # What only a NEW event must satisfy, judged after the read-back above so that an identical
     # resend of a known event is replayed (even after its deadline, or from before the rule).
     received = now()

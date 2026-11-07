@@ -224,3 +224,11 @@ def anonymous(settings):
         create_app(settings, nodes_runner=tailscale_json), authenticate=False
     ) as client:
         yield client
+
+
+@pytest.fixture(autouse=True)
+def quiet_run_supervisor(monkeypatch):
+    """The run supervisor never ticks on its own in tests: they call `supervisor.tick`."""
+    from nexus.runs import supervisor
+
+    monkeypatch.setattr(supervisor, "POLL_SECONDS", 3600.0)
