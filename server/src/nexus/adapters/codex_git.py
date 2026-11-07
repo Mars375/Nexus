@@ -1,0 +1,121 @@
+"""Git side of the Codex adapter: one worktree and one branch per run, and the proof (D6).
+
+Nexus never pushes or merges. Every call is bounded by a timeout.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
+
+from nexus.adapters import codex_process
+
+GIT_TIMEOUT = 60.0
+
+
+def clean_env() -> dict[str, str]:
+    """The environment of git: the same allow-list as the child (no `NEXUS_*`, no key of the
+    shell), no inherited `GIT_*` (inside a git hook, `GIT_DIR` and `GIT_INDEX_FILE` would point
+    every command at the repository being committed), no prompt, no system or global config."""
+    env = codex_process.child_env()
+    env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_GLOBAL": os.devnull})
+    return env
+
+
+def git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
+    """Run git from `cwd` with hooks and fsmonitor off (the agent can write in the worktree and
+    in the repository's `.git`: neither a hook nor a configured command may ever run in Nexus's
+    name). A timeout or a missing git is a failed command, never an exception."""
+    argv = ["git", "-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false", *args]
+    try:
+        return subprocess.run(
+            argv, cwd=cwd, capture_output=True, text=True, timeout=GIT_TIMEOUT,
+            check=False, env=clean_env(),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return subprocess.CompletedProcess(argv, 124, "", "")
+
+
+def toplevel(path: Path) -> Path | None:
+    done = git(path, "rev-parse", "--show-toplevel")
+    return Path(done.stdout.strip()).resolve() if done.returncode == 0 else None
+
+
+def common_dir(path: Path) -> Path | None:
+    """The shared `.git` directory of the repository `path` belongs to, worktrees included."""
+    done = git(path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    return Path(done.stdout.strip()).resolve() if done.returncode == 0 else None
+
+
+def server_common_dir() -> Path | None:
+    """The repository Nexus itself runs from, by its shared git directory so that none of its
+    worktrees can be handed to an agent either."""
+    return common_dir(Path(__file__).resolve().parent)
+
+
+def is_server_repo(path: Path) -> bool:
+    mine = server_common_dir()
+    return mine is not None and common_dir(path) == mine
+
+
+def choose_repo(workdirs: Sequence[Path], requested: str | None) -> Path:
+    """The configured repository the run works in; ValueError otherwise (nothing echoed)."""
+    configured = {p.resolve(): p.resolve() for p in workdirs}
+    if requested:
+        repo = Path(requested).resolve()
+        if repo not in configured:
+            raise ValueError("dossier de travail : absent de NEXUS_RUN_WORKDIRS")
+    elif len(configured) == 1:
+        repo = next(iter(configured))
+    else:
+        raise ValueError("dossier de travail : à préciser (plusieurs dépôts configurés)")
+    top = toplevel(repo)
+    if top is None or top != repo:
+        raise ValueError("dossier de travail : ce n'est pas la racine d'un dépôt git")
+    if is_server_repo(repo):
+        raise ValueError("dossier de travail : le dépôt du serveur n'est jamais confié")
+    return repo
+
+
+@dataclass(frozen=True)
+class Worktree:
+    repo: Path  # where the branch lives: the proof is read there, never in the worktree
+    path: Path
+    branch: str
+    start: str  # the commit the branch started from
+
+
+def create_worktree(repo: Path, base: Path, run_ref: str) -> Worktree:
+    branch = f"nexus/{run_ref}"
+    path = base.resolve() / run_ref  # absolute: git and the child must agree on where it is
+    start = git(repo, "rev-parse", "HEAD")
+    if start.returncode != 0:
+        raise ValueError("dépôt sans commit : rien à partir de quoi travailler")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    made = git(repo, "worktree", "add", "-b", branch, str(path), start.stdout.strip())
+    if made.returncode != 0:
+        raise ValueError("création du worktree impossible")
+    return Worktree(repo, path, branch, start.stdout.strip())
+
+
+def proof(tree: Worktree) -> str | None:
+    """The commit the run produced, only if it really is one (DONE is not proof, D6).
+
+    Judged on the run's branch, from the repository: the worktree is the agent's own ground
+    (a `.git` it replaced, a detached HEAD) and says nothing. The commit must exist, descend from
+    the start commit, and be after it (`rev-parse` also succeeds for the start commit itself).
+    """
+    head = git(tree.repo, "rev-parse", "--verify", f"refs/heads/{tree.branch}^{{commit}}")
+    if head.returncode != 0:
+        return None
+    produced = head.stdout.strip()
+    if git(tree.repo, "merge-base", "--is-ancestor", tree.start, produced).returncode != 0:
+        return None
+    count = git(tree.repo, "rev-list", "--count", f"{tree.start}..{produced}")
+    if count.returncode != 0 or not count.stdout.strip().isdigit() or int(count.stdout) < 1:
+        return None
+    return produced

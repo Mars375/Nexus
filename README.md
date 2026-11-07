@@ -89,6 +89,7 @@ Chaque commit passe par un hook (Husky) : refus des artefacts de tests et des ba
 - **Origine de la WebView (Tauri, #47).** Déclare l'origine exacte de la page dans `NEXUS_ALLOWED_ORIGINS` (liste séparée par des virgules, `schéma://hôte[:port]`, sans chemin ni slash final) : `http://tauri.localhost` sous Windows, `https://tauri.localhost` si Tauri utilise HTTPS, `tauri://localhost` sous macOS/Linux. La même liste sert au CORS du REST et au WebSocket ; la boucle locale reste admise pour le WebSocket. `VITE_NEXUS_API_URL` désigne l'adresse de l'API (`http://127.0.0.1:8765`), pas l'origine de la page.
 - Données : `%LOCALAPPDATA%\Nexus\nexus.db` (modifiable avec `NEXUS_DATA_DIR`). La base est créée et migrée au démarrage.
 - Sauvegardes : `%LOCALAPPDATA%\Nexus\backups\`, une au démarrage puis toutes les 24 h, les 14 dernières conservées (`NEXUS_BACKUP_INTERVAL_HOURS`, `NEXUS_BACKUP_KEEP`).
+- Codex (ADR-023) : `NEXUS_CODEX_BIN`, `NEXUS_RUN_WORKDIRS` (dépôts git où un run peut travailler, séparés par `;` sous Windows et par `:` ailleurs) et `NEXUS_RUN_MAX_MINUTES` ; sans dépôt configuré, « confier à Codex » répond 409 `executor_unavailable` (INTEGRATIONS §A.2).
 - Nœuds : lus en lecture seule via `tailscale status --json`, toutes les 60 s (`NEXUS_NODES_REFRESH_SECONDS`, binaire : `NEXUS_TAILSCALE_BIN`). Sans Tailscale, les nœuds s'affichent `unknown`.
 
 ## Structure du dépôt

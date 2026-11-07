@@ -89,6 +89,12 @@ class Settings:
     allowed_origins: frozenset[str] = frozenset()
     # Noms d'hôte admis en plus de la boucle locale dans l'en-tête Host (ADR-020, D6).
     allowed_hosts: frozenset[str] = frozenset()
+    # Codex adapter (ADR-023, D6, D7): the binary (None: look `codex` up on PATH), the git
+    # repositories a run may work in (empty: no run can be handed to Codex), and the longest a
+    # run may last before its process is killed and it is marked failed.
+    codex_bin: str | None = None
+    run_workdirs: tuple[Path, ...] = ()
+    run_max_minutes: float = 60.0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "hosts", _normalize_hosts(self.hosts))
@@ -111,6 +117,12 @@ class Settings:
             raise ValueError(
                 "NEXUS_NODES_REFRESH_SECONDS doit être un nombre fini > 0 "
                 f"(reçu : {self.nodes_refresh_seconds})"
+            )
+
+        if not (math.isfinite(self.run_max_minutes * 60) and self.run_max_minutes > 0):
+            raise ValueError(
+                "NEXUS_RUN_MAX_MINUTES doit être un nombre fini > 0 "
+                f"(reçu : {self.run_max_minutes})"
             )
 
         for origin in self.allowed_origins:
@@ -168,4 +180,11 @@ class Settings:
                 for item in os.environ.get("NEXUS_ALLOWED_HOSTS", "").split(",")
                 if item.strip()
             ),
+            codex_bin=os.environ.get("NEXUS_CODEX_BIN") or None,
+            run_workdirs=tuple(
+                Path(item.strip())
+                for item in os.environ.get("NEXUS_RUN_WORKDIRS", "").split(os.pathsep)
+                if item.strip()
+            ),
+            run_max_minutes=float(os.environ.get("NEXUS_RUN_MAX_MINUTES", "60")),
         )

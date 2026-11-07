@@ -19,6 +19,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from nexus import backup, live, migrate, nodes
 from nexus import now as now_view
+from nexus.adapters import codex
 from nexus.adapters.registry import AdapterRegistry
 from nexus.approvals import api as approvals_api
 from nexus.approvals.service import ApprovalNotFound
@@ -138,6 +139,8 @@ def create_app(
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
+            # Codex processes live in their own process groups: they would outlive the server.
+            await asyncio.to_thread(app.state.adapters.close_all)
             first_read.cancel()
             # Its own failure was already logged by nodes_loop: it must not mask the shutdown.
             with suppress(asyncio.CancelledError, Exception):
@@ -171,6 +174,7 @@ def create_app(
     app.state.settings = settings
     # Empty by default: no executor is wired in this build (ADR-023, lot B), dispatching is a 409.
     app.state.adapters = AdapterRegistry()
+    codex.register_configured(app.state.adapters, settings)
     app.include_router(tasks_api.router)
     app.include_router(events_api.router)
     app.include_router(approvals_api.router)

@@ -184,6 +184,12 @@ def _cancel(factory: sessionmaker[Session], adapter: Adapter | None, run: RunInf
             # Still possibly running: the run stays open and the cancel is retried next tick.
             log.warning("annulation de %s : %s", run.ref, type(exc).__name__)
             return
+    _close_cancelled(factory, adapter, run)
+
+
+def _close_cancelled(
+    factory: sessionmaker[Session], adapter: Adapter | None, run: RunInfo
+) -> None:
     # `failed` closes the run in the event journal, so the executor may open another one.
     event = _own_event("failed", "run annulé", cause="annulé à la demande d'un humain")
     _publish(factory, run, adapter.name if adapter else "nexus", event, f"{run.ref}-cancelled")
@@ -230,10 +236,24 @@ def _dispatch(
             log.warning("annulation de %s : %s", run.ref, type(exc).__name__)
         _fail(factory, adapter, run, "référence de l'exécutant inutilisable")
         return None
-    return _finish(
-        factory, run, external_ref=sent.external_ref,
-        native_status=sent.native_status or "started",
-    )
+    try:
+        return _finish(
+            factory, run, external_ref=sent.external_ref,
+            native_status=sent.native_status or "started",
+        )
+    except Exception as exc:
+        # The work started but its reference could not be written (#168). The reference only
+        # lives here: stop the work with it now rather than lose the means to stop it later.
+        log.warning("référence de %s non enregistrée : %s", run.ref, type(exc).__name__)
+        # If the stop fails too, the run is NOT failed: the work may be running, so the run
+        # stays held (the next tick finds the launch marker and marks it unknown).
+        adapter.cancel(replace(run, external_ref=sent.external_ref))
+        fresh, requested = _load(factory, run.run_id)
+        if requested:  # a human asked for this stop meanwhile: it ends cancelled, not failed
+            _close_cancelled(factory, adapter, fresh)
+        else:
+            _fail(factory, adapter, run, "référence de l'exécutant non enregistrée")
+        return None
 
 
 def _watch(factory: sessionmaker[Session], adapter: Adapter, run: RunInfo) -> None:
@@ -298,6 +318,12 @@ def _step(factory: sessionmaker[Session], registry: AdapterRegistry, run_id: int
 
 def tick(factory: sessionmaker[Session], registry: AdapterRegistry) -> None:
     """One pass over the runs that need attention. Never raises: it is a loop body."""
+    with registry.tick_lock:
+        if not registry.stopping.is_set():
+            _tick(factory, registry)
+
+
+def _tick(factory: sessionmaker[Session], registry: AdapterRegistry) -> None:
     with factory() as session:
         ids = list(session.scalars(
             select(Run.id).where(or_(
