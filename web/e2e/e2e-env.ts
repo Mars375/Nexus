@@ -1,5 +1,6 @@
 // Constantes partagées par playwright.config.ts, le setup global et les specs.
-import { lstatSync, mkdtempSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 
@@ -38,3 +39,30 @@ export function dataDirPath(): string {
 }
 
 export const storageStatePath = (): string => join(dataDirPath(), 'storage-state.json')
+
+/**
+ * Un faux `codex` (e2e/fake-codex.mjs) et un dépôt git jetable, dans la base jetable : le serveur
+ * de test les déclare (NEXUS_CODEX_BIN, NEXUS_RUN_WORKDIRS) et peut ainsi confier un run sans
+ * jamais lancer un vrai modèle. Idempotent : les workers relisent la config.
+ */
+export function codexFixture(): { bin: string; repo: string } {
+  const root = join(dataDirPath(), 'codex-e2e')
+  const repo = join(root, 'repo')
+  const script = resolve('e2e/fake-codex.mjs')
+  const bin = join(root, process.platform === 'win32' ? 'codex-e2e.cmd' : 'codex-e2e')
+  if (!existsSync(bin)) {
+    mkdirSync(repo, { recursive: true })
+    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')))
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, env, stdio: 'ignore' })
+    git('init', '-q')
+    writeFileSync(join(repo, 'LISEZMOI.txt'), 'dépôt de test\n')
+    git('add', 'LISEZMOI.txt')
+    git('-c', 'user.name=e2e', '-c', 'user.email=e2e@example.invalid', 'commit', '-q', '-m', 'départ')
+    if (process.platform === 'win32') {
+      writeFileSync(bin, `@"${process.execPath}" "${script}" %*\r\n`)
+    } else {
+      writeFileSync(bin, `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`, { mode: 0o755 })
+    }
+  }
+  return { bin, repo }
+}
