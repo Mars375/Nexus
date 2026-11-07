@@ -13,6 +13,8 @@ import json
 from dataclasses import dataclass
 from typing import Literal
 
+from nexus import secrets
+
 TEXT_MAX = 500
 
 FactKind = Literal["claimed", "working", "progress", "finished", "failed"]
@@ -28,24 +30,30 @@ class Fact:
 
 
 def _cut(text: object) -> str | None:
-    if not isinstance(text, str) or not text.strip():
+    """A readable excerpt, or None: empty, or nothing left once secrets are masked (the event
+    protocol refuses such a body, and a refused fact would hold the run back)."""
+    if not isinstance(text, str):
         return None
-    return text.strip()[:TEXT_MAX]
+    cut = text.strip()[:TEXT_MAX]
+    return None if secrets.is_blank(secrets.redact(cut)[0]) else cut
 
 
 def _item(item: dict) -> Fact | None:
     match item.get("type"):
         case "agent_message":
-            return Fact("progress", "Message de Codex", _cut(item.get("text")))
+            body = _cut(item.get("text"))
+            return Fact("progress", "Message de Codex", body) if body else None
         case "command_execution":
             # The command only: its output may hold anything and is never kept.
-            return Fact("progress", "Commande exécutée", _cut(item.get("command")))
+            body = _cut(item.get("command"))
+            return Fact("progress", "Commande exécutée", body) if body else None
         case "file_change":
             changes = item.get("changes")
             paths = [c.get("path") for c in changes if isinstance(c, dict)] if isinstance(
                 changes, list) else []
             names = ", ".join(p for p in paths if isinstance(p, str))
-            return Fact("progress", "Fichiers modifiés", _cut(names))
+            body = _cut(names)
+            return Fact("progress", "Fichiers modifiés", body) if body else None
     return None  # reasoning and anything new: ignored
 
 

@@ -48,6 +48,8 @@ class _Job:
         self.turn_done = False
         self.failure: str | None = None
         self.settled = False
+        self.settle_lock = threading.Lock()  # one closing attempt at a time
+        self.ended_at: float | None = None  # when the process was seen gone, whatever the polling
         self.reader: threading.Thread | None = None
 
     def add(
@@ -57,8 +59,13 @@ class _Job:
         body: str | None = None,
         payload: dict | None = None,
         evidence: list[str] | None = None,
+        final: bool = False,
     ) -> None:
+        """Append a fact. The closing one (`final`) seals the story: nothing follows it."""
         with self.lock:
+            if self.settled:
+                return
+            self.settled = final
             seq = len(self.events) + 1
             # `seq` in the payload makes two identical progress facts distinct (anti-noise).
             self.events.append(RunEvent(
@@ -73,13 +80,16 @@ class _Job:
             if fact is None:
                 continue
             if fact.kind == "finished":
-                self.turn_done = True
+                with self.lock:
+                    self.turn_done = True
             elif fact.kind == "failed":
-                self.failure = self.failure or fact.body
+                with self.lock:
+                    self.failure = self.failure or fact.body
             elif fact.kind != "progress" or self.progress < MAX_PROGRESS:
                 self.progress += fact.kind == "progress"
                 self.add(fact.kind, fact.subject, fact.body)
         self.process.wait()
+        self.ended_at = time.monotonic()
 
 
 class CodexAdapter:
@@ -139,34 +149,51 @@ class CodexAdapter:
             return self._jobs.get(ref)
 
     def _settle(self, job: _Job) -> None:
-        """Add the closing event once: the time limit, or the end judged on the proof."""
-        with job.lock:
-            if job.settled:
-                return
-            over = time.monotonic() - job.started >= self.max_seconds
+        """Add the closing event, once the process is really over (D7, D6).
+
+        Nothing is sealed before the closing event exists: a failed kill raises and leaves the
+        run open, to be tried again on the next tick, so the executor is never freed while its
+        process may still be working.
+        """
+        if job.settled or not job.settle_lock.acquire(blocking=False):
+            return
+        try:
             ended = not job.reader.is_alive() and job.process.poll() is not None
+            elapsed = (job.ended_at or time.monotonic()) - job.started
+            over = elapsed >= self.max_seconds  # judged on when it ended, not when we looked
             if not ended and not over:
                 return
-            job.settled = True
-        if not ended:
-            codex_process.kill_tree(job.process)
-            job.add("failed", "Durée maximale dépassée",
-                    payload={"cause": "durée maximale dépassée : processus arrêté"})
-            return
+            if over:
+                # Also when it already ended: its children may not have.
+                if not codex_process.kill_tree(job.process):
+                    raise RuntimeError("arrêt du processus non confirmé")
+                job.reader.join(5.0)
+                job.add("failed", "Durée maximale dépassée", final=True,
+                        payload={"cause": "durée maximale dépassée : processus arrêté"})
+                return
+            self._close_ended(job)
+        finally:
+            job.settle_lock.release()
+
+    @staticmethod
+    def _close_ended(job: _Job) -> None:
         code = job.process.returncode
-        if job.failure or code != 0 or not job.turn_done:
-            cause = job.failure or f"le processus s'est arrêté (code {code}) sans terminer son tour"
-            job.add("failed", "Codex a échoué", payload={"cause": cause})
+        with job.lock:
+            failure, turn_done = job.failure, job.turn_done
+        if failure or code != 0 or not turn_done:
+            cause = failure or f"le processus s'est arrêté (code {code}) sans terminer son tour"
+            job.add("failed", "Codex a échoué", payload={"cause": cause}, final=True)
             return
         commit = codex_git.proof(job.tree)
         if commit:
             # Abbreviated: the scanner masks a full 40-hex hash as a secret, and a masked proof
             # proves nothing (the run would end in review).
-            job.add("done", "Codex a terminé", evidence=[f"commit:{commit[:SHORT_SHA]}"])
+            job.add("done", "Codex a terminé", evidence=[f"commit:{commit[:SHORT_SHA]}"],
+                    final=True)
         else:
             job.add("review", "Codex a terminé sans commit exploitable",
                     body="aucun commit descendant du départ : à relire",
-                    evidence=[f"branch:{job.tree.branch}"])
+                    evidence=[f"branch:{job.tree.branch}"], final=True)
 
     def watch(self, run: RunInfo) -> WatchResult:
         job = self._job(run.ref)

@@ -41,18 +41,26 @@ def spawn(argv: list[str], cwd: str, env: dict[str, str]) -> subprocess.Popen:
 
 
 def kill_tree(process: subprocess.Popen, timeout: float = 10.0) -> bool:
-    """Kill the process and its children; True once it is confirmed gone."""
-    if process.poll() is None:
-        if sys.platform == "win32":
+    """Kill the process and its children; True once it is confirmed gone.
+
+    The signal is sent even when the parent is already dead: children may survive it, hold the
+    output pipe, and keep working. On Windows `taskkill /T` needs a live parent to walk the tree:
+    a child orphaned by an earlier death of its parent cannot be found (to be improved with a
+    job object).
+    """
+    if sys.platform == "win32":
+        try:
             subprocess.run(
                 ["taskkill", "/PID", str(process.pid), "/T", "/F"],
                 capture_output=True, timeout=timeout, check=False,
             )
-        else:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
     try:
         process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:

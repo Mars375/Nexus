@@ -11,20 +11,33 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from nexus.adapters import codex_process
+
 GIT_TIMEOUT = 60.0
 
 
 def clean_env() -> dict[str, str]:
-    """The environment without `GIT_*`: inside a git hook, `GIT_DIR` and `GIT_INDEX_FILE` would
-    point every command at the repository being committed instead of the one asked for."""
-    return {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
+    """The environment of git: the same allow-list as the child (no `NEXUS_*`, no key of the
+    shell), no inherited `GIT_*` (inside a git hook, `GIT_DIR` and `GIT_INDEX_FILE` would point
+    every command at the repository being committed), no prompt, no system or global config."""
+    env = codex_process.child_env()
+    env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_GLOBAL": os.devnull})
+    return env
 
 
 def git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["git", *args], cwd=cwd, capture_output=True, text=True, timeout=GIT_TIMEOUT,
-        check=False, env=clean_env(),
-    )
+    """Run git from `cwd` with hooks and fsmonitor off (the agent can write in the worktree and
+    in the repository's `.git`: neither a hook nor a configured command may ever run in Nexus's
+    name). A timeout or a missing git is a failed command, never an exception."""
+    argv = ["git", "-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false", *args]
+    try:
+        return subprocess.run(
+            argv, cwd=cwd, capture_output=True, text=True, timeout=GIT_TIMEOUT,
+            check=False, env=clean_env(),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return subprocess.CompletedProcess(argv, 124, "", "")
 
 
 def toplevel(path: Path) -> Path | None:
@@ -58,6 +71,7 @@ def choose_repo(workdirs: Sequence[Path], requested: str | None) -> Path:
 
 @dataclass(frozen=True)
 class Worktree:
+    repo: Path  # where the branch lives: the proof is read there, never in the worktree
     path: Path
     branch: str
     start: str  # the commit the branch started from
@@ -73,22 +87,23 @@ def create_worktree(repo: Path, base: Path, run_ref: str) -> Worktree:
     made = git(repo, "worktree", "add", "-b", branch, str(path), start.stdout.strip())
     if made.returncode != 0:
         raise ValueError("création du worktree impossible")
-    return Worktree(path, branch, start.stdout.strip())
+    return Worktree(repo, path, branch, start.stdout.strip())
 
 
 def proof(tree: Worktree) -> str | None:
     """The commit the run produced, only if it really is one (DONE is not proof, D6).
 
-    It must exist, descend from the start commit, and be after it (`rev-parse` also succeeds
-    for the start commit itself).
+    Judged on the run's branch, from the repository: the worktree is the agent's own ground
+    (a `.git` it replaced, a detached HEAD) and says nothing. The commit must exist, descend from
+    the start commit, and be after it (`rev-parse` also succeeds for the start commit itself).
     """
-    head = git(tree.path, "rev-parse", "--verify", "HEAD")
+    head = git(tree.repo, "rev-parse", "--verify", f"refs/heads/{tree.branch}^{{commit}}")
     if head.returncode != 0:
         return None
     produced = head.stdout.strip()
-    if git(tree.path, "merge-base", "--is-ancestor", tree.start, produced).returncode != 0:
+    if git(tree.repo, "merge-base", "--is-ancestor", tree.start, produced).returncode != 0:
         return None
-    count = git(tree.path, "rev-list", "--count", f"{tree.start}..{produced}")
+    count = git(tree.repo, "rev-list", "--count", f"{tree.start}..{produced}")
     if count.returncode != 0 or not count.stdout.strip().isdigit() or int(count.stdout) < 1:
         return None
     return produced
