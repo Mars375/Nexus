@@ -36,8 +36,16 @@ POLL_SECONDS = 2.0
 CURSOR_MAX = 512
 # `native_status` written before the executor is reached: a launch of unknown outcome.
 DISPATCHING = "dispatching"
-# Transient: the run is left as it was and retried on the next tick.
-TRANSIENT = (StaleDataError, OperationalError)
+
+
+def _transient(exc: Exception) -> bool:
+    """A version conflict or a busy/locked SQLite database: the run is left as it was and
+    retried on the next tick. Any other database error is a real fault (also retried, but loud).
+    """
+    if isinstance(exc, StaleDataError):
+        return True
+    text = str(getattr(exc, "orig", exc)).lower()
+    return isinstance(exc, OperationalError) and ("locked" in text or "busy" in text)
 
 
 def info_of(run: Run) -> RunInfo:
@@ -300,10 +308,12 @@ def tick(factory: sessionmaker[Session], registry: AdapterRegistry) -> None:
     for run_id in ids:
         try:
             _step(factory, registry, run_id)
-        except TRANSIENT:
-            log.info("run %s : conflit d'écriture, nouvelle tentative au prochain tour", run_id)
         except Exception as exc:
-            # The adapter's own failure: logged by type, the run is retried next time.
+            if _transient(exc):
+                log.info("run %s : conflit d'écriture, nouvelle tentative au prochain tour", run_id)
+                continue
+            # Anything else (an adapter, a database fault): logged by type only, never the
+            # statement, its parameters or the message; the run is retried next time.
             log.warning("suivi du run %s : %s", run_id, type(exc).__name__)
 
 

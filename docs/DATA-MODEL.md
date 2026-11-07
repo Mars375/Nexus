@@ -77,7 +77,7 @@ Une exécution concrète, créée par « confier à » (table `runs`, migration 
 |---|---|
 | `id` | `nx-run-<n>` |
 | `task` | ref Task |
-| `agent`, `executor` | l'agent à qui le travail est confié, et l'exécutant qui signe les événements du run (ils diffèrent pour Hermes : `agent` `helios`, `executor` `hermes`, ADR-023 D5) |
+| `agent`, `executor` | l'agent à qui le travail est confié, et l'exécutant qui signe les événements du run (ils diffèrent pour Hermes : `agent` `helios`, `executor` `hermes`, ADR-023 D5) ; couples admis : `hermes` pour `helios`, `mnema` ou `aether`, et `codex`, `claude`, `orca` pour eux-mêmes, sinon 409 `agent_not_for_executor` |
 | `dispatched_by`, `client_key` | qui a confié le travail (un humain), et la clé de ce clic : `UNIQUE(dispatched_by, client_key)`, un double clic est un seul run |
 | `brief` | ce que Loïc a écrit, masqué par le scanner de secrets avant écriture |
 | `workdir` | dossier de travail demandé (facultatif) |

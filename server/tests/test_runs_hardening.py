@@ -390,3 +390,47 @@ def test_a_refused_closer_does_not_advance_the_cursor(client):
     assert adapter.watched == ["nx-run-1"]
     got = row(client)
     assert got.status == "running" and got.watch_cursor is None  # retried on the next tick
+
+
+# --- Sixth review: executor/agent pairs, log levels ------------------------------------------
+
+
+def test_an_agent_the_executor_does_not_serve_is_refused(client):
+    register(client)
+    register(client, "hermes")
+    task = make_task(client)
+
+    bad = dispatch(client, task, executor="codex", agent="mnema")
+    assert (bad.status_code, code_of(bad)) == (409, "agent_not_for_executor")
+    assert dispatch(client, task, executor="hermes", agent="codex").status_code == 409
+    assert dispatch(client, task, executor="codex", agent="codex").status_code == 201
+    assert dispatch(
+        client, make_task(client), client_key="k2", executor="hermes", agent="helios"
+    ).status_code == 201
+
+
+def test_busy_database_is_info_other_errors_are_typed_warnings(client, monkeypatch, caplog):
+    import logging
+
+    from sqlalchemy.exc import OperationalError
+
+    register(client)
+    dispatch(client, make_task(client))
+
+    def failing(message):
+        def step(*_args):
+            raise OperationalError("SELECT secret_column", {"p": "hunter2"}, Exception(message))
+        return step
+
+    caplog.set_level(logging.INFO, logger="nexus.runs")
+    monkeypatch.setattr(supervisor, "_step", failing("database is locked"))
+    tick(client)
+    assert [r.levelno for r in caplog.records] == [logging.INFO]
+
+    caplog.clear()
+    monkeypatch.setattr(supervisor, "_step", failing("no such table: runs"))
+    tick(client)
+    [record] = caplog.records
+    assert record.levelno == logging.WARNING and "OperationalError" in record.getMessage()
+    assert "secret_column" not in record.getMessage() and "hunter2" not in record.getMessage()
+    assert "no such table" not in record.getMessage()

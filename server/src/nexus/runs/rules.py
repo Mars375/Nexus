@@ -38,9 +38,23 @@ def check_task_ready(session: Session, task: Task) -> None:
         task_rules.resolve_role(task.operation_role, _other_main_in_progress(session, task))
 
 
+# Which agents an executor works for (ADR-023 D5, D8; INTEGRATIONS §A): Hermes serves the node
+# agents it hosts, the others serve only themselves.
+AGENTS_OF = {
+    "hermes": frozenset({"helios", "mnema", "aether"}),
+    "codex": frozenset({"codex"}),
+    "claude": frozenset({"claude"}),
+    "orca": frozenset({"orca"}),
+}
+
+
 def check_dispatchable(
     session: Session, task: Task, *, executor: str, agent: str, registry: AdapterRegistry
 ) -> None:
+    if agent not in AGENTS_OF.get(executor, frozenset()):
+        raise RuleViolation(
+            "agent_not_for_executor", "cet exécutant ne travaille pas pour cet agent"
+        )
     if registry.get(executor) is None:
         raise RuleViolation(
             "executor_unavailable",
