@@ -139,6 +139,8 @@ def create_app(
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
+            # Codex processes live in their own process groups: they would outlive the server.
+            await asyncio.to_thread(app.state.adapters.close_all)
             first_read.cancel()
             # Its own failure was already logged by nodes_loop: it must not mask the shutdown.
             with suppress(asyncio.CancelledError, Exception):

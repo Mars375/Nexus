@@ -239,10 +239,9 @@ def _dispatch(
         # The work started but its reference could not be written (#168). The reference only
         # lives here: stop the work with it now rather than lose the means to stop it later.
         log.warning("référence de %s non enregistrée : %s", run.ref, type(exc).__name__)
-        try:
-            adapter.cancel(replace(run, external_ref=sent.external_ref))
-        except Exception as cancel_exc:
-            log.warning("annulation de %s : %s", run.ref, type(cancel_exc).__name__)
+        # If the stop fails too, the run is NOT failed: the work may be running, so the run
+        # stays held (the next tick finds the launch marker and marks it unknown).
+        adapter.cancel(replace(run, external_ref=sent.external_ref))
         _fail(factory, adapter, run, "référence de l'exécutant non enregistrée")
         return None
 

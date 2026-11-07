@@ -27,5 +27,15 @@ class AdapterRegistry:
     def get(self, executor: str) -> Adapter | None:
         return self._adapters.get(executor)
 
+    def close_all(self) -> None:
+        """At server shutdown: let each adapter stop what it started. Never raises."""
+        for adapter in self._adapters.values():
+            close = getattr(adapter, "close", None)
+            if close is not None:
+                try:
+                    close()
+                except Exception:  # shutdown goes on whatever one adapter does
+                    pass
+
     def executors(self) -> list[str]:
         return sorted(self._adapters)

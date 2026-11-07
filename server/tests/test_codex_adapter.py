@@ -196,5 +196,5 @@ def test_cancel_kills_the_process_tree(rig):
     assert r.adapter.is_finished(info.ref)
 
 
-def test_cancelling_a_run_it_does_not_know_stops_nothing_and_does_not_raise(rig):
-    rig(lines=[]).adapter.cancel(run_info(9, external_ref="x"))
+def test_cancelling_a_run_never_launched_stops_nothing_and_does_not_raise(rig):
+    rig(lines=[]).adapter.cancel(run_info(9))

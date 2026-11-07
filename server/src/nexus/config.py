@@ -119,7 +119,7 @@ class Settings:
                 f"(reçu : {self.nodes_refresh_seconds})"
             )
 
-        if not (math.isfinite(self.run_max_minutes) and self.run_max_minutes > 0):
+        if not (math.isfinite(self.run_max_minutes * 60) and self.run_max_minutes > 0):
             raise ValueError(
                 "NEXUS_RUN_MAX_MINUTES doit être un nombre fini > 0 "
                 f"(reçu : {self.run_max_minutes})"

@@ -45,9 +45,21 @@ def toplevel(path: Path) -> Path | None:
     return Path(done.stdout.strip()).resolve() if done.returncode == 0 else None
 
 
-def server_repo() -> Path | None:
-    """The repository Nexus itself runs from: never a place to hand work to an agent."""
-    return toplevel(Path(__file__).resolve().parent)
+def common_dir(path: Path) -> Path | None:
+    """The shared `.git` directory of the repository `path` belongs to, worktrees included."""
+    done = git(path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    return Path(done.stdout.strip()).resolve() if done.returncode == 0 else None
+
+
+def server_common_dir() -> Path | None:
+    """The repository Nexus itself runs from, by its shared git directory so that none of its
+    worktrees can be handed to an agent either."""
+    return common_dir(Path(__file__).resolve().parent)
+
+
+def is_server_repo(path: Path) -> bool:
+    mine = server_common_dir()
+    return mine is not None and common_dir(path) == mine
 
 
 def choose_repo(workdirs: Sequence[Path], requested: str | None) -> Path:
@@ -64,7 +76,7 @@ def choose_repo(workdirs: Sequence[Path], requested: str | None) -> Path:
     top = toplevel(repo)
     if top is None or top != repo:
         raise ValueError("dossier de travail : ce n'est pas la racine d'un dépôt git")
-    if top == server_repo():
+    if is_server_repo(repo):
         raise ValueError("dossier de travail : le dépôt du serveur n'est jamais confié")
     return repo
 
@@ -79,7 +91,7 @@ class Worktree:
 
 def create_worktree(repo: Path, base: Path, run_ref: str) -> Worktree:
     branch = f"nexus/{run_ref}"
-    path = base / run_ref
+    path = base.resolve() / run_ref  # absolute: git and the child must agree on where it is
     start = git(repo, "rev-parse", "HEAD")
     if start.returncode != 0:
         raise ValueError("dépôt sans commit : rien à partir de quoi travailler")

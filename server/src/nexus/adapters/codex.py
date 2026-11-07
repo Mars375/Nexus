@@ -33,6 +33,7 @@ log = logging.getLogger("nexus.codex")
 
 PROBE_TIMEOUT = 10.0
 SHORT_SHA = 12
+KEEP_FINISHED = 20  # closed jobs kept in memory, for a late re-read
 MAX_PROGRESS = 300  # progress facts kept per run; the end is always kept
 
 
@@ -104,7 +105,8 @@ class CodexAdapter:
         environ: Mapping[str, str] | None = None,
     ) -> None:
         self.binary, self.workdirs = binary, list(workdirs)
-        self.worktrees = data_dir / "worktrees"
+        self.worktrees = data_dir.resolve() / "worktrees"
+        self.keep_finished = KEEP_FINISHED
         self.max_seconds, self.environ = max_seconds, environ
         self._jobs: dict[str, _Job] = {}
         self._lock = threading.Lock()
@@ -113,7 +115,8 @@ class CodexAdapter:
         """Only `--version`: it starts no model."""
         try:
             done = subprocess.run(
-                [self.binary, "--version"], capture_output=True, timeout=PROBE_TIMEOUT, check=False
+                [self.binary, "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=PROBE_TIMEOUT, check=False,
             )
         except (OSError, subprocess.TimeoutExpired):
             return False
@@ -134,6 +137,7 @@ class CodexAdapter:
         threading.Thread(target=self._feed, args=(process, run.brief), daemon=True).start()
         with self._lock:
             self._jobs[run.ref] = job
+            self._prune()
         return Dispatched(external_ref=tree.branch, native_status="started")
 
     @staticmethod
@@ -143,6 +147,28 @@ class CodexAdapter:
             process.stdin.close()
         except OSError:  # the process already ended
             pass
+
+    def _prune(self) -> None:
+        """Forget the oldest closed jobs beyond `keep_finished` (caller holds `_lock`)."""
+        closed = sorted((r for r, j in self._jobs.items() if j.settled),
+                        key=lambda r: self._jobs[r].started)
+        for ref in closed[: max(0, len(closed) - self.keep_finished)]:
+            del self._jobs[ref]
+
+    def _stopped_marker(self, ref: str) -> Path:
+        return self.worktrees / ".stopped" / ref
+
+    def close(self) -> None:
+        """At server shutdown: stop every process still running, and note it, so that a run
+        lost by the restart can be cancelled with its stop confirmed."""
+        with self._lock:
+            jobs = dict(self._jobs)
+        for ref, job in jobs.items():
+            if codex_process.kill_tree(job.process):
+                self._stopped_marker(ref).parent.mkdir(parents=True, exist_ok=True)
+                self._stopped_marker(ref).touch()
+            else:
+                log.warning("arrêt de %s non confirmé", ref)
 
     def _job(self, ref: str) -> _Job | None:
         with self._lock:
@@ -213,8 +239,11 @@ class CodexAdapter:
     def cancel(self, run: RunInfo) -> None:
         job = self._job(run.ref)
         if job is None:
-            log.info("annulation de %s : aucun processus connu ici", run.ref)
-            return
+            # After a restart nothing is known of the process. Stopped at a clean shutdown
+            # (marker), never launched, or unconfirmable: only the first two may return.
+            if run.external_ref is None or self._stopped_marker(run.ref).exists():
+                return
+            raise RuntimeError("processus inconnu depuis le redémarrage : arrêt non confirmé")
         if not codex_process.kill_tree(job.process):
             raise RuntimeError("arrêt du processus non confirmé")
 
@@ -242,7 +271,8 @@ def register_configured(registry: AdapterRegistry, settings: Settings) -> bool:
         return False
     found = shutil.which(settings.codex_bin or "codex")
     repos = [p for p in settings.run_workdirs
-             if p.is_dir() and codex_git.toplevel(p) == p.resolve()]
+             if p.is_dir() and codex_git.toplevel(p) == p.resolve()
+             and not codex_git.is_server_repo(p)]
     if found is None or not repos:
         return False
     adapter = CodexAdapter(
