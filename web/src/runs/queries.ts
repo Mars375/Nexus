@@ -28,6 +28,17 @@ export function useRuns(taskId: string) {
   })
 }
 
+/** The proofs of a task's runs, read only once there is a run (they come from its events). */
+export function useRunEvidence(taskId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['tasks', taskId, 'run-evidence'],
+    queryFn: ({ signal }) => runsApi.evidence(taskId, signal),
+    enabled,
+    refetchInterval: REFRESH_MS.tasks,
+    ...local,
+  })
+}
+
 /** Which executors can take work now: read when the dialog opens, never cached for long. */
 export function useExecutors(enabled: boolean) {
   return useQuery({
