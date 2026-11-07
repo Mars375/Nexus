@@ -29,6 +29,7 @@ class FakeAdapter:
         self.script = chain() if script is None else script
         self.dispatched: list[str] = []
         self.cancelled: list[str] = []
+        self.cancel_refs: list[str | None] = []
         self.watched: list[str] = []
         self.fail_dispatch = False
         self.on_dispatch = None  # called while the executor is being reached, like a click
@@ -58,6 +59,7 @@ class FakeAdapter:
         if self.fail_cancel:
             raise RuntimeError("cancel failed")
         self.cancelled.append(run.ref)
+        self.cancel_refs.append(run.external_ref)
 
     def recover(self, run):
         return None

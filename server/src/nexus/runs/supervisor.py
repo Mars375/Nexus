@@ -230,10 +230,21 @@ def _dispatch(
             log.warning("annulation de %s : %s", run.ref, type(exc).__name__)
         _fail(factory, adapter, run, "référence de l'exécutant inutilisable")
         return None
-    return _finish(
-        factory, run, external_ref=sent.external_ref,
-        native_status=sent.native_status or "started",
-    )
+    try:
+        return _finish(
+            factory, run, external_ref=sent.external_ref,
+            native_status=sent.native_status or "started",
+        )
+    except Exception as exc:
+        # The work started but its reference could not be written (#168). The reference only
+        # lives here: stop the work with it now rather than lose the means to stop it later.
+        log.warning("référence de %s non enregistrée : %s", run.ref, type(exc).__name__)
+        try:
+            adapter.cancel(replace(run, external_ref=sent.external_ref))
+        except Exception as cancel_exc:
+            log.warning("annulation de %s : %s", run.ref, type(cancel_exc).__name__)
+        _fail(factory, adapter, run, "référence de l'exécutant non enregistrée")
+        return None
 
 
 def _watch(factory: sessionmaker[Session], adapter: Adapter, run: RunInfo) -> None:

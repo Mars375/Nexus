@@ -232,3 +232,21 @@ def quiet_run_supervisor(monkeypatch):
     from nexus.runs import supervisor
 
     monkeypatch.setattr(supervisor, "POLL_SECONDS", 3600.0)
+
+
+@pytest.fixture(autouse=True)
+def never_the_real_codex(monkeypatch):
+    """No test may start the real `codex` binary (ADR-023, D8): tests use a fake executable."""
+    import subprocess
+    from pathlib import PurePath
+
+    real = subprocess.Popen
+
+    class GuardedPopen(real):
+        def __init__(self, args, *a, **kw):
+            first = str(args).split()[0] if isinstance(args, str) else str((list(args) or [""])[0])
+            if PurePath(first).stem.lower() == "codex":
+                raise AssertionError("a test tried to start the real codex binary")
+            super().__init__(args, *a, **kw)
+
+    monkeypatch.setattr(subprocess, "Popen", GuardedPopen)
