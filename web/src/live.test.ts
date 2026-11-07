@@ -305,6 +305,8 @@ describe('connectLive', () => {
       ['task_changed sans task', { type: 'task_changed', cursor: C }],
       ['task_changed avec task vide', { type: 'task_changed', cursor: C, task: '' }],
       ['task_changed avec task numérique', { type: 'task_changed', cursor: C, task: 3 }],
+      ['run_changed sans task', { type: 'run_changed', cursor: C }],
+      ['run_changed avec task vide', { type: 'run_changed', cursor: C, task: '' }],
       ['event sans event', { type: 'event', cursor: C, kind: 'done', task: null }],
       ['event avec event vide', { type: 'event', cursor: C, event: '', kind: 'done', task: null }],
       ['event sans kind', { type: 'event', cursor: C, event: 'e1', task: null }],
@@ -348,6 +350,7 @@ describe('connectLive', () => {
       const valid = [
         { type: 'hello', cursor: C, reset: true },
         { type: 'task_changed', cursor: C, task: 'nx-task-1' },
+        { type: 'run_changed', cursor: C, task: 'nx-task-1' },
         { type: 'event', cursor: C, event: 'e1', kind: 'done', task: null },
         { type: 'event', cursor: C, event: 'e1', kind: 'done', task: 'nx-task-1' },
         { type: 'resync', cursor: C },

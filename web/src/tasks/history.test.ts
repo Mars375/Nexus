@@ -142,3 +142,11 @@ test('le lien de suite est nommé avec les autres champs modifiés', () => {
     'a modifié le titre et le lien de suite',
   )
 })
+
+test('un run confié ou son annulation demandée se lisent, sans valeur inconnue', () => {
+  expect(describeHistory(entry('loic', { run: 'nx-run-1', agent: 'codex' }, 'run_created'))).toBe(
+    'a confié la tâche à Codex (run)',
+  )
+  expect(describeHistory(entry('loic', { agent: 'ghp_secret' }, 'run_created'))).toBe('a confié la tâche à un agent (run)')
+  expect(describeHistory(entry('loic', { run: 'nx-run-1' }, 'run_cancel_requested'))).toBe('a demandé l’annulation d’un run')
+})

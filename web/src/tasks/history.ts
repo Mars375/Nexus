@@ -94,6 +94,14 @@ export function describeHistory(entry: HistoryEntry): string {
       }
       return 'a modifié plusieurs champs'
     }
+    case 'run_created': {
+      const agent = c.agent
+      return typeof agent === 'string' && Object.hasOwn(ACTOR_NAME, agent)
+        ? `a confié la tâche à ${actorName(agent)} (run)`
+        : 'a confié la tâche à un agent (run)'
+    }
+    case 'run_cancel_requested':
+      return 'a demandé l’annulation d’un run'
     case 'commented':
       return 'a commenté'
     case 'linked':
