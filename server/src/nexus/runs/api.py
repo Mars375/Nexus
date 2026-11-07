@@ -18,6 +18,7 @@ from nexus.auth.deps import Authenticated
 from nexus.clock import now
 from nexus.models import Run
 from nexus.runs import service
+from nexus.runs.rules import AGENTS_OF
 from nexus.tasks import service as tasks
 from nexus.tasks.api import ActorDep, SessionDep, commit, parse_ref
 from nexus.validation import InputModel
@@ -40,6 +41,16 @@ class RunIn(InputModel):
     workdir: Annotated[
         str, StringConstraints(strip_whitespace=True, min_length=1, max_length=WORKDIR_MAX)
     ] | None = None
+
+
+class ExecutorOut(BaseModel):
+    """An executor that can take work now: who it works for and where (what the dialog offers)."""
+
+    executor: str
+    agents: list[str]
+    workdirs: list[str]
+    source: str = "nexus.db"
+    measured_at: datetime
 
 
 class RunOut(BaseModel):
@@ -98,6 +109,20 @@ def cancel(run_ref: str, session: SessionDep, actor: ActorDep) -> RunOut:
     run = service.request_cancel(session, service.get_run(session, run_ref), actor)
     commit(session)
     return to_out(run)
+
+
+@router.get("/api/executors")
+def executors(request: Request) -> list[ExecutorOut]:
+    """The executors with a registered adapter. Empty: nothing can be handed over (409)."""
+    registry = request.app.state.adapters
+    return [
+        ExecutorOut(
+            executor=name, agents=sorted(AGENTS_OF.get(name, ())),
+            workdirs=[str(p) for p in getattr(registry.get(name), "workdirs", [])],
+            measured_at=now(),
+        )
+        for name in registry.executors()
+    ]
 
 
 @router.get("/api/runs/{run_ref}")
