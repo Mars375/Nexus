@@ -46,6 +46,7 @@ class _Job:
         self.lock = threading.Lock()
         self.events: list[RunEvent] = []
         self.progress = 0
+        self.opened: set[str] = set()
         self.turn_done = False
         self.failure: str | None = None
         self.settled = False
@@ -86,8 +87,12 @@ class _Job:
             elif fact.kind == "failed":
                 with self.lock:
                     self.failure = self.failure or fact.body
-            elif fact.kind != "progress" or self.progress < MAX_PROGRESS:
-                self.progress += fact.kind == "progress"
+            elif fact.kind in ("claimed", "working"):
+                if fact.kind not in self.opened:  # once each: a loop of them would flood
+                    self.opened.add(fact.kind)
+                    self.add(fact.kind, fact.subject, fact.body)
+            elif self.progress < MAX_PROGRESS:
+                self.progress += 1
                 self.add(fact.kind, fact.subject, fact.body)
         self.process.wait()
         self.ended_at = time.monotonic()
@@ -164,11 +169,14 @@ class CodexAdapter:
         with self._lock:
             jobs = dict(self._jobs)
         for ref, job in jobs.items():
-            if codex_process.kill_tree(job.process):
-                self._stopped_marker(ref).parent.mkdir(parents=True, exist_ok=True)
-                self._stopped_marker(ref).touch()
-            else:
-                log.warning("arrêt de %s non confirmé", ref)
+            try:  # one job that cannot be stopped or noted never spares the next
+                if codex_process.kill_tree(job.process):
+                    self._stopped_marker(ref).parent.mkdir(parents=True, exist_ok=True)
+                    self._stopped_marker(ref).touch()
+                else:
+                    log.warning("arrêt de %s non confirmé", ref)
+            except Exception as exc:
+                log.warning("arrêt de %s : %s", ref, type(exc).__name__)
 
     def _job(self, ref: str) -> _Job | None:
         with self._lock:
@@ -241,11 +249,16 @@ class CodexAdapter:
         if job is None:
             # After a restart nothing is known of the process. Stopped at a clean shutdown
             # (marker), never launched, or unconfirmable: only the first two may return.
-            if run.external_ref is None or self._stopped_marker(run.ref).exists():
+            never_launched = run.external_ref is None and run.native_status != "dispatching"
+            if never_launched or self._stopped_marker(run.ref).exists():
                 return
             raise RuntimeError("processus inconnu depuis le redémarrage : arrêt non confirmé")
         if not codex_process.kill_tree(job.process):
             raise RuntimeError("arrêt du processus non confirmé")
+        with job.lock:
+            job.settled = True  # over for good: it may now be pruned, and nothing follows
+        with self._lock:
+            self._prune()
 
     def recover(self, run: RunInfo) -> str | None:
         return None  # a lost run is not picked up again: a human decides

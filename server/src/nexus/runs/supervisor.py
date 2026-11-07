@@ -184,6 +184,12 @@ def _cancel(factory: sessionmaker[Session], adapter: Adapter | None, run: RunInf
             # Still possibly running: the run stays open and the cancel is retried next tick.
             log.warning("annulation de %s : %s", run.ref, type(exc).__name__)
             return
+    _close_cancelled(factory, adapter, run)
+
+
+def _close_cancelled(
+    factory: sessionmaker[Session], adapter: Adapter | None, run: RunInfo
+) -> None:
     # `failed` closes the run in the event journal, so the executor may open another one.
     event = _own_event("failed", "run annulé", cause="annulé à la demande d'un humain")
     _publish(factory, run, adapter.name if adapter else "nexus", event, f"{run.ref}-cancelled")
@@ -242,7 +248,11 @@ def _dispatch(
         # If the stop fails too, the run is NOT failed: the work may be running, so the run
         # stays held (the next tick finds the launch marker and marks it unknown).
         adapter.cancel(replace(run, external_ref=sent.external_ref))
-        _fail(factory, adapter, run, "référence de l'exécutant non enregistrée")
+        fresh, requested = _load(factory, run.run_id)
+        if requested:  # a human asked for this stop meanwhile: it ends cancelled, not failed
+            _close_cancelled(factory, adapter, fresh)
+        else:
+            _fail(factory, adapter, run, "référence de l'exécutant non enregistrée")
         return None
 
 
@@ -308,6 +318,12 @@ def _step(factory: sessionmaker[Session], registry: AdapterRegistry, run_id: int
 
 def tick(factory: sessionmaker[Session], registry: AdapterRegistry) -> None:
     """One pass over the runs that need attention. Never raises: it is a loop body."""
+    with registry.tick_lock:
+        if not registry.stopping.is_set():
+            _tick(factory, registry)
+
+
+def _tick(factory: sessionmaker[Session], registry: AdapterRegistry) -> None:
     with factory() as session:
         ids = list(session.scalars(
             select(Run.id).where(or_(

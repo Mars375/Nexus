@@ -34,8 +34,12 @@ def _cut(text: object) -> str | None:
     protocol refuses such a body, and a refused fact would hold the run back)."""
     if not isinstance(text, str):
         return None
-    cut = text.strip()[:TEXT_MAX]
-    return None if secrets.is_blank(secrets.redact(cut)[0]) else cut
+    # A lone UTF-16 half (JSON allows "\ud800") cannot be encoded back: replaced first. Secrets
+    # are masked on the WHOLE text, then it is cut: a key straddling the cut would otherwise
+    # lose the beginning the scanner recognises and be published in clear.
+    clean = text.encode("utf-8", "replace").decode("utf-8")
+    cut = secrets.redact(clean)[0].strip()[:TEXT_MAX]
+    return None if secrets.is_blank(cut) else cut
 
 
 def _item(item: dict) -> Fact | None:
