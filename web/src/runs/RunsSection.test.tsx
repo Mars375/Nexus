@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { Task } from '@/api'
-import { clearToken, markUnlocked } from '@/auth'
+import { clearToken, markLocked, markUnlocked } from '@/auth'
 import type { ExecutorInfo, Run } from '@/runsApi'
 import { RunsSection } from './RunsSection'
 
@@ -41,11 +41,14 @@ function serve(routes: Routes) {
 }
 
 function mount(task: Task = TASK) {
-  render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <RunsSection task={task} />
-    </QueryClientProvider>,
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const tree = (t: Task) => (
+    <QueryClientProvider client={client}>
+      <RunsSection task={t} />
+    </QueryClientProvider>
   )
+  const view = render(tree(task))
+  return { client, setTask: (t: Task) => view.rerender(tree(t)) }
 }
 
 beforeEach(() => {
@@ -177,10 +180,95 @@ test.each([
   ['run_already_active', /Cet agent a déjà un run actif sur cette tâche/],
   ['agent_not_for_executor', /ne travaille pas pour cet agent/],
   ['task_done', /Cette tâche est terminée/],
+  ['transition_refused', /Cette tâche a été abandonnée/],
+  ['concurrent_update', /vient d’être modifiée ailleurs/],
 ])('le refus %s est expliqué', async (code, expected) => {
   const refusal = new Response(JSON.stringify({ detail: { code, message: 'serveur' } }), { status: 409 })
   const { dialog } = await openDialog({ executors: [CODEX], post: refusal })
   fireEvent.change(await within(dialog).findByLabelText(/^Brief/), { target: { value: 'b' } })
   fireEvent.click(within(dialog).getByRole('button', { name: 'Lancer l’agent' }))
   expect(await within(dialog).findByRole('alert')).toHaveTextContent(expected)
+})
+
+
+test('un 401 à l’envoi ne laisse pas son refus affiché une fois le jeton ressaisi', async () => {
+  const refusal = new Response(JSON.stringify({ detail: { code: 'invalid_token', message: 'jeton refusé' } }), { status: 401 })
+  const { dialog } = await openDialog({ executors: [CODEX], post: refusal })
+  fireEvent.change(await within(dialog).findByLabelText(/^Brief/), { target: { value: 'Mon brief' } })
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Lancer l’agent' }))
+  act(() => markLocked('invalid_token'))
+  act(() => markUnlocked())
+  const field = (await screen.findByLabelText(/^Brief/)) as HTMLTextAreaElement
+  expect(field.value).toBe('Mon brief') // le brouillon survit
+  await waitFor(() => expect(screen.queryByText(/jeton/i)).toBeNull())
+})
+
+test('modifier un champ efface le refus précédent', async () => {
+  const refusal = new Response(JSON.stringify({ detail: { code: 'executor_busy', message: 'serveur' } }), { status: 409 })
+  const { dialog } = await openDialog({ executors: [CODEX], post: refusal })
+  const brief = await within(dialog).findByLabelText(/^Brief/)
+  fireEvent.change(brief, { target: { value: 'b' } })
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Lancer l’agent' }))
+  await within(dialog).findByRole('alert')
+  fireEvent.change(brief, { target: { value: 'b2' } })
+  expect(within(dialog).queryByRole('alert')).toBeNull()
+})
+
+test('la tâche terminée pendant que le dialogue est ouvert : il le dit et n’envoie plus', async () => {
+  serve({ runs: [], executors: [CODEX] })
+  const { setTask } = mount()
+  fireEvent.click(await screen.findByRole('button', { name: 'Confier à…' }))
+  const dialog = await screen.findByRole('dialog')
+  fireEvent.change(await within(dialog).findByLabelText(/^Brief/), { target: { value: 'b' } })
+  setTask({ ...TASK, status: 'done' })
+  expect(await within(dialog).findByRole('alert')).toHaveTextContent('vient d’être terminée')
+  expect(within(dialog).getByRole('button', { name: 'Lancer l’agent' })).toBeDisabled()
+})
+
+test('un choix que le serveur ne propose plus reste visible, marqué, et bloque l’envoi', async () => {
+  const state = { executors: [CODEX, HERMES] }
+  const calls = serve({ runs: [] })
+  vi.mocked(fetch).mockImplementation(async (url, init) => {
+    const path = String(url).replace(/^https?:\/\/[^/]+/, '')
+    calls.push({ url: path, method: init?.method ?? 'GET', body: undefined })
+    if (path.startsWith('/api/executors')) return new Response(JSON.stringify(state.executors))
+    return new Response('[]')
+  })
+  const { client } = mount()
+  fireEvent.click(await screen.findByRole('button', { name: 'Confier à…' }))
+  const dialog = await screen.findByRole('dialog')
+  fireEvent.change(await within(dialog).findByLabelText(/^Exécutant/), { target: { value: 'hermes' } })
+  fireEvent.change(within(dialog).getByLabelText(/^Brief/), { target: { value: 'Pour Mnēma' } })
+
+  state.executors = [CODEX] // Hermes disparaît pendant la saisie
+  await act(() => client.invalidateQueries({ queryKey: ['executors'] }))
+
+  expect(await within(dialog).findByText(/Hermes — plus disponible/)).toBeInTheDocument()
+  expect(within(dialog).getByRole('alert')).toHaveTextContent('Ce choix n’est plus proposé')
+  expect((within(dialog).getByLabelText(/^Brief/) as HTMLTextAreaElement).value).toBe('Pour Mnēma')
+  expect(within(dialog).getByRole('button', { name: 'Lancer l’agent' })).toBeDisabled()
+  fireEvent.change(within(dialog).getByLabelText(/^Exécutant/), { target: { value: 'codex' } })
+  expect(within(dialog).getByRole('button', { name: 'Lancer l’agent' })).not.toBeDisabled()
+})
+
+test('le run terminé pendant la confirmation d’annulation : le dialogue le dit, la confirmation est bloquée', async () => {
+  serve({ runs: [RUN] })
+  const { client } = mount()
+  fireEvent.click(await screen.findByRole('button', { name: 'Annuler le run nx-run-1' }))
+  const dialog = await screen.findByRole('dialog')
+  expect(within(dialog).getByRole('button', { name: 'Annuler le run' })).not.toBeDisabled()
+  vi.mocked(fetch).mockImplementation(async () => new Response(JSON.stringify([{ ...RUN, status: 'done', ended_at: T }])))
+  await act(() => client.invalidateQueries({ queryKey: ['tasks', 'nx-task-1', 'runs'] }))
+  expect(await within(dialog).findByRole('alert')).toHaveTextContent('Ce run a changé depuis')
+  expect(within(dialog).getByRole('button', { name: 'Annuler le run' })).toBeDisabled()
+})
+
+test('l’échec de lecture des preuves est dit, et la provenance reste affichée', async () => {
+  serve({ runs: [{ ...RUN, status: 'done', ended_at: T }] })
+  vi.mocked(fetch).mockImplementation(async (url) =>
+    String(url).includes('/api/events') ? new Response('boom', { status: 500 }) : new Response(JSON.stringify([{ ...RUN, status: 'done', ended_at: T }])),
+  )
+  mount()
+  expect(await screen.findByText(/Les preuves des runs n’ont pas pu être lues/)).toBeInTheDocument()
+  expect(screen.getByText(/source : nexus\.db/)).toBeInTheDocument()
 })

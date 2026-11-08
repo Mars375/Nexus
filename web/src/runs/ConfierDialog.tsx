@@ -1,11 +1,11 @@
-import { useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
-import type { Actor, Task } from '@/api'
-import type { ExecutorInfo } from '@/runsApi'
+import { ApiError, type Actor, type Task } from '@/api'
+import { useAuth } from '@/auth'
 import { Button, Dialog, Field, inputClass } from '@/ui'
 import { actorName } from '@/tasks/vocabulary'
 import { newClientKey, useDispatchRun, useExecutors } from './queries'
-import { refusalText } from './vocabulary'
+import { HANDOVER_CLOSED, refusalText } from './vocabulary'
 
 export const BRIEF_MAX = 20_000
 
@@ -21,21 +21,47 @@ export function ConfierDialog({ task, onClose }: { task: Task; onClose: () => vo
   // is a new one (the server refuses the same key for another content).
   const sent = useRef<{ signature: string; key: string } | null>(null)
 
+  // A 401 is no longer true once the token is entered again: forget it on unlock.
+  const { locked } = useAuth()
+  const refusedAuth = dispatch.error instanceof ApiError && dispatch.error.status === 401
+  const unlockable = useRef(false)
+  unlockable.current = refusedAuth
+  useEffect(() => {
+    if (!locked && unlockable.current) dispatch.reset()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only locked -> unlocked matters
+  }, [locked])
+
   const list = executors.data ?? []
-  const chosen: ExecutorInfo | undefined = list.find((e) => e.executor === (executor || list[0]?.executor))
-  const agents = chosen?.agents ?? []
-  const theAgent = agent && agents.includes(agent) ? agent : agents[0]
-  const theWorkdir = workdir && chosen?.workdirs.includes(workdir) ? workdir : chosen?.workdirs[0]
-  const ready = chosen && theAgent && brief.trim().length > 0 && !dispatch.isPending
+  // What Loïc chose stays what he chose: if the server no longer offers it, it stays on screen,
+  // marked invalid, and blocks the sending (never replaced by another value in silence).
+  const selected = executor || list[0]?.executor
+  const info = list.find((e) => e.executor === selected)
+  const executorGone = executor !== '' && executors.isSuccess && !info
+  const agents = info?.agents ?? []
+  const theAgent = agent || agents[0]
+  const agentGone = !!theAgent && !!info && !agents.includes(theAgent)
+  const workdirs = info?.workdirs ?? []
+  const theWorkdir = workdir || workdirs[0]
+  const workdirGone = workdir !== '' && !!info && !workdirs.includes(workdir)
+  const gone = executorGone || agentGone || workdirGone
+  const closed = HANDOVER_CLOSED.includes(task.status)
+  const showForm = !!info || executorGone
+  const ready = showForm && !gone && !closed && !!theAgent && brief.trim().length > 0 && !dispatch.isPending
+
+  // Editing a field makes a past refusal obsolete.
+  const edit = <T,>(set: (value: T) => void) => (value: T) => {
+    if (dispatch.isError && !dispatch.isPending) dispatch.reset()
+    set(value)
+  }
 
   function submit(event: FormEvent) {
     event.preventDefault()
-    if (!ready || !chosen || !theAgent) return
+    if (!ready || !selected || !theAgent) return
     const text = brief.trim()
-    const signature = JSON.stringify([chosen.executor, theAgent, theWorkdir ?? null, text])
+    const signature = JSON.stringify([selected, theAgent, theWorkdir ?? null, text])
     if (sent.current?.signature !== signature) sent.current = { signature, key: newClientKey() }
     dispatch.mutate(
-      { executor: chosen.executor, agent: theAgent, client_key: sent.current.key, brief: text, workdir: theWorkdir },
+      { executor: selected, agent: theAgent, client_key: sent.current.key, brief: text, workdir: theWorkdir },
       {
         onSuccess: (run) => {
           toast.success(`Confié à ${actorName(run.agent)} (${run.id})`)
@@ -45,6 +71,16 @@ export function ConfierDialog({ task, onClose }: { task: Task; onClose: () => vo
     )
   }
 
+  const options = (values: string[], held: string | undefined, gone: boolean) => (
+    <>
+      {gone && held && <option value={held}>{actorName(held)} — plus disponible</option>}
+      {values.map((v) => (
+        <option key={v} value={v}>{actorName(v)}</option>
+      ))}
+    </>
+  )
+  const pending = dispatch.isPending
+
   return (
     <Dialog
       open
@@ -53,46 +89,70 @@ export function ConfierDialog({ task, onClose }: { task: Task; onClose: () => vo
       description="Un agent travaille sur cette tâche, dans un dossier à part."
     >
       <form onSubmit={submit} className="grid gap-3">
+        {closed && (
+          <p role="alert" className="text-xs text-danger">
+            Cette tâche vient d’être {task.status === 'done' ? 'terminée' : 'abandonnée'} : elle ne peut plus être confiée.
+          </p>
+        )}
         {executors.isPending && <p className="text-xs text-muted">Chargement des exécutants…</p>}
         {executors.isError && (
           <p role="alert" className="text-xs text-danger">
             Impossible de lire les exécutants disponibles.
           </p>
         )}
-        {executors.isSuccess && list.length === 0 && (
+        {executors.isSuccess && list.length === 0 && !executorGone && (
           <p role="alert" className="text-xs text-attention">
             Aucun exécutant n’est configuré sur ce serveur : rien ne peut être confié pour l’instant.
           </p>
         )}
-        {chosen && (
+        {gone && (
+          <p role="alert" className="text-xs text-danger">
+            Ce choix n’est plus proposé par le serveur : change-le pour continuer. Ton brief est gardé.
+          </p>
+        )}
+        {showForm && (
           <>
             <Field label="Exécutant">
               <select
                 className={inputClass}
-                value={chosen.executor}
+                value={selected}
+                disabled={pending}
+                aria-invalid={executorGone || undefined}
                 onChange={(e) => {
-                  setExecutor(e.target.value as Actor)
+                  edit(setExecutor)(e.target.value as Actor)
                   setAgent('')
                   setWorkdir('')
                 }}
                 autoFocus
               >
+                {executorGone && selected && <option value={selected}>{actorName(selected)} — plus disponible</option>}
                 {list.map((e) => (
                   <option key={e.executor} value={e.executor}>{actorName(e.executor)}</option>
                 ))}
               </select>
             </Field>
             <Field label="Agent" hint="Seuls les agents que cet exécutant sert sont proposés.">
-              <select className={inputClass} value={theAgent} onChange={(e) => setAgent(e.target.value as Actor)}>
-                {agents.map((a) => (
-                  <option key={a} value={a}>{actorName(a)}</option>
-                ))}
+              <select
+                className={inputClass}
+                value={theAgent}
+                disabled={pending}
+                aria-invalid={agentGone || undefined}
+                onChange={(e) => edit(setAgent)(e.target.value as Actor)}
+              >
+                {options(agents, theAgent, agentGone || executorGone)}
               </select>
             </Field>
-            {chosen.workdirs.length > 0 && (
+            {(workdirs.length > 0 || workdirGone) && (
               <Field label="Dossier de travail" hint="Un dépôt déclaré sur le serveur ; le travail se fait dans un worktree à part.">
-                <select className={inputClass} value={theWorkdir} onChange={(e) => setWorkdir(e.target.value)}>
-                  {chosen.workdirs.map((w) => (
+                <select
+                  className={inputClass}
+                  value={theWorkdir}
+                  disabled={pending}
+                  aria-invalid={workdirGone || undefined}
+                  onChange={(e) => edit(setWorkdir)(e.target.value)}
+                >
+                  {workdirGone && <option value={workdir}>{workdir} — plus disponible</option>}
+                  {workdirs.map((w) => (
                     <option key={w} value={w}>{w}</option>
                   ))}
                 </select>
@@ -104,7 +164,8 @@ export function ConfierDialog({ task, onClose }: { task: Task; onClose: () => vo
                 rows={5}
                 value={brief}
                 maxLength={BRIEF_MAX}
-                onChange={(e) => setBrief(e.target.value)}
+                readOnly={pending}
+                onChange={(e) => edit(setBrief)(e.target.value)}
                 required
               />
             </Field>
@@ -124,7 +185,7 @@ export function ConfierDialog({ task, onClose }: { task: Task; onClose: () => vo
             Annuler
           </Button>
           <Button type="submit" variant="primary" disabled={!ready}>
-            {dispatch.isPending ? 'Envoi…' : 'Lancer l’agent'}
+            {pending ? 'Envoi…' : 'Lancer l’agent'}
           </Button>
         </div>
       </form>

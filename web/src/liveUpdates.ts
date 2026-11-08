@@ -25,7 +25,10 @@ function invalidationsFor(message: LiveMessage): Invalidation[] {
     case 'task_changed':
       return [{ queryKey: tasksKey, exact: true }, { queryKey: ['tasks', message.task] }, { queryKey: nowKey }]
     case 'run_changed':
-      return [{ queryKey: ['tasks', message.task, 'runs'] }]
+      return [
+        { queryKey: ['tasks', message.task, 'runs'] },
+        { queryKey: ['tasks', message.task, 'run-evidence'] },
+      ]
     case 'event':
       return [
         { queryKey: ['events'] },

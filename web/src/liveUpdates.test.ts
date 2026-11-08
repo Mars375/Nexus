@@ -27,7 +27,10 @@ describe('createLiveBatcher', () => {
     const batcher = createLiveBatcher(client)
     batcher.push({ type: 'run_changed', task: 'nx-task-1', cursor: CURSOR })
     vi.advanceTimersByTime(LIVE_BATCH_MS)
-    expect(filters(invalidate)).toEqual([JSON.stringify({ queryKey: ['tasks', 'nx-task-1', 'runs'] })])
+    expect(filters(invalidate)).toEqual([
+      JSON.stringify({ queryKey: ['tasks', 'nx-task-1', 'runs'] }),
+      JSON.stringify({ queryKey: ['tasks', 'nx-task-1', 'run-evidence'] }),
+    ])
   })
 
   test('LIVE_BATCH_MS vaut 50 ms', () => {

@@ -76,7 +76,8 @@ export function useCancelRun(taskId: string) {
     mutationFn: (runId: string) => runsApi.cancel(runId),
     onSuccess: () => toast.success('Annulation demandée'),
     onError: notifyError,
-    onSettled: () => client.invalidateQueries({ queryKey: runsKey(taskId) }),
+    // The cancel is traced in the task's history: the whole task is read again.
+    onSettled: () => client.invalidateQueries({ queryKey: ['tasks', taskId] }),
     ...local,
   })
 }

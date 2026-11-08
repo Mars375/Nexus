@@ -9,7 +9,7 @@ import { Section } from './TaskPaneSection'
 import { actorName } from './vocabulary'
 
 /** Provenance d'une sous-liste (commentaires, historique) : son élément le plus ancien. */
-function ListProvenance({ items, updatedAt }: { items: Provenanced[] | undefined; updatedAt: number }) {
+export function ListProvenance({ items, updatedAt }: { items: Provenanced[] | undefined; updatedAt: number }) {
   const provenance = items ? listProvenance(items, 'tasks', updatedAt) : null
   return provenance ? (
     <p className="mb-2">
@@ -19,7 +19,7 @@ function ListProvenance({ items, updatedAt }: { items: Provenanced[] | undefined
 }
 
 /** Chargement, échec ou données non à jour d'une section de détail (ADR-005 : jamais de vide muet). */
-function LoadState({ query, what, label }: {
+export function LoadState({ query, what, label }: {
   query: { isPending: boolean; isError: boolean; data: unknown }
   what: string
   label: string

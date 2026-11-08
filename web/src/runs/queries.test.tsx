@@ -100,3 +100,13 @@ test('chaque dialogue a sa propre clé, au format accepté par le serveur', () =
   expect(a).not.toBe(b)
   expect(a).toMatch(/^[A-Za-z0-9._:-]{1,128}$/)
 })
+
+test('annuler relit toute la tâche : runs et historique', async () => {
+  vi.stubGlobal('fetch', reply(200, run))
+  const { client, wrapper } = setup()
+  const invalidate = vi.spyOn(client, 'invalidateQueries')
+  const { result } = renderHook(() => useCancelRun('nx-task-1'), { wrapper })
+  act(() => result.current.mutate('nx-run-1'))
+  await waitFor(() => expect(result.current.isSuccess).toBe(true))
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: ['tasks', 'nx-task-1'] })
+})

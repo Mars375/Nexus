@@ -1,17 +1,14 @@
 import { useState } from 'react'
 import type { Task } from '@/api'
 import { formatDateTime } from '@/format'
-import { Provenance } from '@/Provenance'
 import type { Run } from '@/runsApi'
+import { ListProvenance } from '@/tasks/TaskPaneActivity'
 import { Section } from '@/tasks/TaskPaneSection'
 import { actorName } from '@/tasks/vocabulary'
 import { Button, Dialog } from '@/ui'
 import { ConfierDialog } from './ConfierDialog'
 import { useCancelRun, useRunEvidence, useRuns } from './queries'
-import { CANCELLABLE, RUN_STATUS_LABEL } from './vocabulary'
-
-/** A task that ended (done) or was dropped cannot be handed over (the server says 409). */
-const HANDOVER_CLOSED = ['done', 'dropped']
+import { CANCELLABLE, HANDOVER_CLOSED, RUN_STATUS_LABEL } from './vocabulary'
 
 export function RunsSection({ task }: { task: Task }) {
   const runs = useRuns(task.id)
@@ -20,7 +17,9 @@ export function RunsSection({ task }: { task: Task }) {
   const [cancelling, setCancelling] = useState<Run | null>(null)
   const cancel = useCancelRun(task.id)
   const list = runs.data ?? []
-  const first = list[0]
+  // The run the dialog is about, as it is now: it may have ended or been cancelled meanwhile.
+  const current = cancelling ? (list.find((r) => r.id === cancelling.id) ?? cancelling) : null
+  const cancellable = current !== null && CANCELLABLE.includes(current.status) && !current.cancel_requested_at
 
   return (
     <Section title="Runs">
@@ -71,7 +70,14 @@ export function RunsSection({ task }: { task: Task }) {
           ))}
         </ul>
       )}
-      {first && <Provenance source={first.source} measuredAt={first.measured_at} kind="tasks" className="mt-2 block font-data" />}
+      {list.length > 0 && evidence.isError && (
+        <p role="status" className="mt-2 text-xs text-attention">
+          Les preuves des runs n’ont pas pu être lues{evidence.data ? ' : celles affichées sont peut-être périmées' : ''}.
+        </p>
+      )}
+      <div className="mt-2">
+        <ListProvenance items={runs.data} updatedAt={runs.dataUpdatedAt} />
+      </div>
       {!HANDOVER_CLOSED.includes(task.status) && (
         <div className="mt-3">
           <Button onClick={() => setHanding(true)}>Confier à…</Button>
@@ -79,19 +85,26 @@ export function RunsSection({ task }: { task: Task }) {
       )}
 
       {handing && <ConfierDialog task={task} onClose={() => setHanding(false)} />}
-      {cancelling && (
+      {cancelling && current && (
         <Dialog
           open
           onOpenChange={(open) => !open && setCancelling(null)}
           title={`Annuler le run ${cancelling.id} ?`}
           description="L’exécutant est arrêté ; ce que l’agent a déjà écrit dans son worktree reste en place."
         >
+          {!cancellable && (
+            <p role="alert" className="mb-3 text-xs text-danger">
+              Ce run a changé depuis : il ne s’annule plus ({RUN_STATUS_LABEL[current.status].toLowerCase()}
+              {current.cancel_requested_at ? ', annulation déjà demandée' : ''}).
+            </p>
+          )}
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setCancelling(null)} autoFocus>
               Garder le run
             </Button>
             <Button
               variant="primary"
+              disabled={!cancellable}
               onClick={() => {
                 cancel.mutate(cancelling.id)
                 setCancelling(null)
