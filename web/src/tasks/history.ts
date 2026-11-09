@@ -101,7 +101,7 @@ export function describeHistory(entry: HistoryEntry): string {
         : 'a confié la tâche à un agent (run)'
     }
     case 'run_status':
-      return 'le statut d’un run a changé'
+      return 'a fait avancer un run'
     case 'run_cancel_requested':
       return 'a demandé l’annulation d’un run'
     case 'commented':

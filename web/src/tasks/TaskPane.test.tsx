@@ -123,21 +123,26 @@ test('un cycle apparu pendant la sélection est expliqué et bloque l’ajout', 
   expect(screen.getByRole('button', { name: 'Ajouter' })).toBeDisabled()
 })
 
-test('le panneau dit d’où viennent la tâche, ses commentaires et son historique', async () => {
+test('le panneau dit d’où viennent la tâche, ses runs, ses commentaires et son historique', async () => {
   const now = new Date().toISOString()
   const comment = { id: 1, task: TASK.id, author: 'loic', body: 'noté', at: now, source: 'nexus.db', measured_at: now }
   const entry = { id: 1, task: TASK.id, actor: 'loic', at: now, action: 'created', changes: {}, source: 'nexus.db', measured_at: now }
-  vi.stubGlobal('fetch', vi.fn(async (url: string) =>
-    Response.json(String(url).endsWith('/comments') ? [comment] : [entry]),
-  ))
+  // Une réponse par ressource : la section Runs lit ses runs puis leurs preuves (événements).
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    const path = String(url)
+    if (path.endsWith('/comments')) return Response.json([comment])
+    if (path.endsWith('/runs') || path.startsWith('/api/events')) return Response.json([])
+    return Response.json([entry])
+  }))
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={client}>
       <TaskPane task={{ ...TASK, measured_at: now }} tasks={[TASK]} onClose={() => {}} onOpen={() => {}} onFollowUp={() => {}} />
     </QueryClientProvider>,
   )
+  // La tâche, ses runs, ses commentaires et son historique : quatre provenances.
   await waitFor(() =>
-    expect(screen.getAllByText(/^source : nexus\.db · mesuré il y a/)).toHaveLength(3),
+    expect(screen.getAllByText(/^source : nexus\.db · mesuré il y a/)).toHaveLength(4),
   )
 })
 
