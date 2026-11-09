@@ -59,3 +59,20 @@ def test_a_plain_task_change_says_nothing_about_runs(client):
     client.patch(f"/api/tasks/{task}", json={"title": "Autre"})
 
     assert run_changed(messages_after(client, start)) == []
+
+
+def test_a_status_written_by_the_supervisor_is_announced_after_its_commit(client):
+    from sqlalchemy import select
+
+    from nexus.models import TaskHistory
+
+    register(client)
+    task = make_task(client)
+    dispatch(client, task)
+
+    tick(client)  # the run goes from dispatched to done
+
+    with client.app.state.sessionmaker() as s:
+        actions = list(s.scalars(select(TaskHistory.action).order_by(TaskHistory.id)))
+    assert "run_status" in actions  # the live feed says it AFTER the run row is written
+    assert actions.index("run_status") > actions.index("run_created")

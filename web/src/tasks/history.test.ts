@@ -149,4 +149,5 @@ test('un run confié ou son annulation demandée se lisent, sans valeur inconnue
   )
   expect(describeHistory(entry('loic', { agent: 'ghp_secret' }, 'run_created'))).toBe('a confié la tâche à un agent (run)')
   expect(describeHistory(entry('loic', { run: 'nx-run-1' }, 'run_cancel_requested'))).toBe('a demandé l’annulation d’un run')
+  expect(describeHistory(entry('codex', { run: 'nx-run-1' }, 'run_status'))).toBe('le statut d’un run a changé')
 })

@@ -57,7 +57,7 @@ export function codexFixture(): { bin: string; repo: string } {
     git('init', '-q')
     writeFileSync(join(repo, 'LISEZMOI.txt'), 'dépôt de test\n')
     git('add', 'LISEZMOI.txt')
-    git('-c', 'user.name=e2e', '-c', 'user.email=e2e@example.invalid', 'commit', '-q', '-m', 'départ')
+    git('-c', 'user.name=e2e', '-c', 'user.email=e2e@example.invalid', 'commit', '--no-gpg-sign', '-q', '-m', 'départ')
     if (process.platform === 'win32') {
       writeFileSync(bin, `@"${process.execPath}" "${script}" %*\r\n`)
     } else {

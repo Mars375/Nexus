@@ -48,7 +48,8 @@ export function RunsSection({ task }: { task: Task }) {
               )}
               {run.external_ref && (
                 <p className="text-muted">
-                  Branche : <span className="font-data">{run.external_ref}</span>
+                  {run.executor === 'codex' ? 'Branche' : 'Référence de l’exécutant'} :{' '}
+                  <span className="font-data">{run.external_ref}</span>
                 </p>
               )}
               {(evidence.data?.get(run.id) ?? []).map((proof) => (
@@ -69,6 +70,9 @@ export function RunsSection({ task }: { task: Task }) {
             </li>
           ))}
         </ul>
+      )}
+      {list.length > 0 && evidence.isPending && (
+        <p className="mt-2 text-xs text-muted">Lecture des preuves…</p>
       )}
       {list.length > 0 && evidence.isError && (
         <p role="status" className="mt-2 text-xs text-attention">

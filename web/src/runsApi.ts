@@ -62,10 +62,14 @@ export const runsApi = {
     request<Run>(`/api/tasks/${taskId}/runs`, { method: 'POST', body: json(draft) }),
   /** The evidence each run's events carry, by run (`nx-run-<n>` → references, no duplicate). */
   evidence: async (taskId: string, signal?: AbortSignal): Promise<Map<string, string[]>> => {
-    const events = await request<{ run: string | null; evidence: string[] }[]>(
-      `/api/events?task=${taskId}&limit=500`,
-      { signal },
-    )
+    // Only closing events carry a proof: asking for them by kind keeps an old proof from being
+    // pushed out of the page by a long run's progress events.
+    const read = (kind: string) =>
+      request<{ run: string | null; evidence: string[] }[]>(
+        `/api/events?task=${taskId}&kind=${kind}&limit=1000`,
+        { signal },
+      )
+    const events = (await Promise.all([read('done'), read('review')])).flat()
     const byRun = new Map<string, string[]>()
     for (const e of events) {
       if (!e.run || e.evidence.length === 0) continue

@@ -272,3 +272,34 @@ test('l’échec de lecture des preuves est dit, et la provenance reste affiché
   expect(await screen.findByText(/Les preuves des runs n’ont pas pu être lues/)).toBeInTheDocument()
   expect(screen.getByText(/source : nexus\.db/)).toBeInTheDocument()
 })
+
+
+test('un exécutant autre que Codex ne voit pas sa référence appelée « branche »', async () => {
+  serve({ runs: [{ ...RUN, executor: 'hermes', agent: 'helios', external_ref: 'hermes:default#t_ab' }] })
+  mount()
+  const row = (await screen.findByText('En cours')).closest('li') as HTMLElement
+  expect(row).toHaveTextContent('Référence de l’exécutant : hermes:default#t_ab')
+  expect(row).not.toHaveTextContent('Branche')
+})
+
+test('les preuves en cours de lecture le disent', async () => {
+  serve({ runs: [{ ...RUN, status: 'done', ended_at: T }] })
+  vi.mocked(fetch).mockImplementation(async (url) =>
+    String(url).includes('/api/events')
+      ? new Promise<Response>(() => {})
+      : new Response(JSON.stringify([{ ...RUN, status: 'done', ended_at: T }])),
+  )
+  mount()
+  expect(await screen.findByText('Lecture des preuves…')).toBeInTheDocument()
+})
+
+test('les preuves se lisent sur les événements de clôture, pas sur une page de tous les événements', async () => {
+  const calls = serve({ runs: [{ ...RUN, status: 'done', ended_at: T }] })
+  mount()
+  await screen.findByText('Terminé')
+  await waitFor(() => {
+    const urls = calls.map((c) => c.url)
+    expect(urls.some((u) => u.includes('/api/events') && u.includes('kind=done'))).toBe(true)
+    expect(urls.some((u) => u.includes('/api/events') && u.includes('kind=review'))).toBe(true)
+  })
+})

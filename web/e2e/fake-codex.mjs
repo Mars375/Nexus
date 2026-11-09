@@ -26,7 +26,7 @@ if (brief.includes('ATTENDRE')) {
 const cwd = args[args.indexOf('--cd') + 1]
 execFileSync(
   'git',
-  ['-c', 'user.name=e2e', '-c', 'user.email=e2e@example.invalid', 'commit', '--allow-empty', '-m', 'travail e2e'],
+  ['-c', 'user.name=e2e', '-c', 'user.email=e2e@example.invalid', 'commit', '--no-gpg-sign', '--allow-empty', '-m', 'travail e2e'],
   { cwd, stdio: 'ignore' },
 )
 say({ type: 'turn.completed', usage: {} })

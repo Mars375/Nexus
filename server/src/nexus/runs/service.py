@@ -164,6 +164,10 @@ def update_run(
 ) -> Run:
     """Write what the supervisor learned. Goes through the version lock, like a cancel."""
     if status is not None:
+        if status != run.status:
+            # Said after the commit by the live feed (`run_changed`): the run row itself has no
+            # cursor, and an event may reach the interface before this write does.
+            _record(session, run, run.executor, "run_status")
         run.status = status
         if status in SETTLED and run.ended_at is None:
             run.ended_at = now()
