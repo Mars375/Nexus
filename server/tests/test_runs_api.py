@@ -1,5 +1,7 @@
 """Runs API (ADR-023, lot B): who may dispatch, idempotence, pre-conditions, reads."""
 
+from pathlib import Path
+
 import pytest
 from runs_support import code_of, dispatch, make_task, register
 
@@ -211,3 +213,18 @@ def test_a_cancel_request_is_recorded_and_idempotent(client):
     assert first.status_code == 200 and first.json()["cancel_requested_at"]
     assert second.json()["cancel_requested_at"] == first.json()["cancel_requested_at"]
     assert second.json()["version"] == first.json()["version"]
+
+
+def test_executors_lists_only_the_registered_ones_with_their_agents_and_workdirs(client):
+    assert client.get("/api/executors").json() == []
+    adapter = register(client)
+    adapter.workdirs = [Path("F:/Projet/Nexus-test")]
+
+    [codex] = client.get("/api/executors").json()
+
+    assert codex["executor"] == "codex" and codex["agents"] == ["codex"]
+    assert codex["workdirs"] == [str(Path("F:/Projet/Nexus-test"))]
+    assert codex["source"] == "nexus.db" and codex["measured_at"]
+    register(client, "hermes")
+    names = {e["executor"]: e["agents"] for e in client.get("/api/executors").json()}
+    assert names["hermes"] == ["aether", "helios", "mnema"]

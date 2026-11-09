@@ -94,13 +94,13 @@ def start_cursor(
 
 def changes_since(session: Session, cursor: Cursor) -> tuple[list[dict], Cursor]:
     history = session.execute(
-        select(TaskHistory.id, TaskHistory.task_id)
+        select(TaskHistory.id, TaskHistory.task_id, TaskHistory.action)
         .where(TaskHistory.id > cursor.history)
         .order_by(TaskHistory.id)
         .limit(RESYNC_THRESHOLD + 1)
     ).all()
     events = session.execute(
-        select(Event.id, Event.task_id, Event.kind)
+        select(Event.id, Event.task_id, Event.kind, Event.run_ref)
         .where(Event.id > cursor.events)
         .order_by(Event.id)
         .limit(RESYNC_THRESHOLD + 1)
@@ -120,6 +120,15 @@ def changes_since(session: Session, cursor: Cursor) -> tuple[list[dict], Cursor]
         if row.task_id not in seen:
             seen.add(row.task_id)
             messages.append({"type": "task_changed", "task": f"nx-task-{row.task_id}"})
+    # The runs of a task moved: a human act on one (traced in the history) or an event naming
+    # one. Nothing of the run itself travels, the UI rereads through the REST API.
+    runs_moved: set[int] = {row.task_id for row in history if row.action.startswith("run_")}
+    runs_moved |= {
+        row.task_id for row in events
+        if row.task_id is not None and (row.run_ref or "").startswith("nx-run-")
+    }
+    for task_id in sorted(runs_moved):
+        messages.append({"type": "run_changed", "task": f"nx-task-{task_id}"})
     for row in events:
         messages.append({
             "type": "event",

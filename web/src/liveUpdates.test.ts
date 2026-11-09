@@ -22,6 +22,17 @@ describe('createLiveBatcher', () => {
   const count = (invalidate: ReturnType<typeof spyClient>['invalidate'], f?: object) =>
     filters(invalidate).filter((x) => x === JSON.stringify(f)).length
 
+  test('run_changed relit les runs de la tâche, pas toute la liste', () => {
+    const { client, invalidate } = spyClient()
+    const batcher = createLiveBatcher(client)
+    batcher.push({ type: 'run_changed', task: 'nx-task-1', cursor: CURSOR })
+    vi.advanceTimersByTime(LIVE_BATCH_MS)
+    expect(filters(invalidate)).toEqual([
+      JSON.stringify({ queryKey: ['tasks', 'nx-task-1', 'runs'] }),
+      JSON.stringify({ queryKey: ['tasks', 'nx-task-1', 'run-evidence'] }),
+    ])
+  })
+
   test('LIVE_BATCH_MS vaut 50 ms', () => {
     expect(LIVE_BATCH_MS).toBe(50)
   })

@@ -13,6 +13,7 @@ export type Cursor = { history: number; events: number }
 export type LiveMessage =
   | { type: 'hello'; cursor: Cursor; reset: boolean; instance?: string }
   | { type: 'task_changed'; task: string; cursor: Cursor }
+  | { type: 'run_changed'; task: string; cursor: Cursor }
   | { type: 'event'; event: string; task: string | null; kind: string; cursor: Cursor }
   | { type: 'resync'; cursor: Cursor }
   | { type: 'ping'; cursor: Cursor }
@@ -140,6 +141,7 @@ export function connectLive(options: {
       case 'hello':
         return typeof data.reset === 'boolean' && (data.instance === undefined || isInstance(data.instance))
       case 'task_changed':
+      case 'run_changed':
         return isNonEmptyString(data.task)
       case 'event':
         return (

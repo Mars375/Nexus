@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from nexus import permissions, secrets
 from nexus.adapters.registry import AdapterRegistry
 from nexus.clock import now
-from nexus.models import Run, Task
+from nexus.models import Run, Task, TaskHistory
 from nexus.runs import rules
 from nexus.runs.states import CANCELLABLE, SETTLED
 from nexus.tasks.rules import RuleViolation
@@ -32,6 +32,15 @@ class NewRun:
     client_key: str
     brief: str
     workdir: str | None = None
+
+
+def _record(session: Session, run: Run, actor: str, action: str) -> None:
+    """Trace a human act on a run in the task's history: it is also what tells the live feed
+    (`run_changed`) that the runs of that task moved. No brief, no reference is copied."""
+    session.add(TaskHistory(
+        task_id=run.task_id, actor=actor, at=now(), action=action,
+        changes={"run": run.ref, "executor": run.executor, "agent": run.agent},
+    ))
 
 
 def get_run(session: Session, ref: str) -> Run:
@@ -121,6 +130,7 @@ def create_run(
             session, task, executor=data.executor, agent=data.agent, registry=registry
         )
         raise rules.already_active("un autre run") from exc
+    _record(session, run, actor, "run_created")
     return run, True
 
 
@@ -139,6 +149,7 @@ def request_cancel(session: Session, run: Run, actor: str) -> Run:
         )
     run.cancel_requested_at = now()
     session.flush()
+    _record(session, run, actor, "run_cancel_requested")
     return run
 
 
@@ -153,6 +164,10 @@ def update_run(
 ) -> Run:
     """Write what the supervisor learned. Goes through the version lock, like a cancel."""
     if status is not None:
+        if status != run.status:
+            # Said after the commit by the live feed (`run_changed`): the run row itself has no
+            # cursor, and an event may reach the interface before this write does.
+            _record(session, run, run.executor, "run_status")
         run.status = status
         if status in SETTLED and run.ended_at is None:
             run.ended_at = now()
