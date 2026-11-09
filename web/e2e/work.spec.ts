@@ -44,7 +44,8 @@ test('créer, déplacer, commenter et filtrer une tâche', async ({ page }) => {
   const pane = page.getByRole('complementary', { name: /Détail de Relever les statuts/ })
   await pane.getByLabel('Nouveau commentaire').fill('Tables relevées, reste les enums.')
   await pane.getByRole('button', { name: 'Commenter' }).click()
-  await expect(pane.getByText('Tables relevées, reste les enums.')).toBeVisible()
+  // Dans la liste, pas ailleurs : `getByText` trouve aussi le texte encore saisi dans la zone de commentaire (React le recopie dans le DOM de la zone), donc il n'attend pas l'enregistrement (#154).
+  await expect(pane.getByRole('listitem').filter({ hasText: 'Tables relevées, reste les enums.' })).toBeVisible()
   await expect(pane.getByText(/Loïc l'a passée de à faire à en cours/)).toBeVisible()
 
   const title = pane.getByLabel('Titre')
