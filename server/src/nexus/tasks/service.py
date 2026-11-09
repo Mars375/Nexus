@@ -6,7 +6,9 @@ import logging
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy import update
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import set_committed_value
 
 from nexus import permissions, secrets
 from nexus.clock import now
@@ -285,7 +287,11 @@ def add_comment(session: Session, task: Task, actor: str, body: str) -> TaskComm
     comment = TaskComment(task_id=task.id, author=actor, body=body, at=now())
     session.add(comment)
     session.flush()
-    task.updated_at = comment.at
+    # A comment only moves the task up the board: it changes none of the fields an edit is based
+    # on, so it stays out of the optimistic lock. Going through the ORM (`task.updated_at = …`)
+    # would bump `version` and make any edit that started before it fail with a false 409 (#154).
+    session.execute(update(Task).where(Task.id == task.id).values(updated_at=comment.at))
+    set_committed_value(task, "updated_at", comment.at)
     _record(session, task, actor, "commented", {"comment_id": comment.id})
     _record_redactions(session, task, actor, {"comment": kinds} if kinds else {})
     return comment

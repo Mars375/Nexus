@@ -190,8 +190,12 @@ def create_app(
         return JSONResponse(status_code=422, content={"detail": french_errors(exc.errors())})
 
     @app.exception_handler(StaleDataError)
-    def _stale(_request: Request, _exc: StaleDataError) -> JSONResponse:
+    def _stale(request: Request, _exc: StaleDataError) -> JSONResponse:
         # Verrou optimiste : la tâche a changé depuis sa lecture (autre requête, agent…).
+        # Journal du conflit (#154) : la méthode et le gabarit de route, jamais le chemin réel,
+        # le corps ni le message de l'exception (ADR-006).
+        route = getattr(request.scope.get("route"), "path", "?")
+        log.warning("conflit de version : %s %s", request.method, route)
         return JSONResponse(status_code=409, content={"detail": {
             "code": "concurrent_update",
             "message": "la tâche vient d'être modifiée par ailleurs : recharge-la et réessaie",
