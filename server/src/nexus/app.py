@@ -38,6 +38,7 @@ from nexus.runs import api as runs_api
 from nexus.runs import supervisor
 from nexus.runs.service import RunNotFound
 from nexus.tasks import api as tasks_api
+from nexus.tasks import timeline_api
 from nexus.tasks.rules import RuleViolation
 from nexus.tasks.service import TaskNotFound
 from nexus.validation import french_errors
@@ -176,6 +177,7 @@ def create_app(
     app.state.adapters = AdapterRegistry()
     codex.register_configured(app.state.adapters, settings)
     app.include_router(tasks_api.router)
+    app.include_router(timeline_api.router)
     app.include_router(events_api.router)
     app.include_router(approvals_api.router)
     app.include_router(runs_api.router)
