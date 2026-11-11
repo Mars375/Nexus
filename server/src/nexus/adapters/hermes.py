@@ -194,7 +194,10 @@ class HermesAdapter:
         proofs: list[str] = []
         found = read()
         if found.needs_proofs:  # a completion: judged on the files, read now (never a guess)
-            proofs = proofs_from(cli.read_json(self._call(["attachments", task_id, "--json"])))
+            listed = cli.read_json(self._call(["attachments", task_id, "--json"]))
+            if not isinstance(listed, list):  # unexpected shape: read again, never a guess
+                raise HermesUnavailable("pièces jointes illisibles")
+            proofs = proofs_from(listed)
             found = read()
         if found.archive:
             self._archive(task_id, run.ref)

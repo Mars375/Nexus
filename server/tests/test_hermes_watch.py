@@ -134,10 +134,13 @@ def test_a_completion_reads_the_attachments_as_proofs(rig, tmp_path):
     assert result.cursor == "1" and result.native_status == "done/completed"
 
 
-def test_attachments_failing_is_not_a_review(rig):
+@pytest.mark.parametrize("answer", [reply(exit=1, stderr="locked"), reply({"items": []})])
+def test_attachments_failing_is_not_a_review(rig, answer):
+    """A failed read, or an answer that is not a list (CodeRabbit on #181): read again next
+    tick, never a close in `review` for want of having read the files."""
     adapter, binary = rig
     show = show_payload("done", events=[event("completed", T0 + 5, None, 1)])
-    scenario(binary, show=[reply(show)], attachments=[reply(exit=1, stderr="locked")])
+    scenario(binary, show=[reply(show)], attachments=[answer])
     with pytest.raises(HermesUnavailable):
         adapter.watch(REF)
 

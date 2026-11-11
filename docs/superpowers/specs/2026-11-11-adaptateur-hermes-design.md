@@ -203,7 +203,7 @@ Chaque preuve devient `file:<stored_path>` (au plus 10). Si au moins une preuve 
 - `hermes:nexus/<id>` n'est jamais une preuve suffisante à elle seule : elle dit où relire.
 - `metadata.changed_files` (liste de chaînes, 20 au plus, chacune coupée) et `metadata.tests_run` (entier) vont dans `payload`, à titre d'information : en `scratch`, ces fichiers ont disparu et un nombre de tests ne se relit pas.
 - Un chemin de `metadata.artifacts` qui n'a pas été recopié (hors de l'espace `scratch`) n'est pas une pièce jointe : il n'est pas retenu.
-- Un `commit` déclaré n'est pas une preuve dans ce lot (rien ne le rattache à un commit de départ, D6) ; il va dans `payload` coupé à 12 caractères (un hash de 40 caractères serait masqué par le scanner).
+- Un `commit` déclaré n'est pas une preuve dans ce lot (rien ne le rattache à un commit de départ, D6) ; il va dans `payload` **seulement s'il est un hash hexadécimal de 7 à 40 caractères**, puis coupé à 12 (un hash de 40 caractères serait masqué par le scanner) ; toute autre valeur est écartée, car couper un texte quelconque avant le scanner laisserait le début d'un secret en clair (relecture Antigravity de #181).
 - Le scanner a été essayé sur `t_9f3a01bc`, `hermes:nexus/t_9f3a01bc` et `file:C:\Users\…\kanban\boards\nexus\attachments\t_…\rapport.pdf` : rien n'est masqué, aucune référence n'est vide.
 - Une erreur de la lecture des pièces jointes → `HermesUnavailable` : la clôture n'est pas émise, tout est relu au tour suivant (jamais un `review` faute d'avoir pu lire).
 
