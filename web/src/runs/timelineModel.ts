@@ -48,11 +48,21 @@ export function groupEntries(entries: TimelineEntry[]): Group[] {
   return groups
 }
 
-/** The effects the server did not apply, each with its reason in plain words. */
-export function unappliedEffects(entry: TimelineEntry): { action: string; reason: string }[] {
-  return (entry.effects ?? [])
-    .filter((e) => !e.applied)
-    .map((e) => ({ action: e.action, reason: e.reason ?? 'raison non donnée' }))
+export type EffectLine = { applied: boolean; action: string; reason: string | null }
+
+/** Every effect the server recorded for an event: applied ones, and refused ones with their reason. */
+export function eventEffects(entry: TimelineEntry): EffectLine[] {
+  return (entry.effects ?? []).map((e) => ({
+    applied: e.applied === true,
+    action: e.action,
+    reason: e.applied === true ? null : (e.reason ?? 'raison non donnée'),
+  }))
+}
+
+/** Who carried the event to Nexus: a direct API call, or the adapter of an executor (ADR-023). */
+export function originLabel(origin: string | null | undefined): string | null {
+  if (!origin) return null
+  return origin === 'api' ? 'publié par l’API' : `publié par l’adaptateur ${origin}`
 }
 
 export function describeEntry(entry: TimelineEntry): string {

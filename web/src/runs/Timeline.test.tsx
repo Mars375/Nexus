@@ -73,10 +73,20 @@ test('un événement d’agent dit qui, quoi, le run et la preuve', async () => 
   expect(screen.getByText(/nexus\.db/)).toBeInTheDocument()
 })
 
-test('un effet non appliqué est rendu avec sa raison', async () => {
-  serve(() => page([event('handoff', { effects: [{ action: 'handoff', applied: false, reason: 'tâche déjà terminée' }] })]))
+test('un effet non appliqué est rendu avec sa raison, un effet appliqué aussi', async () => {
+  serve(() => page([event('handoff', { effects: [
+    { action: 'handoff', applied: false, reason: 'tâche déjà terminée' },
+    { action: 'lead_agent', applied: true },
+  ] })]))
   mount()
   expect(await screen.findByText(/Sans effet sur la tâche/)).toHaveTextContent('tâche déjà terminée')
+  expect(screen.getByText('Effet sur la tâche : lead_agent')).toBeInTheDocument()
+})
+
+test('l’origine de l’événement est dite', async () => {
+  serve(() => page([event('done', { origin: 'codex' })]))
+  mount()
+  expect(await screen.findByText(/publié par l’adaptateur codex/)).toBeInTheDocument()
 })
 
 test('les progress d’un run se replient et se déplient au clavier', async () => {
@@ -103,6 +113,21 @@ test('un groupe déplié le reste quand la chronologie est relue', async () => {
 
   expect(await screen.findByRole('button', { name: /3 avancées/ })).toHaveAttribute('aria-expanded', 'true')
   expect(screen.getByText('ancienne étape')).toBeInTheDocument()
+})
+
+test('un groupe déplié le reste quand « Charger plus ancien » lui ajoute des progress plus anciens', async () => {
+  const recent = [event('progress', { id: 'event-b4' }), event('progress', { id: 'event-b3', subject: 'étape récente' })]
+  const older = [event('progress', { id: 'event-b2' }), event('progress', { id: 'event-b1', subject: 'étape ancienne' })]
+  serve((before) => (before === 'v1.next' ? page(older) : page(recent, 'v1.next')))
+  mount()
+  fireEvent.click(await screen.findByRole('button', { name: /2 avancées/ }))
+  expect(screen.getByText('étape récente')).toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: 'Charger plus ancien' }))
+
+  expect(await screen.findByRole('button', { name: /4 avancées/ })).toHaveAttribute('aria-expanded', 'true')
+  expect(screen.getByText('étape ancienne')).toBeInTheDocument()
+  expect(screen.getByText('étape récente')).toBeInTheDocument()
 })
 
 test('« Charger plus ancien » lit la page suivante avec son curseur, sans doublon', async () => {

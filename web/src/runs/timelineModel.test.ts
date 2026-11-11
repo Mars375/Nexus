@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import type { TimelineEntry } from '@/timelineApi'
-import { describeEntry, groupEntries, unappliedEffects } from './timelineModel'
+import { describeEntry, eventEffects, groupEntries, originLabel } from './timelineModel'
 
 const T = '2026-11-10T09:00:00+00:00'
 let n = 0
@@ -39,12 +39,21 @@ test('une entrée d’un autre type entre deux progress coupe le groupe', () => 
   expect(groups.map((g) => g.type)).toEqual(['entry', 'entry', 'entry'])
 })
 
-test('les effets non appliqués gardent leur raison', () => {
+test('les effets appliqués et non appliqués, ceux-ci avec leur raison', () => {
   const e = event('handoff', 'nx-run-1', {
     effects: [{ action: 'handoff', applied: false, reason: 'tâche déjà terminée' }, { action: 'status:done', applied: true }],
   })
-  expect(unappliedEffects(e)).toEqual([{ action: 'handoff', reason: 'tâche déjà terminée' }])
-  expect(unappliedEffects(event('done'))).toEqual([])
+  expect(eventEffects(e)).toEqual([
+    { applied: false, action: 'handoff', reason: 'tâche déjà terminée' },
+    { applied: true, action: 'status:done', reason: null },
+  ])
+  expect(eventEffects(event('done'))).toEqual([])
+})
+
+test('l’origine dit qui a porté l’événement jusqu’à Nexus', () => {
+  expect(originLabel('api')).toBe('publié par l’API')
+  expect(originLabel('codex')).toBe('publié par l’adaptateur codex')
+  expect(originLabel(null)).toBeNull()
 })
 
 test('describeEntry dit qui et quoi, sans valeur brute', () => {
