@@ -13,9 +13,7 @@ import json
 from dataclasses import dataclass
 from typing import Literal
 
-from nexus import secrets
-
-TEXT_MAX = 500
+from nexus.adapters.text import cut
 
 FactKind = Literal["claimed", "working", "progress", "finished", "failed", "error"]
 
@@ -33,34 +31,21 @@ class Fact:
     body: str | None = None
 
 
-def _cut(text: object) -> str | None:
-    """A readable excerpt, or None: empty, or nothing left once secrets are masked (the event
-    protocol refuses such a body, and a refused fact would hold the run back)."""
-    if not isinstance(text, str):
-        return None
-    # A lone UTF-16 half (JSON allows "\ud800") cannot be encoded back: replaced first. Secrets
-    # are masked on the WHOLE text, then it is cut: a key straddling the cut would otherwise
-    # lose the beginning the scanner recognises and be published in clear.
-    clean = text.encode("utf-8", "replace").decode("utf-8")
-    cut = secrets.redact(clean)[0].strip()[:TEXT_MAX]
-    return None if secrets.is_blank(cut) else cut
-
-
 def _item(item: dict) -> Fact | None:
     match item.get("type"):
         case "agent_message":
-            body = _cut(item.get("text"))
+            body = cut(item.get("text"))
             return Fact("progress", "Message de Codex", body) if body else None
         case "command_execution":
             # The command only: its output may hold anything and is never kept.
-            body = _cut(item.get("command"))
+            body = cut(item.get("command"))
             return Fact("progress", "Commande exécutée", body) if body else None
         case "file_change":
             changes = item.get("changes")
             paths = [c.get("path") for c in changes if isinstance(c, dict)] if isinstance(
                 changes, list) else []
             names = ", ".join(p for p in paths if isinstance(p, str))
-            body = _cut(names)
+            body = cut(names)
             return Fact("progress", "Fichiers modifiés", body) if body else None
     return None  # reasoning and anything new: ignored
 
@@ -86,8 +71,8 @@ def translate_line(line: str) -> Fact | None:
         case "turn.failed":
             error = event.get("error")
             message = error.get("message") if isinstance(error, dict) else None
-            return Fact("failed", "Codex a échoué", _cut(message) or "échec sans détail")
+            return Fact("failed", "Codex a échoué", cut(message) or "échec sans détail")
         case "error":
             return Fact("error", "Codex a signalé une erreur",
-                        _cut(event.get("message")) or "erreur sans détail")
+                        cut(event.get("message")) or "erreur sans détail")
     return None

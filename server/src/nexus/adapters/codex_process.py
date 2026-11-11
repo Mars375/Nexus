@@ -21,10 +21,12 @@ ENV_ALLOW = frozenset({
 })
 
 
-def child_env(environ: Mapping[str, str] | None = None) -> dict[str, str]:
+def child_env(
+    environ: Mapping[str, str] | None = None, allow: frozenset[str] = ENV_ALLOW
+) -> dict[str, str]:
     source = os.environ if environ is None else environ
     return {k: v for k, v in source.items()
-            if k.upper() in ENV_ALLOW and not k.upper().startswith("NEXUS_")}
+            if k.upper() in allow and not k.upper().startswith("NEXUS_")}
 
 
 def spawn(argv: list[str], cwd: str, env: dict[str, str]) -> subprocess.Popen:
