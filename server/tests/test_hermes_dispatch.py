@@ -65,10 +65,10 @@ def test_an_unreadable_answer_is_replayed(rig):
 
 def test_two_refusals_are_an_ordinary_error(rig):
     adapter, binary = rig
-    set_scenario(binary.parent, create=[reply(exit=1, stderr="nope")])
+    set_scenario(binary.parent, create=[reply(exit=1, stderr="nope")], list=[reply([])])
     with pytest.raises(HermesRefused):
         adapter.dispatch(run_info())
-    assert subcommands(binary) == ["create", "create"]
+    assert subcommands(binary) == ["create", "create", "list"]  # no task left behind
 
 
 def test_an_uncertain_outcome_is_not_an_ordinary_error(rig):

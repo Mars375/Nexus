@@ -160,8 +160,11 @@ def translate(show: dict, after: int, *, proofs: list[str], now: datetime,
         stamp = _dict(ev).get("created_at")
         if not isinstance(kind, str) or _int(stamp) is None:
             continue
-        fact = _one(position, datetime.fromtimestamp(stamp, UTC), ev, kind, counts, show,
-                    task_id, proofs)
+        try:
+            at = datetime.fromtimestamp(stamp, UTC)
+        except (OverflowError, OSError, ValueError):  # out of range: a malformed event
+            continue
+        fact = _one(position, at, ev, kind, counts, show, task_id, proofs)
         if fact is None:
             continue
         facts.append(fact)

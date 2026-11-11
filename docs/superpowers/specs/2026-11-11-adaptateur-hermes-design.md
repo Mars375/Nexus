@@ -124,7 +124,7 @@ Réponse valide : code 0 et un objet JSON avec `id` conforme à `^t_[0-9a-f]{8}$
 | délai, arrêt **non** confirmé | — (pas de second essai) | `LaunchUncertain` |
 
 - Le second essai n'a lieu qu'une fois l'arbre du premier tué et son arrêt confirmé : la clé est vérifiée hors du verrou d'écriture de Hermes (§0.6), deux `create` simultanés pourraient insérer deux tâches.
-- Deux refus garantissent qu'aucune tâche n'est vivante : si l'essai 1 avait inséré la tâche avant d'échouer, l'essai 2 l'aurait trouvée par sa clé et renvoyée (code 0). C'est ce qui permet de lever une exception ordinaire, que le superviseur traite comme « rien n'a été lancé » (l'exécutant est libéré).
+- Deux refus ne garantissent pas à eux seuls qu'aucune tâche n'existe : Hermes insère la ligne avant de la relire et de l'imprimer, un échec après l'insertion sort aussi en erreur (relecture CodeRabbit de #181). Après deux refus, l'adaptateur cherche donc la tâche par son titre (`list --archived --assignee <profil> --json`, `created_by == "nexus"`) : trouvée, elle est suivie comme un lancement réussi ; liste illisible, `LaunchUncertain` ; absence confirmée, alors seulement une exception ordinaire, que le superviseur traite comme « rien n'a été lancé » (l'exécutant est libéré).
 - `run.workdir` non vide → `ValueError` avant tout appel (run `failed`, « lancement impossible ») : Hermes travaille en `scratch` (§3.4). L'interface ne propose aucun dossier, puisque `workdirs` est vide.
 - `run.agent != "helios"` → `ValueError` (défense en profondeur ; les règles l'ont déjà refusé en 409).
 
@@ -235,6 +235,7 @@ Même contrat que Codex : **lever si l'arrêt n'est pas confirmé** ; le run res
 3. `archive <id>` (le code de retour est ignoré : `cannot archive` veut aussi dire « déjà archivée »), puis `show <id> --json` :
    - `no such task` → confirmé ;
    - `task.status != "archived"` → lever ;
+   - aucun événement `archive_worker_termination` : Hermes écrit `archived` avant d'arrêter le worker, dans une autre transaction ; si un run n'a pas de `ended_at`, le worker peut encore tourner → lever (relu au tour suivant) ; sinon confirmé ;
    - le dernier événement `archive_worker_termination`, s'il existe : `terminated == true` → confirmé ; `prev_pid` nul (tâche `running` réclamée mais worker pas encore lancé : `archive` écrit l'événement avec `terminated: false` alors qu'il n'y a rien à arrêter) → confirmé ; sinon (`terminated` faux avec un pid, `signal_refused`, `host_local` faux) → lever, **sauf** si le fichier vide `<NEXUS_DATA_DIR>/hermes/.stopped/nx-run-<n>` existe (Loïc a arrêté le worker à la main : même échappatoire que Codex, INTEGRATIONS §A.2) ;
    - sinon confirmé.
 

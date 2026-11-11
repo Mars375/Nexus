@@ -135,8 +135,28 @@ class HermesAdapter:
             if why == "unconfirmed":  # the first attempt may still be running: no second one
                 break
         if outcomes == ["refused", "refused"]:
+            # Hermes writes the row before printing it: a refusal may still have created it.
+            try:
+                found = self._find(run, title)
+            except (OSError, HermesUnavailable):
+                raise LaunchUncertain("issue du lancement incertaine") from None
+            if found:
+                task_id, status = found[0]
+                return Dispatched(external_ref=task_id, native_status=status)
             raise HermesRefused("Hermes a refusé de créer la tâche")
         raise LaunchUncertain("issue du lancement incertaine")
+
+    def _find(self, run: RunInfo, title: str) -> list[tuple[str, str | None]]:
+        """The tasks Nexus created for this run (archived ones included), by their title."""
+        found = cli.read_json(self._call(
+            ["list", "--archived", "--assignee", self.profile, "--json"]))
+        if not isinstance(found, list):
+            raise HermesUnavailable("liste illisible")
+        return [(t["id"], t.get("status") if isinstance(t.get("status"), str) else None)
+                for t in found
+                if isinstance(t, dict) and t.get("title") == title
+                and t.get("created_by") == "nexus"
+                and isinstance(t.get("id"), str) and cli.TASK_ID.fullmatch(t["id"])]
 
     # --- watch ---------------------------------------------------------------------------
 
@@ -205,7 +225,14 @@ class HermesAdapter:
             raise RuntimeError("tâche Hermes non archivée : arrêt non confirmé")
         ends = [e for e in show.get("events") or []
                 if isinstance(e, dict) and e.get("kind") == "archive_worker_termination"]
-        payload = ends[-1].get("payload") if ends else None
+        if not ends:
+            # `archived` is written before the worker is stopped (another transaction): with no
+            # termination yet, an open run means the worker may still be alive.
+            runs = show.get("runs") if isinstance(show.get("runs"), list) else []
+            if any(isinstance(r, dict) and r.get("ended_at") is None for r in runs):
+                raise RuntimeError("arrêt du worker Hermes pas encore écrit : arrêt non confirmé")
+            return
+        payload = ends[-1].get("payload")
         if not isinstance(payload, dict) or payload.get("terminated") is True:
             return
         if payload.get("prev_pid") is None or self._stopped_marker(ref).exists():
@@ -218,15 +245,7 @@ class HermesAdapter:
             return
         if run.native_status != "dispatching":
             return  # never launched: nothing to call
-        title = cli.title_of(run.ref, run.task)
-        found = cli.read_json(self._call(
-            ["list", "--archived", "--assignee", self.profile, "--json"]))
-        if not isinstance(found, list):
-            raise HermesUnavailable("liste illisible")
-        ids = [t["id"] for t in found
-               if isinstance(t, dict) and t.get("title") == title and t.get("created_by") == "nexus"
-               and isinstance(t.get("id"), str) and cli.TASK_ID.fullmatch(t["id"])]
-        for task_id in ids:
+        for task_id, _ in self._find(run, cli.title_of(run.ref, run.task)):
             self._archive(task_id, run.ref)
 
     def close(self) -> None:

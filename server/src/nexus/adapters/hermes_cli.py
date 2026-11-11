@@ -82,7 +82,10 @@ def call(
         if stopped:
             try:
                 process.communicate(timeout=5.0)
-            except (subprocess.TimeoutExpired, OSError, ValueError):
+            except subprocess.TimeoutExpired:
+                # A descendant still holds the pipe: the parent is gone, the work may not be.
+                stopped = False
+            except (OSError, ValueError):
                 pass
         return Result(None, "", "", stopped)
     except OSError:  # the input pipe failed: the child may still run, stop it before judging
