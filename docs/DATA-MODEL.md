@@ -7,7 +7,7 @@
 
 ## 1. Conventions
 
-- **Ids** — les objets propres à Nexus utilisent le préfixe `nx-` (`nx-task-42`, `nx-evt-…`). Les objets externes gardent leur id d'origine, préfixé par leur système (`hermes:default#t_abcd`, `commit:<sha>`, `telegram:<chat>/<msg>`, `gmail:<thread>`…).
+- **Ids** — les objets propres à Nexus utilisent le préfixe `nx-` (`nx-task-42`, `nx-evt-…`). Les objets externes gardent leur id d'origine, préfixé par leur système (`hermes:nexus/t_9f3a01bc`, `commit:<sha>`, `telegram:<chat>/<msg>`, `gmail:<thread>`…).
 - **Temps** — ISO-8601 avec fuseau (Europe/Paris). Toute donnée affichée porte `measured_at` (fraîcheur) et `source` (provenance).
 - **`unknown`** — valeur pleine et assumée : elle signifie « non vérifié », jamais « faux » ni « vide ».
 - **Secrets** — interdits ; remplacés par `[REDACTED]` partout (schéma, logs, export).
@@ -77,11 +77,11 @@ Une exécution concrète, créée par « confier à » (table `runs`, migration 
 |---|---|
 | `id` | `nx-run-<n>` |
 | `task` | ref Task |
-| `agent`, `executor` | l'agent à qui le travail est confié, et l'exécutant qui signe les événements du run (ils diffèrent pour Hermes : `agent` `helios`, `executor` `hermes`, ADR-023 D5) ; couples admis : `hermes` pour `helios`, `mnema` ou `aether`, et `codex`, `claude`, `orca` pour eux-mêmes, sinon 409 `agent_not_for_executor` |
+| `agent`, `executor` | l'agent à qui le travail est confié, et l'exécutant qui signe les événements du run (ils diffèrent pour Hermes : `agent` `helios`, `executor` `hermes`, ADR-023 D5) ; couples admis : `hermes` pour `helios`, `mnema` ou `aether` (tant que l'adaptateur déployé le dit : celui du lot G ne sert que `helios`, sinon 409 `executor_unavailable`), et `codex`, `claude`, `orca` pour eux-mêmes, sinon 409 `agent_not_for_executor` |
 | `dispatched_by`, `client_key` | qui a confié le travail (un humain), et la clé de ce clic : `UNIQUE(dispatched_by, client_key)`, un double clic est un seul run |
 | `brief` | ce que Loïc a écrit, masqué par le scanner de secrets avant écriture |
 | `workdir` | dossier de travail demandé (facultatif) |
-| `external_ref` | id chez l'exécutant (ex. `hermes:default#t_abcd`, session Claude), donné par l'adaptateur au lancement |
+| `external_ref` | id chez l'exécutant (ex. `t_9f3a01bc`, l'id de la tâche Hermes sur le tableau `nexus` ; session Claude), donné par l'adaptateur au lancement |
 | `created_at`, `ended_at` | `ended_at` est posé quand le run finit (`done`, `failed`, `cancelled`) ou s'arrête (`review`, `blocked`) |
 | `cancel_requested_at` | quand un humain a demandé l'annulation ; le superviseur arrête l'exécutant puis passe le run en `cancelled` |
 | `status` | `dispatched`, `running`, `blocked`, `review`, `done`, `failed`, `cancelled`, `unknown` ; un index unique partiel sur `(task, agent)` garantit un seul run **actif** (`dispatched`, `running`, `unknown`) par agent et par tâche, et un second index unique partiel sur `executor` limite à un run actif par exécutant, toutes tâches confondues (ADR-023 D7 ; 409 `executor_busy`). `blocked` et `review` sont des états réglés (le journal clôt le run, EVENT-PROTOCOL §4 : pour reprendre, on ouvre un nouveau run) ; `unknown` retient l'agent tant que Loïc n'a pas annulé le run perdu (l'annulation publie le `failed` de clôture) |
