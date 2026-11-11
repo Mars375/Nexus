@@ -30,6 +30,7 @@ describe('createLiveBatcher', () => {
     expect(filters(invalidate)).toEqual([
       JSON.stringify({ queryKey: ['tasks', 'nx-task-1', 'runs'] }),
       JSON.stringify({ queryKey: ['tasks', 'nx-task-1', 'run-evidence'] }),
+      JSON.stringify({ queryKey: ['tasks', 'nx-task-1', 'timeline'] }),
     ])
   })
 

@@ -92,6 +92,7 @@ def test_the_walker_sees_every_router(anonymous):
         ("POST", "/api/approvals/{approval_ref}/answer"), ("POST", "/api/ws-ticket"),
         ("POST", "/api/tasks/{task_ref}/runs"), ("POST", "/api/runs/{run_ref}/cancel"),
         ("GET", "/api/runs/{run_ref}"), ("GET", "/api/tasks/{task_ref}/runs"),
+        ("GET", "/api/tasks/{task_ref}/timeline"),
     ]:
         assert expected in seen, expected
     assert any(isinstance(r, APIWebSocketRoute) for _, r in flat_routes(anonymous.app.routes))

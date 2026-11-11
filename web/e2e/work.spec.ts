@@ -1,4 +1,4 @@
-import { expect, test, type Page, type WebSocketRoute } from '@playwright/test'
+import { expect, test, type Locator, type Page, type WebSocketRoute } from '@playwright/test'
 import { API, auth } from './api'
 
 async function createTask(page: Page, title: string, opts: { todo?: string } = {}) {
@@ -16,6 +16,11 @@ async function createTask(page: Page, title: string, opts: { todo?: string } = {
 
 const column = (page: Page, name: string) => page.getByRole('region', { name, exact: true })
 const card = (page: Page, title: string) => page.getByRole('button', { name: new RegExp(`^${title} —`) })
+// The « Chronologie » section repeats history labels and proofs: assert inside the section that owns them.
+const paneSection = (pane: Locator, name: string) =>
+  pane.locator('section').filter({ has: pane.page().getByRole('heading', { name, exact: true }) })
+const historySection = (pane: Locator) => paneSection(pane, 'Historique')
+const evidenceSection = (pane: Locator) => paneSection(pane, 'Preuves')
 
 async function drag(page: Page, title: string, to: string) {
   const source = await card(page, title).boundingBox()
@@ -46,7 +51,7 @@ test('créer, déplacer, commenter et filtrer une tâche', async ({ page }) => {
   await pane.getByRole('button', { name: 'Commenter' }).click()
   // Dans la liste, pas ailleurs : `getByText` trouve aussi le texte encore saisi dans la zone de commentaire (React le recopie dans le DOM de la zone), donc il n'attend pas l'enregistrement (#154).
   await expect(pane.getByRole('listitem').filter({ hasText: 'Tables relevées, reste les enums.' })).toBeVisible()
-  await expect(pane.getByText(/Loïc l'a passée de à faire à en cours/)).toBeVisible()
+  await expect(historySection(pane).getByText(/Loïc l'a passée de à faire à en cours/)).toBeVisible()
 
   const title = pane.getByLabel('Titre')
   await title.fill('')
@@ -59,7 +64,7 @@ test('créer, déplacer, commenter et filtrer une tâche', async ({ page }) => {
   // Premier enregistrement sur un serveur neuf : échec intermittent en CI avec les 5 s par défaut (#154).
   await expect(page.getByText('Modifications enregistrées')).toBeVisible({ timeout: 15_000 })
   // L'historique suit tout de suite, sans attendre le rafraîchissement périodique (10 s).
-  await expect(pane.getByText('Loïc a confié la tâche à Helios')).toBeVisible({ timeout: 3_000 })
+  await expect(historySection(pane).getByText('Loïc a confié la tâche à Helios')).toBeVisible({ timeout: 3_000 })
   await expect(pane.getByText('Agent principal : Helios')).toBeVisible()
   const leadName = card(page, 'Relever les statuts').getByText('Helios', { exact: true })
   await expect(leadName).toBeVisible()
@@ -353,8 +358,8 @@ test('Loïc ouvre une tâche terminée par un vrai clic, y joint une preuve, pui
   // Joindre une preuve : la tâche reste terminée, la preuve apparaît et l'historique la nomme.
   await pane.getByLabel('Joindre une preuve').fill(`commit:e2e${RUN}`)
   await pane.getByRole('button', { name: 'Joindre' }).click()
-  await expect(pane.getByText(`commit:e2e${RUN}`, { exact: true })).toBeVisible()
-  await expect(pane.getByText('Loïc a joint une preuve')).toBeVisible({ timeout: 3_000 })
+  await expect(evidenceSection(pane).getByText(`commit:e2e${RUN}`, { exact: true })).toBeVisible()
+  await expect(historySection(pane).getByText('Loïc a joint une preuve')).toBeVisible({ timeout: 3_000 })
   const stored = await (await page.request.get(`/api/tasks/${id}`, { headers: auth() })).json()
   expect(stored.status).toBe('done')
   expect(stored.evidence).toEqual([`commit:e2e${RUN}`])
@@ -419,7 +424,7 @@ test('un agent clôt la tâche pendant que Loïc édite le panneau : le brouillo
   await expect(pane.getByText(/Cette tâche vient d’être terminée/)).toBeVisible({ timeout: 20_000 })
   await expect(pane.getByLabel('Titre')).toHaveValue(`${title} (retouché)`)
   await expect(pane.getByRole('button', { name: 'Enregistrer' })).toBeDisabled()
-  await expect(pane.getByText(`commit:agent${RUN}`)).toBeVisible()
+  await expect(evidenceSection(pane).getByText(`commit:agent${RUN}`, { exact: true })).toBeVisible()
 
   await pane.getByRole('button', { name: 'Abandonner le brouillon' }).click()
   await expect(pane.getByLabel('Titre')).toHaveCount(0)
