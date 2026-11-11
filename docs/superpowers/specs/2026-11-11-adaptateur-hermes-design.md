@@ -12,7 +12,7 @@ Ce document fixe ce qu'un `implementer` écrit, tests d'abord. Il ne s'écarte d
 
 ## 0. Ce que la lecture du code de Hermes a changé par rapport au relevé
 
-1. **Le profil de Helios s'appelle `default` pour Kanban.** `hermes profile list` affiche « Helios (default) », mais `hermes kanban assignees --json` ne connaît que `default` : c'est le profil par défaut, nommé Helios à l'affichage. `--assignee helios` assignerait la tâche à un profil inexistant, que le dispatcher ne lancerait jamais. L'agent Nexus `helios` correspond donc au profil Hermes `default` (réglable, §1).
+1. **Le profil de Helios s'appelle `default` pour Kanban.** `hermes profile list` affiche « Helios (default) », mais `hermes kanban assignees --json` ne connaît que `default` : c'est le profil par défaut, nommé Helios à l'affichage. `--assignee helios` assignerait la tâche à un profil inexistant : le dispatcher la classe alors en `skipped_nonspawnable` (`kanban_db_dispatch._profile_exists_fn`) et ne la lance jamais. L'agent Nexus `helios` correspond donc au profil Hermes `default` (réglable, §1).
 2. **Un tableau inconnu est une erreur, jamais une création.** `hermes kanban --board <slug> …` répond `board '<slug>' does not exist` (code 1) si le tableau n'existe pas. Les sous-commandes `boards …` ignorent `--board`.
 3. **Les événements de `show --json` n'ont pas d'identifiant** (`kind`, `payload`, `created_at`, `run_id`), triés par `created_at ASC, id ASC`. Aucune commande non interactive ne donne l'id (`tail` et `watch` sont des flux texte sans fin). Le curseur se fonde donc sur la **position** dans la liste (§4.2).
 4. **`created_at` est un entier (secondes Unix)**, pour les tâches comme pour les événements.
@@ -22,7 +22,7 @@ Ce document fixe ce qu'un `implementer` écrit, tests d'abord. Il ne s'écarte d
 8. **`review_dispatch` est un réglage global de Hermes** (pas par tableau), vrai par défaut et vrai chez Helios : une tâche passée en `review` lance un relecteur Hermes, qui la termine (`done`) ou demande des changements (retour en `ready`, nouveau worker).
 9. **Le disjoncteur bloque sans événement `blocked`.** Avec `--max-retries 1`, le premier échec (`crashed`, `timed_out`, `spawn_failed` non dû à l'infrastructure) passe la tâche en `blocked` et écrit un événement `gave_up`. Le statut `blocked` couvre donc deux cas que seuls les événements distinguent : le worker demande quelque chose (`blocked`) ou Hermes abandonne (`gave_up`).
 10. **`archive` arrête le worker** (TerminateProcess sous Windows, puis attente de 5 s) et écrit `archive_worker_termination` avec `terminated: true|false`. Archiver une tâche déjà archivée répond `cannot archive` (code 1). `archive` nettoie l'espace `scratch`.
-11. **Les livrables déclarés à la fin sont recopiés par Hermes.** `kanban_complete` avec `metadata.artifacts` copie chaque fichier de l'espace `scratch` dans le dossier des pièces jointes de la tâche, enregistre une pièce jointe (`uploaded_by = "kanban_complete"`, `stored_path`, `size`) et réécrit `metadata.artifacts` avec les chemins recopiés. `hermes kanban --board nexus attachments <id> --json` les liste. C'est la seule trace que Nexus peut relire sans supposer (§4.4).
+11. **Les livrables déclarés à la fin sont recopiés par Hermes.** `kanban_complete` avec `metadata.artifacts` copie chaque fichier de l'espace `scratch` dans le dossier des pièces jointes de la tâche, enregistre une pièce jointe (`uploaded_by = "kanban_complete"`, `stored_path`, `size`) et réécrit `metadata.artifacts` avec les chemins recopiés. `request_review` fait de même avec `uploaded_by = "kanban_request_review"` (quand le worker passe par la relecture Hermes, ses livrables sont recopiés à ce moment-là). `hermes kanban --board nexus attachments <id> --json` les liste. C'est la seule trace que Nexus peut relire sans supposer (§4.4).
 12. **Encodage :** sous Windows, l'entrée de `hermes` passe par `configure_windows_stdio()` (UTF-8 pour stdin, stdout et stderr) ; l'adaptateur force quand même `PYTHONUTF8=1` dans l'environnement de l'enfant (§7.2), et le run réel vérifie un brief accentué (§9).
 13. **Coût d'un appel :** environ 2 s par commande `hermes` (démarrage de Python). Le suivi est donc espacé (§4.1).
 14. **`hermes kanban gc`** efface les événements de plus de 30 jours des tâches terminées : sans effet sur un run suivi (durée maximale de 60 min par défaut), mais à garder en tête pour le curseur (§4.2).
@@ -176,7 +176,7 @@ C'est la sémantique de D3 et de #168 (« ne jamais répéter un lancement dont 
 | `changes_requested` | `progress` « le relecteur Hermes demande des changements » | corps : raison coupée |
 | `timed_out`, `crashed`, `stale`, `spawn_failed`, `reclaimed`, `worker_lost` | `progress` « tentative interrompue (<kind>) » | corps : `error` coupée ; la fin vient de `gave_up` si le disjoncteur saute |
 | `completion_blocked_hallucination`, `completion_blocked_empty_result` | `progress` « Hermes a refusé la fin annoncée » | |
-| `completed` | **clôture** `done` ou `review` | jugée sur le run `run_id` de l'événement et sur les preuves (§4.4) |
+| `completed` | **clôture** `done` ou `review` | `complete_task` fait toujours passer la tâche en `done` (depuis `running`, `ready`, `blocked` ou `review`) ; jugée sur le run `run_id` de l'événement et sur les preuves (§4.4) |
 | `blocked` | **clôture** `blocked` | `payload.cause` = raison du blocage coupée, ou « Helios a bloqué la tâche sans dire pourquoi » ; `payload.plan` = « Nexus ne suit plus cette tâche Hermes : réponds dans un nouveau brief et confie la tâche à nouveau, ou abandonne-la » |
 | `gave_up` | **clôture** `failed` | `cause` = « Hermes a abandonné après un échec (<trigger_outcome>) : <error coupée> » |
 | `archived` | **clôture** `failed` | `cause` = « tâche archivée dans Hermes, hors de Nexus » (une annulation de Nexus ne passe pas par `watch`, §5) |
@@ -194,7 +194,7 @@ C'est la sémantique de D3 et de #168 (« ne jamais répéter un lancement dont 
 
 À la clôture `completed` uniquement, l'adaptateur lit `hermes kanban --board nexus attachments <id> --json` et retient comme preuve chaque pièce jointe qui remplit **toutes** ces conditions :
 
-- `uploaded_by == "kanban_complete"` (copie faite par Hermes à la fin, §0.11) ;
+- `uploaded_by` vaut `"kanban_complete"` ou `"kanban_request_review"` (copie faite par Hermes à la fin ou à la demande de relecture, §0.11 ; une pièce jointe ajoutée par `attach` ne compte pas) ;
 - `stored_path` absolu, local (ni `\\serveur\…`, ni `\\?\…`), de 400 caractères au plus ;
 - le fichier existe, est un fichier ordinaire, et sa taille égale `size` (un `stat`, jamais une lecture du contenu).
 
@@ -216,6 +216,8 @@ Chaque preuve devient `file:<stored_path>` (au plus 10). Si au moins une preuve 
 
 Si l'archivage n'est pas confirmé, `watch` lève : rien n'est publié, l'essai recommence au tour suivant (l'exécutant reste retenu tant que le worker peut tourner, comme pour Codex). `--max-runtime` côté Hermes est une borne intérieure (il arrête le worker et, avec `--max-retries 1`, mène à `gave_up`) ; la borne de Nexus couvre en plus l'attente en `ready` et la boucle de relecture de Hermes.
 
+**Limite connue :** l'horloge vient de `show` ; tant que la CLI de Hermes échoue (§4.1), le run reste `running` sans que Nexus puisse appliquer sa durée maximale (l'annulation, qui passe aussi par Hermes, attend de même). Le worker reste borné par `--max-runtime` côté Hermes. Noté dans INTEGRATIONS §A.1.
+
 ### 4.6 Fins non `done` : la tâche Hermes est archivée
 
 Avant de rendre une clôture `blocked` ou `failed` venue de `blocked`, `gave_up` ou de la durée maximale, l'adaptateur archive la tâche Hermes (arrêt confirmé, §5) ; si l'archivage échoue, `watch` lève et rien n'est publié. Raison : le run Nexus est clos et l'exécutant libéré ; une tâche restée `blocked` que quelqu'un débloquerait dans Hermes travaillerait sans être suivie, à côté d'un nouveau run (contraire à « un run actif par exécutant », D7). Une tâche archivée reste lisible dans Hermes (`list --archived`, `show`). `done` et `review` (venue de `completed`) ne demandent rien : la tâche est déjà terminée chez Hermes.
@@ -233,7 +235,7 @@ Même contrat que Codex : **lever si l'arrêt n'est pas confirmé** ; le run res
 3. `archive <id>` (le code de retour est ignoré : `cannot archive` veut aussi dire « déjà archivée »), puis `show <id> --json` :
    - `no such task` → confirmé ;
    - `task.status != "archived"` → lever ;
-   - le dernier événement `archive_worker_termination`, s'il existe, a `payload.terminated` qui n'est pas `true` → lever, **sauf** si le fichier vide `<NEXUS_DATA_DIR>/hermes/.stopped/nx-run-<n>` existe (Loïc a arrêté le worker à la main : même échappatoire que Codex, INTEGRATIONS §A.2) ;
+   - le dernier événement `archive_worker_termination`, s'il existe : `terminated == true` → confirmé ; `prev_pid` nul (tâche `running` réclamée mais worker pas encore lancé : `archive` écrit l'événement avec `terminated: false` alors qu'il n'y a rien à arrêter) → confirmé ; sinon (`terminated` faux avec un pid, `signal_refused`, `host_local` faux) → lever, **sauf** si le fichier vide `<NEXUS_DATA_DIR>/hermes/.stopped/nx-run-<n>` existe (Loïc a arrêté le worker à la main : même échappatoire que Codex, INTEGRATIONS §A.2) ;
    - sinon confirmé.
 
 - Le chemin de #168 (référence non écrite après un `create` réussi) passe par l'étape 1 : le superviseur appelle déjà `adapter.cancel(replace(run, external_ref=sent.external_ref))`.
@@ -345,19 +347,19 @@ Des constructeurs de fixtures (`show_payload(status, events=[…], runs=[…], c
 30. `completed` : `attachments` en échec → exception, pas de `review`.
 31. `external_ref` invalide (`t_x & calc`) → `ValueError`, aucun processus lancé.
 32. Annulation avec id : `archive` code 0 puis `show` archivé → confirmé ; `archive` code 1 (déjà archivée) puis `show` archivé → confirmé.
-33. `archive_worker_termination` avec `terminated: false` → lève ; avec le fichier `.stopped/nx-run-<n>` → confirmé.
+33. `archive_worker_termination` avec `terminated: false` et un `prev_pid` → lève ; avec le fichier `.stopped/nx-run-<n>` → confirmé ; `terminated: false` et `prev_pid: null` (réclamée, worker pas encore lancé) → confirmé ; `signal_refused: true` → lève.
 34. `show` après `archive` toujours `running` → lève ; `no such task` → confirmé.
 35. Sans id, `native_status` autre que `dispatching` → aucun appel ; avec `dispatching` → `list` filtré par titre et `created_by` ; aucune tâche → confirmé ; deux tâches → deux `archive`.
 
 ### Superviseur et API — `test_hermes_supervisor.py`, `test_hermes_registration.py`
 
 36. Run complet par le superviseur, à travers `publish` : `claimed`, `working`, `done` ; `Run.status` `done` ; événements signés `hermes`, `origin = hermes`, ids `nx-run-<n>-<position>` ; un second tour sur la même sortie ne publie rien de nouveau.
-37. Chaque clôture acceptée par `publish` : `review` (preuve `hermes:`), `blocked` (cause + plan), `failed` après `spawn_failed`/`gave_up` sans `working` préalable.
+37. Chaque clôture acceptée par `publish` (un refus gèlerait le curseur et ferait tourner le run en boucle) : `review` (preuve `hermes:`), `blocked` (cause + plan), `failed` après `spawn_failed`/`gave_up` sans `working` préalable, `failed` de durée maximale « pas pris la tâche » sans `working` préalable, `failed` « tâche introuvable ».
 38. `LaunchUncertain` → événement `unknown` « lancement incertain », statut `unknown`, marqueur `dispatching` conservé ; puis annulation → `cancelled`.
 39. #168 : l'écriture de la référence échoue après un `create` réussi → `archive` reçoit l'id renvoyé.
 40. Redémarrage : `mark_lost` → `unknown` (D3 inchangé) ; annulation → archivage → `cancelled`.
 41. Second run Hermes pendant qu'un premier est actif → 409 `executor_busy`.
-42. Enregistrement : `NEXUS_HERMES_BIN` absent → non enregistré **même si** `shutil.which("hermes")` trouve un binaire ; tableau absent (code 1) ou profil absent de `assignees` → non enregistré, `POST /api/tasks/<ref>/runs` → 409 `executor_unavailable` ; `NEXUS_HERMES_PROFILE` invalide → `ValueError` sans la valeur.
+42. Une fixture `autouse` de `conftest.py` retire `NEXUS_HERMES_BIN` et `NEXUS_HERMES_PROFILE` de l'environnement (Loïc les exporte pour le run réel et peut commiter depuis ce shell : le hook lance toute la suite) ; un test le vérifie avec `Settings.from_env()`. Enregistrement : `NEXUS_HERMES_BIN` absent → non enregistré **même si** `shutil.which("hermes")` trouve un binaire ; tableau absent (code 1) ou profil absent de `assignees` → non enregistré, `POST /api/tasks/<ref>/runs` → 409 `executor_unavailable` ; `NEXUS_HERMES_PROFILE` invalide → `ValueError` sans la valeur.
 43. Enregistré : `GET /api/executors` → `hermes` avec `agents == ["helios"]` et `workdirs == []` ; confier à `mnema` via `hermes` → 409 `executor_unavailable` sans run créé ; confier `codex` via `hermes` → 409 `agent_not_for_executor` (inchangé).
 
 ### Sécurité — `test_hermes_security.py`
@@ -422,9 +424,9 @@ En revanche **D7 exige que la politique de relecture et de nouvelles tentatives 
 
 ## 11. Ce qui revient à Loïc
 
-1. **Politique de relecture (D7)** : laisser `review_dispatch` lancer le relecteur Hermes (et un nouveau worker après `changes_requested`) à l'intérieur du run, borné par la durée maximale (§6.2) — recommandé ; sinon il faut désactiver `review_dispatch` globalement chez Helios.
-2. **Règle de preuve** : seule une pièce jointe recopiée par Hermes à la fin et présente sur le disque fait `done` ; tout le reste finit en `review` (§4.4). Conséquence : la plupart des runs sans fichier livré finiront en `review`.
-3. **Profil** : l'agent `helios` correspond au profil Hermes `default` sur cette machine (§0.1).
-4. **Archivage des fins non `done`** (§4.6) : une tâche Hermes bloquée ou abandonnée est archivée quand Nexus clôt le run.
-5. **Reprise après redémarrage** (§6.4) : garder D3 (`unknown`, Loïc annule) comme dans ce lot, ou ouvrir un addendum pour que Nexus reprenne le suivi des runs Hermes, que Hermes continue de toute façon à exécuter.
+1. **Reprise après redémarrage** (§6.4) : ce cadrage garde ADR-023 D3 (au redémarrage, le run passe `unknown` et Loïc l'annule), alors que Hermes continue d'exécuter la tâche. Reprendre le suivi est possible sans toucher l'adaptateur (il est sans état), mais c'est un écart à D3 : addendum et PR distincts, si Loïc le veut.
+2. **Politique de relecture (D7)** : laisser `review_dispatch` lancer le relecteur Hermes (et un nouveau worker après `changes_requested`) à l'intérieur du run, borné par la durée maximale (§6.2) — recommandé ; sinon il faut désactiver `review_dispatch` globalement chez Helios.
+3. **Règle de preuve** : seule une pièce jointe recopiée par Hermes (fin ou demande de relecture) et présente sur le disque fait `done` ; tout le reste finit en `review` (§4.4). Conséquence : la plupart des runs sans fichier livré finiront en `review`.
+4. **Profil** : l'agent `helios` correspond au profil Hermes `default` sur cette machine (§0.1).
+5. **Archivage des fins non `done`** (§4.6) : une tâche Hermes bloquée ou abandonnée est archivée quand Nexus clôt le run.
 6. **Création du tableau** : la commande du §2, une fois, avant le run réel.
