@@ -28,6 +28,7 @@ function invalidationsFor(message: LiveMessage): Invalidation[] {
       return [
         { queryKey: ['tasks', message.task, 'runs'] },
         { queryKey: ['tasks', message.task, 'run-evidence'] },
+        { queryKey: ['tasks', message.task, 'timeline'] },
       ]
     case 'event':
       return [

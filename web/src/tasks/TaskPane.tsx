@@ -7,6 +7,7 @@ import { Button } from '@/ui'
 import { MoveDialog } from './MoveDialog'
 import { dependencyBlock, moveNeeds, needsPrompt, TRANSITIONS } from './moves'
 import { RunsSection } from '@/runs/RunsSection'
+import { Timeline } from '@/runs/Timeline'
 import { useMoveTask } from './queries'
 import { Comments, History } from './TaskPaneActivity'
 import { ClosedSection, FollowsLine } from './TaskPaneClosed'
@@ -105,6 +106,7 @@ export function TaskPane({ task, tasks, onClose, onOpen, onFollowUp }: Props) {
 
         <Dependencies task={task} tasks={tasks} />
         <RunsSection task={task} />
+        <Timeline id={task.id} />
         <Comments id={task.id} />
         <History id={task.id} />
       </div>
