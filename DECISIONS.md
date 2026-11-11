@@ -230,7 +230,7 @@ Toute décision structurante s'ajoute ici.
 
 ### Addendum (2026-11-11) — ADR-023 D7 précisé pour Hermes
 
-Décidé par l'agent sous le feu vert du 2026-11-11, **à confirmer par Loïc** (cadrage : `docs/superpowers/specs/2026-11-11-adaptateur-hermes-design.md`, §6 et §11) :
+Décidé par l'agent sous le feu vert du 2026-11-11, puis **confirmé par Loïc le 2026-11-11** (`--max-retries 1` et relecture Hermes intérieure au run ; cadrage : `docs/superpowers/specs/2026-11-11-adaptateur-hermes-design.md`, §6 et §11) :
 
 - `--max-retries 1` : le premier échec ferme le run en `failed`, aucune relance automatique.
 - La relecture de Hermes (`review_dispatch`) reste une étape intérieure du run (`progress`), bornée par la durée maximale ; un `review` Hermes n'est jamais un `review` Nexus.

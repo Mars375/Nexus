@@ -255,7 +255,7 @@ Même contrat que Codex : **lever si l'arrêt n'est pas confirmé** ; le run res
 
 ### 6.2 `review_dispatch: true`
 
-**Décision proposée (à confirmer par Loïc, D7) :** Nexus **laisse la relecture de Hermes se faire** et la traite comme une étape intérieure du run. Un `review` côté Hermes n'est **jamais** un `review` côté Nexus (qui est un état réglé, plus suivi) : il devient un `progress` « relecture Hermes en cours », et le run reste `running` jusqu'à `completed`, `blocked`, `gave_up`, `archived` ou la durée maximale. La relecture de Loïc reste celle de Nexus : un `done` sans livrable relu finit en `review` (§4.4).
+**Décision (confirmée par Loïc le 2026-11-11, D7) :** Nexus **laisse la relecture de Hermes se faire** et la traite comme une étape intérieure du run. Un `review` côté Hermes n'est **jamais** un `review` côté Nexus (qui est un état réglé, plus suivi) : il devient un `progress` « relecture Hermes en cours », et le run reste `running` jusqu'à `completed`, `blocked`, `gave_up`, `archived` ou la durée maximale. La relecture de Loïc reste celle de Nexus : un `done` sans livrable relu finit en `review` (§4.4).
 
 **Rejetés :** désactiver `review_dispatch` (réglage global de Helios : changerait ses autres tableaux) ; traduire `review` Hermes en `review` Nexus (Nexus cesserait de suivre une tâche que Hermes continue de travailler) ; créer les tâches de façon à contourner la relecture (aucune option par tâche ne le permet en 0.23.0).
 
