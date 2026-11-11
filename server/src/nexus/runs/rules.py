@@ -55,10 +55,17 @@ def check_dispatchable(
         raise RuleViolation(
             "agent_not_for_executor", "cet exécutant ne travaille pas pour cet agent"
         )
-    if registry.get(executor) is None:
+    adapter = registry.get(executor)
+    if adapter is None:
         raise RuleViolation(
             "executor_unavailable",
             "aucun adaptateur n'est configuré pour cet exécutant : rien n'est lancé",
+        )
+    served = getattr(adapter, "agents", None)
+    if served is not None and agent not in served:
+        raise RuleViolation(
+            "executor_unavailable",
+            "aucun adaptateur n'est configuré pour cet agent : rien n'est lancé",
         )
     check_task_ready(session, task)
     active = session.scalar(

@@ -111,13 +111,20 @@ def cancel(run_ref: str, session: SessionDep, actor: ActorDep) -> RunOut:
     return to_out(run)
 
 
+def _served(name: str, adapter: object) -> frozenset[str]:
+    """What the executor works for, narrowed to what this deployment's adapter serves."""
+    works_for = AGENTS_OF.get(name, frozenset())
+    served = getattr(adapter, "agents", None)
+    return works_for if served is None else works_for & served
+
+
 @router.get("/api/executors")
 def executors(request: Request) -> list[ExecutorOut]:
     """The executors with a registered adapter. Empty: nothing can be handed over (409)."""
     registry = request.app.state.adapters
     return [
         ExecutorOut(
-            executor=name, agents=sorted(AGENTS_OF.get(name, ())),
+            executor=name, agents=sorted(_served(name, registry.get(name))),
             workdirs=[str(p) for p in getattr(registry.get(name), "workdirs", [])],
             measured_at=now(),
         )

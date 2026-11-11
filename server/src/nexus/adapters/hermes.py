@@ -77,6 +77,7 @@ class HermesAdapter:
 
     def _call(self, args: list[str], *, stdin: str | None = None,
               timeout: float | None = None) -> Result:
+        self.data_dir.mkdir(parents=True, exist_ok=True)  # the working directory of the child
         return cli.call(self.binary, args, stdin=stdin, timeout=timeout or self.cli_timeout,
                         cwd=str(self.data_dir), environ=self.environ)
 
