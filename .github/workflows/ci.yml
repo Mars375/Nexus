@@ -86,8 +86,28 @@ jobs:
       - name: Install dependencies
         run: pnpm install && pnpm bootstrap
 
+      # The browser comes from Playwright's CDN and is cached; the system packages come from the
+      # Ubuntu mirrors, whose DNS failed on the runner twice on 2026-11-11 (`--with-deps` then
+      # aborted the job before any test). The runner image already ships Chrome and its
+      # libraries, so a failed `install-deps` only warns: a really missing library still fails
+      # the tests, with a clear error.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('web/pnpm-lock.yaml') }}
+
       - name: Install Playwright browsers
-        run: pnpm --dir web exec playwright install --with-deps chromium
+        run: pnpm --dir web exec playwright install chromium
+
+      - name: Install Playwright system dependencies
+        run: |
+          for attempt in 1 2 3; do
+            pnpm --dir web exec playwright install-deps chromium && exit 0
+            echo "install-deps failed (attempt $attempt), retrying in 20 s"
+            sleep 20
+          done
+          echo "::warning::Playwright system dependencies not installed; relying on the runner image"
 
       - name: Run end-to-end tests
         run: pnpm e2e
