@@ -85,8 +85,10 @@ def call(
             except (subprocess.TimeoutExpired, OSError, ValueError):
                 pass
         return Result(None, "", "", stopped)
-    except OSError:  # the process ended before reading its input
-        out, err = b"", b""
+    except OSError:  # the input pipe failed: the child may still run, stop it before judging
+        if process.poll() is None and not codex_process.kill_tree(process):
+            return Result(None, "", "", False)
+        return Result(process.poll(), "", "", True)
     return Result(
         process.returncode, out[:STDOUT_MAX + 1].decode("utf-8", "replace"),
         err[:STDERR_MAX].decode("utf-8", "replace"), True)

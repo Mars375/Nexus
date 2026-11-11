@@ -8,6 +8,7 @@ fact, never raised: the list of Hermes event kinds grows with every version.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -20,6 +21,7 @@ SEQ_MISSING = 1_000_001  # reserved: the task vanished from Hermes
 GRACE_SECONDS = 120  # one dispatcher turn and a margin
 FILES_MAX = 20
 COMMIT_CHARS = 12
+COMMIT_SHA = re.compile(r"[0-9a-fA-F]{7,40}")
 UNTAKEN = frozenset({"triage", "todo", "ready", "scheduled"})
 INTERRUPTED = frozenset({"timed_out", "crashed", "stale", "spawn_failed", "reclaimed",
                          "worker_lost"})
@@ -56,7 +58,10 @@ def _int(value: object) -> int | None:
 
 def _fact(seq: int, at: datetime, kind: str, subject: str, body: str | None = None,
           payload: dict | None = None, evidence: list[str] | None = None) -> RunEvent:
-    # `seq` in the payload keeps two identical progress facts distinct (anti-noise).
+    # `seq` in the payload keeps two identical progress facts distinct (anti-noise). A progress
+    # needs a body (`progress_empty` otherwise): its subject stands in when Hermes gave no text.
+    if kind == "progress" and not body:
+        body = subject
     return RunEvent(seq=seq, at=at, kind=kind, subject=subject, body=body,
                     payload={"seq": seq} | (payload or {}), evidence=evidence or [])
 
@@ -84,8 +89,10 @@ def _completion(seq: int, at: datetime, ev: dict, show: dict, task_id: str,
     if _int(metadata.get("tests_run")) is not None:
         info["tests_run"] = metadata["tests_run"]
     commit = metadata.get("commit")
-    if isinstance(commit, str):  # shortened BEFORE the scanner: a full hash would be masked
-        info["commit"] = cut(commit[:COMMIT_CHARS])
+    # Only a hexadecimal hash, then shortened: a full hash would be masked, and cutting any
+    # other text before the scanner could leave a secret's prefix in clear.
+    if isinstance(commit, str) and COMMIT_SHA.fullmatch(commit.strip()):
+        info["commit"] = commit.strip()[:COMMIT_CHARS]
     where = f"hermes:nexus/{task_id}"
     if proofs:
         return _fact(seq, at, "done", "Helios a terminé (Hermes)", summary, info, [*proofs, where])
