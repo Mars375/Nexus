@@ -17,7 +17,7 @@ from nexus.adapters.base import RunInfo
 TASK_ID = "t_9f3a01bc"
 T0 = 1_788_000_000  # seconds since the epoch
 
-FAKE_SCRIPT = '''
+FAKE_SCRIPT = r'''
 import json, os, sys, time
 from pathlib import Path
 

@@ -29,16 +29,23 @@ def child_env(
             if k.upper() in allow and not k.upper().startswith("NEXUS_")}
 
 
-def spawn(argv: list[str], cwd: str, env: dict[str, str]) -> subprocess.Popen:
-    """A list of arguments, never a shell. Its own process group so the tree can be killed."""
+def spawn(
+    argv: list[str], cwd: str, env: dict[str, str], *, text: bool = True, stderr: int | None = None
+) -> subprocess.Popen:
+    """A list of arguments, never a shell. Its own process group so the tree can be killed.
+
+    `text=False` gives bytes pipes (no newline translation); `stderr` defaults to discarded.
+    """
     options: dict = {}
     if sys.platform == "win32":
         options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         options["start_new_session"] = True
+    if text:
+        options.update(text=True, encoding="utf-8", errors="replace")
     return subprocess.Popen(
         argv, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", **options,
+        stderr=subprocess.DEVNULL if stderr is None else stderr, **options,
     )
 
 

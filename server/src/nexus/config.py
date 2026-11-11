@@ -66,6 +66,7 @@ def _default_data_dir() -> Path:
     return Path.home() / ".nexus"
 
 
+_HERMES_PROFILE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 _ORIGIN = re.compile(r"[a-z][a-z0-9+.-]*://(\[[0-9a-f:.]+\]|[a-z0-9._-]+)(:[0-9]{1,5})?")
 
 
@@ -95,6 +96,10 @@ class Settings:
     codex_bin: str | None = None
     run_workdirs: tuple[Path, ...] = ()
     run_max_minutes: float = 60.0
+    # Hermes adapter (ADR-023, lot G): opt-in, no fallback on PATH (the tests would reach the real
+    # one); the Hermes profile that works for the agent `helios` (`default` on this machine).
+    hermes_bin: str | None = None
+    hermes_profile: str = "default"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "hosts", _normalize_hosts(self.hosts))
@@ -124,6 +129,10 @@ class Settings:
                 "NEXUS_RUN_MAX_MINUTES doit être un nombre fini > 0 "
                 f"(reçu : {self.run_max_minutes})"
             )
+
+        if not _HERMES_PROFILE.fullmatch(self.hermes_profile):
+            # Never the received value (ADR-006).
+            raise ValueError("NEXUS_HERMES_PROFILE : minuscules, chiffres, - et _ (64 au plus)")
 
         for origin in self.allowed_origins:
             if not _is_plain_origin(origin):
@@ -187,4 +196,6 @@ class Settings:
                 if item.strip()
             ),
             run_max_minutes=float(os.environ.get("NEXUS_RUN_MAX_MINUTES", "60")),
+            hermes_bin=os.environ.get("NEXUS_HERMES_BIN") or None,
+            hermes_profile=os.environ.get("NEXUS_HERMES_PROFILE") or "default",
         )
