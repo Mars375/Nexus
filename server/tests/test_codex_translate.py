@@ -35,7 +35,7 @@ def test_the_end_of_a_turn_is_finished_and_a_failure_is_failed():
     assert translate_line(DONE).kind == "finished"
     failed = translate_line(FAILED)
     assert (failed.kind, failed.body) == ("failed", "le modèle a échoué")
-    assert translate_line(json.dumps({"type": "error", "message": "x"})).kind == "failed"
+    assert translate_line(json.dumps({"type": "error", "message": "x"})).kind == "error"
 
 
 @pytest.mark.parametrize("line", [

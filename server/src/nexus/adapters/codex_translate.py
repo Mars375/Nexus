@@ -17,12 +17,16 @@ from nexus import secrets
 
 TEXT_MAX = 500
 
-FactKind = Literal["claimed", "working", "progress", "finished", "failed"]
+FactKind = Literal["claimed", "working", "progress", "finished", "failed", "error"]
 
 
 @dataclass(frozen=True)
 class Fact:
-    """What one line says. `finished` is the end of a turn: the adapter judges the proof."""
+    """What one line says. `finished` is the end of a turn: the adapter judges the proof.
+
+    `error` is a signal only (codex-cli prints one per reconnection attempt): `failed`, from
+    `turn.failed`, is what decides a failure (#176).
+    """
 
     kind: FactKind
     subject: str
@@ -84,6 +88,6 @@ def translate_line(line: str) -> Fact | None:
             message = error.get("message") if isinstance(error, dict) else None
             return Fact("failed", "Codex a échoué", _cut(message) or "échec sans détail")
         case "error":
-            return Fact("failed", "Codex a signalé une erreur",
+            return Fact("error", "Codex a signalé une erreur",
                         _cut(event.get("message")) or "erreur sans détail")
     return None
