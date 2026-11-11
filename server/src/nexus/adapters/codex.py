@@ -48,7 +48,8 @@ class _Job:
         self.progress = 0
         self.opened: set[str] = set()
         self.turn_done = False
-        self.failure: str | None = None
+        self.failure: str | None = None  # from `turn.failed`: it decides, the latest wins
+        self.last_error: str | None = None  # from `error` lines: a cause only when nothing better
         self.settled = False
         self.settle_lock = threading.Lock()  # one closing attempt at a time
         self.ended_at: float | None = None  # when the process was seen gone, whatever the polling
@@ -86,7 +87,10 @@ class _Job:
                     self.turn_done = True
             elif fact.kind == "failed":
                 with self.lock:
-                    self.failure = self.failure or fact.body
+                    self.failure = fact.body
+            elif fact.kind == "error":
+                with self.lock:
+                    self.last_error = fact.body
             elif fact.kind in ("claimed", "working"):
                 if fact.kind not in self.opened:  # once each: a loop of them would flood
                     self.opened.add(fact.kind)
@@ -213,9 +217,13 @@ class CodexAdapter:
     def _close_ended(job: _Job) -> None:
         code = job.process.returncode
         with job.lock:
-            failure, turn_done = job.failure, job.turn_done
+            failure, last_error, turn_done = job.failure, job.last_error, job.turn_done
         if failure or code != 0 or not turn_done:
-            cause = failure or f"le processus s'est arrêté (code {code}) sans terminer son tour"
+            stopped = f"le processus s'est arrêté (code {code})"
+            if turn_done and not failure:  # the turn ended, the exit did not: the exit is the cause
+                cause = stopped
+            else:  # an `error` line alone never decides, but it beats a bare exit code (#176)
+                cause = failure or last_error or f"{stopped} sans terminer son tour"
             job.add("failed", "Codex a échoué", payload={"cause": cause}, final=True)
             return
         commit = codex_git.proof(job.tree)

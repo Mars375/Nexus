@@ -186,7 +186,7 @@ def test_a_failure_message_that_is_only_a_secret_falls_back_to_a_readable_cause(
 
     fact = translate_line(line)
 
-    assert fact.kind == "failed" and fact.body == "erreur sans détail"
+    assert fact.kind == "error" and fact.body == "erreur sans détail"
 
 
 def test_a_secret_only_failure_still_closes_the_run(tmp_path):

@@ -45,7 +45,7 @@ def test_a_lone_surrogate_never_reaches_the_protocol():
 
     fact = translate_line(line)
 
-    assert fact.kind == "failed"
+    assert fact.kind == "error"
     fact.body.encode("utf-8")  # encodable: publish() would refuse it otherwise
 
 
