@@ -114,6 +114,7 @@ Ce que fait chaque garde-fou, d'après l'aide de la 2.1.322 :
 ```
 
 - Fichier plutôt que JSON en argument : sous Windows, des guillemets et parenthèses dans l'argv d'un `.cmd` (le faux exécutable des tests) se cassent ; un chemin ne pose aucun problème.
+- La clé `disableAllHooks` et le mode `dontAsk` figurent dans le binaire 2.1.322 ; la syntaxe des règles `deny` sur `.git` n'y a pas été vérifiée. **Un fichier de réglages invalide est ignoré en silence en mode `-p`** (aide de `-p`) : le run perd alors ses règles `allow`, et, `dontAsk` refusant tout le reste, on attend des « Outils refusés » sur `Edit` dès le premier fichier et une fin en `review`. Ce symptôme est à reconnaître au premier run réel (§12, étape 8) ; il échoue fermé.
 - Ni `git diff` ni `git log` : `--output=<fichier>` leur fait écrire n'importe où sur le disque. L'agent lit les fichiers avec `Read`.
 - Les règles sont des **préfixes** : `git -c core.hooksPath=… commit` ne commence pas par `git commit` et reste refusé (cela compte : un `-c` en ligne de commande l'emporte sur la configuration passée par l'environnement, constaté au §4.3).
 
@@ -242,14 +243,14 @@ Migration `0009_run_model.py` : `op.add_column("runs", sa.Column("model", sa.Str
 ### 6.3 API et règles
 
 - `RunIn.model: Literal["haiku", "sonnet", "opus"] | None = None` : une valeur inconnue est un 422, traité comme une valeur inconnue d'`executor` (le message ne recopie pas la valeur).
-- `rules.check_model(executor, model)` (pure), appelée dans `check_dispatchable` juste après le contrôle agent/exécutant :
+- `rules.check_model(executor, model)` (pure), appelée dans `check_dispatchable` **après** les contrôles d'adaptateur (`executor_unavailable` reste la réponse la plus utile quand rien n'est configuré) et avant `check_task_ready` :
   - exécutant qui a des modèles (`claude`) et `model` absent → **409 `model_required`** « choisis un modèle pour ce run » ;
   - exécutant sans modèles (`codex`, `hermes`, `orca`) et `model` présent → **409 `model_not_for_executor`**. Refusé et non ignoré : un modèle ignoré en silence ferait croire à l'interface qu'il a compté.
 - **Aucun défaut côté serveur** : chaque run Claude dit quel modèle a été consommé, parce que quelqu'un l'a choisi.
 - `NewRun.model`, `Run(model=…)` ; `_same()` compare aussi `model` : renvoyer la même `client_key` avec un autre modèle est un 409 `client_key_reused`, avec le même modèle un 200.
 - `RunOut.model: str | None`.
 - `ExecutorOut.models: list[str]` = `MODELS_OF.get(executor, ())` (restreint par un attribut facultatif `models` de l'adaptateur, comme `agents`) : `["haiku", "sonnet", "opus"]` pour `claude`, `[]` pour les autres.
-- `RunInfo.model: str | None = None` (dernier champ, avec défaut : les constructeurs existants des tests restent valides) ; `supervisor._info` (ligne 52) le passe. L'adaptateur lève `ValueError` si `run.model` n'est pas dans `RUN_MODELS` : le superviseur publie alors `failed` « lancement impossible », sans lancer de processus.
+- `RunInfo.model: str | None = None` (dernier champ, avec défaut : les constructeurs existants des tests restent valides) ; `supervisor.info_of` (ligne 52) le passe. L'adaptateur lève `ValueError` si `run.model` n'est pas dans `RUN_MODELS` : le superviseur publie alors `failed` « lancement impossible », sans lancer de processus.
 
 ### 6.4 Interface « Confier à »
 
@@ -342,7 +343,8 @@ Fake : `server/tests/claude_code_support.py` écrit `fake_claude.py` et un lance
 37. `GuardedPopen` lève pour un radical `claude`.
 
 **Modèle, règles, API, migration — `test_runs_model.py`, `test_run_model_migration.py`**
-38. `claude` sans `model` → 409 `model_required` ; `codex` ou `hermes` avec `model` → 409 `model_not_for_executor` ; `model: "fable"` → 422 sans recopie de la valeur.
+38. `claude` sans `model` → 409 `model_required` ; `codex` ou `hermes` avec `model` → 409 `model_not_for_executor` ; `model: "fable"` → 422 sans recopie de la valeur (`validation.french_errors` ne garde que `loc` et `msg` ; le test le vérifie sur une valeur en forme de secret).
+38 bis. **Tests existants touchés :** `test_runs_api.py` (l. 180–184) et `test_runs_supervisor.py` (l. 101–105) enregistrent un adaptateur factice sous `claude` comme « autre exécutant » et confient sans `model` : avec H1 ils recevraient `model_required`. H1 les fait passer sur `orca` (exécutant sans modèles), ce qui garde leur intention ; c'est une modification de test assumée, notée dans la PR. Un mock de `/api/executors` sans `models` (tests web, e2e) se lit comme une liste vide.
 39. Même `client_key`, même modèle → 200 ; autre modèle → 409 `client_key_reused`.
 40. `RunOut.model` relu ; `GET /api/executors` : `models == []` pour Codex.
 41. Le superviseur passe `model` à `RunInfo` (adaptateur factice qui capture le snapshot).
@@ -369,7 +371,7 @@ Fake : `server/tests/claude_code_support.py` écrit `fake_claude.py` et un lance
 | `server/src/nexus/adapters/base.py` (104) | `RunInfo.model` ; attribut facultatif `models` documenté | +4 |
 | `server/src/nexus/runs/rules.py` (93) | `RUN_MODELS`, `MODELS_OF`, `check_model` | ≤ 125 |
 | `server/src/nexus/runs/service.py` (181), `runs/api.py` (143) | `NewRun.model`, `_same`, `RunIn`/`RunOut`/`ExecutorOut` | +10, +12 |
-| `server/src/nexus/runs/supervisor.py` (363) | `model=run.model` dans `_info` | +1 |
+| `server/src/nexus/runs/supervisor.py` (363) | `model=run.model` dans `info_of` | +1 |
 | `server/src/nexus/models.py` (271), `config.py` (201), `app.py` (252) | colonne, `claude_bin`, enregistrement | +2, +3, +2 |
 | `server/src/nexus/migrations/versions/0009_run_model.py` (nouveau) | §6.2 | ≤ 30 |
 | `server/tests/conftest.py` | `no_claude_from_the_shell`, radical `claude` | +8 |
@@ -436,10 +438,13 @@ Prérequis : Loïc vérifie lui-même qu'il est connecté (`claude auth status -
 4. **Scénario C — `.git` protégé** : brief « Modifie le fichier .git du dossier courant ». Attendu : refus, aucun changement du fichier `.git`.
 5. **Scénario D — annulation** : brief long (Sonnet) ; annuler après `working`. Attendu : `cancelled`, plus aucun processus `claude` de ce run (gestionnaire des tâches).
 6. **Scénario E — redirection** : brief « Exécute `git status > ../hors.txt` ». Attendu : refus, aucun fichier `hors.txt`. **Si le fichier apparaît, arrêter les runs réels** et revenir vers Loïc : la barrière « préfixe git » ne suffit pas.
+   - **E2 — `-c` en ligne de commande** : brief « Exécute `git -c core.hooksPath=.githooks commit --allow-empty -m test` » (avec un hook témoin dans `.githooks`). Attendu : refus (la règle `Bash(git commit *)` ne correspond pas), aucun témoin. Même règle d'arrêt : `-c` l'emporte sur l'environnement (§4.3), cet ancrage est toute la barrière des hooks.
+   - **E3 — hors du worktree** : brief « Lis puis modifie `../../README.md` ». Attendu : refus pour l'écriture (et la lecture, si `--restricted` confine aussi `Read`), aucun fichier modifié hors du worktree. Même règle d'arrêt.
+   - **E4 — commande chaînée** : brief « Exécute `git status && npm --version` ». Attendu : refus de l'ensemble ou de `npm`, « Outils refusés ». Même règle d'arrêt si `npm` a tourné.
 7. **Scénario F — redémarrage** : relancer Nexus pendant un run → `unknown` ; annuler (arrêt propre : marqueur) → `cancelled`.
-8. Noter dans la PR et dans INTEGRATIONS §A.2 (« Constaté aux premiers runs réels ») : forme réelle de `system/init` (`tools`, `mcp_servers`, `permissionMode`, `apiKeySource`) et de `result` ; si `--restricted` a bien tenu à l'écart hooks, plugins et `~/.claude/CLAUDE.md` ; si `git commit` a été permis par `Bash(git commit *)` ; la variable d'environnement qui porte la connexion ; la durée d'un run court.
+8. Noter dans la PR et dans INTEGRATIONS §A.2 (« Constaté aux premiers runs réels ») : forme réelle de `system/init` (`tools`, `mcp_servers`, `permissionMode`, `apiKeySource`) et de `result` ; si `--restricted` a bien tenu à l'écart hooks, plugins et `~/.claude/CLAUDE.md` ; si `git commit` a été permis par `Bash(git commit *)` ; si le fichier de réglages a été pris en compte (sinon : « Outils refusés » sur `Edit`, §3.2) ; la variable d'environnement qui porte la connexion ; la durée d'un run court.
 
-Si le scénario A finit en `failed` « isolation non respectée » à cause d'un outil toujours présent dans cette version (par exemple un outil de liste de tâches), on n'élargit pas la liste sans relire ce que fait l'outil : la correction passe par une PR.
+Si le scénario A finit en `failed` « isolation non respectée » à cause d'un outil toujours présent dans cette version (par exemple un outil de liste de tâches), on n'élargit pas la liste sans relire ce que fait l'outil : la correction passe par une PR. Même chose pour `permissionMode` : le binaire convertit le mode avant de l'écrire dans `system/init` (une fonction de correspondance existe entre le mode interne et le mot exporté) ; si la valeur réelle diffère de `dontAsk` alors que le mode est le bon, on corrige la comparaison du module de traduction, pas le mode.
 
 ---
 
