@@ -100,7 +100,11 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm --dir web exec playwright install chromium
 
+      # A hung apt-get must not hold the job: past 8 minutes the runner kills the step's whole
+      # process tree (sudo children included) and the job carries on with the runner image.
       - name: Install Playwright system dependencies
+        timeout-minutes: 8
+        continue-on-error: true
         run: |
           for attempt in 1 2 3; do
             pnpm --dir web exec playwright install-deps chromium && exit 0
