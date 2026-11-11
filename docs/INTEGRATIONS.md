@@ -28,7 +28,7 @@ Deux familles :
 - Machine d'états : claim atomique, heartbeat, reclaim, retry (`failure_limit=2`), stale timeout 14 400 s, circuit breaker.
 - Tables : `tasks`, `task_runs`, `task_events`, `task_comments`, `task_links`, `task_attachments`, `kanban_notify_subs`.
 - Surfaces : CLI `hermes kanban …`, API dashboard + WebSocket `/api/plugins/kanban/events?since=<event_id>&board=<slug>`.
-- Statuts et événements relevés : [notes/2026-09-28-releve-enums-hermes-kanban.md](notes/2026-09-28-releve-enums-hermes-kanban.md).
+- Statuts et événements relevés : [notes/2026-09-28-releve-enums-hermes-kanban.md](notes/2026-09-28-releve-enums-hermes-kanban.md), mis à jour pour la v0.23.0 dans [notes/2026-11-11-releve-hermes-0-23.md](notes/2026-11-11-releve-hermes-0-23.md) (options de `create`, `show --json`, tableaux, dispatcher).
 
 **Adaptateur `hermes` :**
 
@@ -123,7 +123,7 @@ Deux familles :
 | Intégration | Famille | Sens | Phase | État |
 |---|---|---|---|---|
 | Nœuds | source | R | 1 | à brancher |
-| Hermes | exécutant | dispatch + R | 2 | audit fait ; enums relevés |
+| Hermes | exécutant | dispatch + R | 2 | audit fait ; enums relevés ; v0.23.0 relevée (2026-11-11) |
 | Claude / Codex / Orca | exécutant | dispatch + R | 2 | contrats à écrire |
 | Chats et messagerie | source | R + envoi (gated vers un tiers) | 3 | tous les canaux (ADR-018) ; accès WhatsApp à trancher |
 | Cron | source | R | 4 | sources connues |
