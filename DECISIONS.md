@@ -228,6 +228,17 @@ Toute décision structurante s'ajoute ici.
 - **Conséquences :** migration `0008_runs`, `nexus/runs/` et `nexus/adapters/` (`events/service.py` et `tasks/service.py` sont proches de 400 lignes), routes `POST /api/tasks/{ref}/runs`, `POST /api/runs/{ref}/cancel`, `GET /api/runs/{ref}`, `GET /api/tasks/{ref}/runs` (409 `executor_unavailable` sans adaptateur configuré ; 409 d'avance si `working` serait refusé : tâche `done`, sans prochaine action, autre tâche principale en cours, dépendance non traitée). Découpage en PR indépendantes, chacune depuis `master` : modèle et superviseur ; adaptateur Codex ; « Confier à » dans l'interface ; historique par carte ; relevé Hermes v0.22.5 puis adaptateur Hermes ; Claude Code ; Orca.
 - **Statut :** accepté.
 
+### Addendum (2026-11-11) — ADR-023 D7 précisé pour Hermes
+
+Décidé par l'agent sous le feu vert du 2026-11-11, puis **confirmé par Loïc le 2026-11-11** (`--max-retries 1` et relecture Hermes intérieure au run ; cadrage : `docs/superpowers/specs/2026-11-11-adaptateur-hermes-design.md`, §6 et §11) :
+
+- `--max-retries 1` : le premier échec ferme le run en `failed`, aucune relance automatique.
+- La relecture de Hermes (`review_dispatch`) reste une étape intérieure du run (`progress`), bornée par la durée maximale ; un `review` Hermes n'est jamais un `review` Nexus.
+- Les fins autres que `done` (`blocked`, `gave_up`, durée maximale) archivent la tâche Hermes, pour qu'elle ne travaille pas hors de Nexus à côté d'un nouveau run.
+- La preuve d'un `done` est une pièce jointe recopiée par Hermes (`uploaded_by` `kanban_complete` ou `kanban_request_review`) et relue sur le disque ; sinon `review`.
+- L'agent `helios` correspond au profil Hermes `default`.
+- Le comportement de D3 au redémarrage est inchangé (le run passe `unknown`, Loïc l'annule). Reprendre le suivi serait un vrai écart à D3 : addendum distinct, hors du lot G.
+
 ---
 
 ## Décisions ouvertes

@@ -235,6 +235,14 @@ def quiet_run_supervisor(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_hermes_from_the_shell(monkeypatch):
+    """Loïc exports these for the real run and may commit from that shell: the hook runs the
+    whole suite, which must not see them (it would try to register the real Hermes)."""
+    monkeypatch.delenv("NEXUS_HERMES_BIN", raising=False)
+    monkeypatch.delenv("NEXUS_HERMES_PROFILE", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def never_the_real_codex(monkeypatch):
     """No test may start the real `codex` binary (ADR-023, D8): tests use a fake executable."""
     import subprocess
@@ -245,8 +253,9 @@ def never_the_real_codex(monkeypatch):
     class GuardedPopen(real):
         def __init__(self, args, *a, **kw):
             first = str(args).split()[0] if isinstance(args, str) else str((list(args) or [""])[0])
-            if PurePath(first).stem.lower() == "codex":
-                raise AssertionError("a test tried to start the real codex binary")
+            stem = PurePath(first).stem.lower()
+            if stem in ("codex", "hermes"):
+                raise AssertionError(f"a test tried to start the real {stem} binary")
             super().__init__(args, *a, **kw)
 
     monkeypatch.setattr(subprocess, "Popen", GuardedPopen)

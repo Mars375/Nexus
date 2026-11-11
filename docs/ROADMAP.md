@@ -72,6 +72,8 @@ Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un 
 - Suivi des runs (événements traduits, preuves rapatriées) ;
 - Historique par carte : événements + runs + preuves.
 
+**Avancement :** adaptateur `hermes` (lot G, #179) : Helios seul, via le tableau `nexus` ; cadrage dans `docs/superpowers/specs/2026-11-11-adaptateur-hermes-design.md` ; vrai run de Loïc à faire.
+
 **Critère de sortie :** une tâche confiée à Helios (via Hermes) et une à Codex racontent leur histoire complète dans Nexus, vérifiable de bout en bout, sans copie manuelle.
 
 ## Phase 3 — Conversations

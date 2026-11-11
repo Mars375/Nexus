@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm.exc import StaleDataError
 
 from nexus import secrets
-from nexus.adapters.base import Adapter, RunEvent, RunInfo
+from nexus.adapters.base import Adapter, LaunchUncertain, RunEvent, RunInfo
 from nexus.adapters.registry import AdapterRegistry
 from nexus.clock import now
 from nexus.events import service as events
@@ -196,6 +196,13 @@ def _close_cancelled(
     _finish(factory, run, status="cancelled")
 
 
+def _uncertain(factory: sessionmaker[Session], adapter: Adapter, run: RunInfo) -> None:
+    """A launch of unknown outcome: the run is held as `unknown` until a human cancels it."""
+    event = _own_event("unknown", "lancement incertain", last_check_at=now().isoformat())
+    _publish(factory, run, adapter.name, event, f"{run.ref}-uncertain")
+    _finish(factory, run, status="unknown")
+
+
 def _launched(run: RunInfo) -> bool:
     """The executor may have been reached: a reference, or the marker written before the call."""
     return run.external_ref is not None or run.native_status == DISPATCHING
@@ -223,6 +230,11 @@ def _dispatch(
     run, _ = _finish(factory, run, strict=True, native_status=DISPATCHING)
     try:
         sent = adapter.dispatch(run)
+    except LaunchUncertain:
+        # The executor may hold the work (Hermes): never repeated, never failed, never freed.
+        log.warning("lancement de %s : issue incertaine", run.ref)
+        _uncertain(factory, adapter, run)
+        return None
     except Exception as exc:
         log.warning("lancement de %s : %s", run.ref, type(exc).__name__)
         _fail(factory, adapter, run, "lancement impossible")
@@ -298,9 +310,7 @@ def _step(factory: sessionmaker[Session], registry: AdapterRegistry, run_id: int
     if run.status == "dispatched" and run.external_ref is None:
         if run.native_status == DISPATCHING:
             # A previous launch may have started the work and lost its trace: never repeat it.
-            event = _own_event("unknown", "lancement incertain", last_check_at=now().isoformat())
-            _publish(factory, run, adapter.name, event, f"{run.ref}-uncertain")
-            _finish(factory, run, status="unknown")
+            _uncertain(factory, adapter, run)
             return
         code = _ready_code(factory, run)
         if code is not None:

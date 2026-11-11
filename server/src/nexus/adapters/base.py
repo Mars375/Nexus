@@ -72,8 +72,15 @@ class WatchResult:
     native_status: str | None = None
 
 
+class LaunchUncertain(Exception):
+    """`dispatch` could not tell whether the work started: the run is marked `unknown` and held
+    until a human cancels it, and the launch is never repeated."""
+
+
 class Adapter(Protocol):
     name: str  # origin of the events it publishes: matches ADAPTER_NAME (checked at registration)
+    # Optional `agents: frozenset[str]` attribute: the agents this deployment serves, a subset of
+    # what the executor works for (`runs.rules.AGENTS_OF`). Absent: all of them.
 
     def probe(self) -> bool:
         """Whether the executor is usable right now (binary present, service reachable)."""

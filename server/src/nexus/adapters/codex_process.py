@@ -21,22 +21,31 @@ ENV_ALLOW = frozenset({
 })
 
 
-def child_env(environ: Mapping[str, str] | None = None) -> dict[str, str]:
+def child_env(
+    environ: Mapping[str, str] | None = None, allow: frozenset[str] = ENV_ALLOW
+) -> dict[str, str]:
     source = os.environ if environ is None else environ
     return {k: v for k, v in source.items()
-            if k.upper() in ENV_ALLOW and not k.upper().startswith("NEXUS_")}
+            if k.upper() in allow and not k.upper().startswith("NEXUS_")}
 
 
-def spawn(argv: list[str], cwd: str, env: dict[str, str]) -> subprocess.Popen:
-    """A list of arguments, never a shell. Its own process group so the tree can be killed."""
+def spawn(
+    argv: list[str], cwd: str, env: dict[str, str], *, text: bool = True, stderr: int | None = None
+) -> subprocess.Popen:
+    """A list of arguments, never a shell. Its own process group so the tree can be killed.
+
+    `text=False` gives bytes pipes (no newline translation); `stderr` defaults to discarded.
+    """
     options: dict = {}
     if sys.platform == "win32":
         options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         options["start_new_session"] = True
+    if text:
+        options.update(text=True, encoding="utf-8", errors="replace")
     return subprocess.Popen(
         argv, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", **options,
+        stderr=subprocess.DEVNULL if stderr is None else stderr, **options,
     )
 
 
