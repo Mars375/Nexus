@@ -47,6 +47,7 @@ const REFUSAL: Record<string, string> = {
   executor_busy: 'Cet exécutant a déjà un run actif : annule-le ou attends sa fin.',
   run_already_active: 'Cet agent a déjà un run actif sur cette tâche : annule-le ou attends sa fin.',
   model_required: 'Choisis un modèle pour ce run avant de le lancer.',
+  model_unavailable: 'Ce modèle n’est plus proposé par cet exécutant : choisis-en un autre dans la liste.',
   model_not_for_executor:
     'Cet exécutant ne propose pas de choix de modèle : change d’exécutant, le dialogue doit se rouvrir.',
   agent_not_for_executor: 'Cet exécutant ne travaille pas pour cet agent : choisis un autre couple.',

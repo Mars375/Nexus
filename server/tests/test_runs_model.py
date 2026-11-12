@@ -139,3 +139,17 @@ def test_info_of_defaults_to_no_model():
     run = Run(id=1, task_id=1, executor="codex", agent="codex", dispatched_by="loic",
               client_key="k", brief="b", status="dispatched", version=1)
     assert supervisor.info_of(run).model is None
+
+
+def test_a_model_the_adapter_does_not_serve_is_a_409(client):
+    adapter = FakeAdapter()
+    adapter.models = ("haiku",)
+    register(client, "claude", adapter)
+    task = make_task(client)
+    kw = {"executor": "claude", "agent": "claude"}
+
+    refused = dispatch(client, task, model="sonnet", **kw)
+    created = dispatch(client, task, model="haiku", client_key="k2", **kw)
+
+    assert (refused.status_code, code_of(refused)) == (409, "model_unavailable")
+    assert created.status_code == 201 and created.json()["model"] == "haiku"

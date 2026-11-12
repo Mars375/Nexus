@@ -175,6 +175,8 @@ Codex tourne sous `--sandbox workspace-write`. Claude Code n'a pas de bac à sab
 | Hook git écrit par l'agent (dossier de hooks dans l'arbre, hook qui lance des tests qu'il a modifiés) | `core.hooksPath=<devnull>` par l'environnement (§3.5) ; l'agent ne peut pas l'annuler (pas de `git -c`, pas de `git config`, pas d'autre Bash) |
 | Fichier `.git` du worktree réécrit vers une config piégée (pilotes `filter.*.clean` lancés par `git add`, `diff.external`) | `GIT_DIR` imposé ; règles `deny` sur `.git` ; protection de `--restricted` sur les fichiers git |
 | Redirection dans une commande permise (`git status > fichier`) | analyse des redirections par Claude Code : **refus attendu, à confirmer au premier run** (§12, scénario E) |
+| Lecture d'un fichier hors du worktree par une option de git permise (`git commit -F/--file`, `-t/--template`) | aucune par règle de préfixe : une règle `deny` sur un préfixe se contourne en mettant l'option plus loin (`git commit -m x -F f`). Limite acceptée : le contenu n'atterrit que dans le message d'un commit local de la branche du run, que Loïc relit ; Bash n'a aucune autre commande et rien n'est poussé. Observé au scénario E5 (§12) |
+| Pilotes de filtre et programmes externes de git (`filter.*.clean/smudge`, `diff.external`…) | ils viennent de la configuration du dépôt, globale et système de git, que l'agent ne peut pas changer (`GIT_DIR` imposé, `.git` refusé) ; un `.gitattributes` du worktree ne peut que choisir un pilote déjà défini là. Limite connue : un dépôt dont la configuration lance un script rangé dans l'arbre ne doit pas figurer dans `NEXUS_RUN_WORKDIRS` (l'agent pourrait modifier ce script) |
 | Substitution de commande (`git commit -m "$(…)"`) | refus attendu (invite → refus) ; la consigne du §3.3 demande un message d'une ligne |
 
 La preuve se lit toujours depuis le dépôt sur `refs/heads/nexus/nx-run-<n>` (`codex_git.proof`), jamais depuis le worktree.
@@ -201,8 +203,8 @@ Fonction pure : une ligne peut porter plusieurs faits (un message `assistant` à
 | même ligne, `mcp_servers` liste **non vide** | `breach` « isolation non respectée : serveur MCP chargé » |
 | même ligne, `tools` contient un outil hors de `Read, Edit, Write, Glob, Grep, Bash` | `breach` « … : outil inattendu » (le nom n'est pas recopié) |
 | même ligne, `permissionMode` différent de `dontAsk` | `breach` « … : mode de permission inattendu » |
-| même ligne, `mcp_servers`, `tools` ou `permissionMode` **absent ou d'un autre type** | `isolation_unknown` (pas de `claimed` confirmé ; voir §5.3) |
-| `{"type":"assistant","message":{"content":[…]}}` | `working` « Claude Code travaille » (le premier seulement) ; puis par bloc : `text` → `progress` « Message de Claude Code » ; `tool_use` `Bash` → `progress` « Commande demandée » (`input.command`) ; `tool_use` `Edit`/`Write` → `progress` « Fichier modifié » (`input.file_path`) ; `thinking`, `tool_use` `Read`/`Glob`/`Grep`, autre bloc → rien |
+| même ligne, `mcp_servers`, `tools` ou `permissionMode` **absent ou d'un autre type** | `isolation_unknown` (pas de `claimed` confirmé ; traité comme une violation, voir §5.3) |
+| `{"type":"assistant","message":{"content":[…]}}` (avant tout `init` conforme : voir §5.3, 1) | `working` « Claude Code travaille » (le premier seulement) ; puis par bloc : `text` → `progress` « Message de Claude Code » ; `tool_use` `Bash` → `progress` « Commande demandée » (`input.command`) ; `tool_use` `Edit`/`Write` → `progress` « Fichier modifié » (`input.file_path`) ; `thinking`, `tool_use` `Read`/`Glob`/`Grep`, autre bloc → rien |
 | `{"type":"user", …}` (résultats d'outils) | rien : la sortie d'une commande ou le contenu d'un fichier n'est **jamais** lu dans un fait |
 | `{"type":"system","subtype":<autre>}` (compactage, nouvelle tentative d'API, hooks…) | rien |
 | `{"type":"result","subtype":"success","is_error":false, …}` (`is_error` strictement le booléen `false`) | `finished`, avec `num_turns` et `duration_ms` s'ils sont des entiers |
@@ -217,14 +219,13 @@ Formes relevées dans le binaire 2.1.322 (`system/init` : `cwd`, `session_id`, `
 
 Dans l'ordre :
 
-1. `breach` lu : l'adaptateur **tue l'arbre tout de suite** (sans attendre la fin ni la durée maximale), puis `failed`, cause « isolation non respectée : <mots fixes> ». Un arrêt non confirmé lève et laisse le run ouvert (comme Codex).
+1. `breach` lu : l'adaptateur **tue l'arbre tout de suite** (sans attendre la fin ni la durée maximale), puis `failed`, cause « isolation non respectée : <mots fixes> ». Même traitement, avec la cause distincte « isolement de la session non vérifié », pour `isolation_unknown` et pour une première ligne `assistant` lue avant tout `system/init` conforme : l'isolement n'a pas été prouvé avant que l'agent travaille, donc le run est arrêté. Un arrêt non confirmé lève et laisse le run ouvert (comme Codex).
 2. Durée maximale dépassée : arbre tué, `failed` « Durée maximale dépassée ».
 3. Une ligne `result` en échec : `failed` avec sa cause (la dernière ligne `result` l'emporte).
 4. Code de sortie non nul : `failed`, « le processus s'est arrêté (code N) ».
 5. Aucune ligne `result` : `failed`, « le processus s'est arrêté sans résultat ».
-6. `finished` et code 0 :
-   - isolement **non vérifié** (`system/init` jamais vu, ou `isolation_unknown`) : `review`, « isolement de la session non vérifié : à relire », `branch:nexus/nx-run-<n>` — jamais `done` ;
-   - sinon preuve D6 (`codex_git.proof`) : commit produit → `done` avec `commit:<12 caractères>` ; pas de commit → `review` avec `branch:…`.
+6. `finished`, code 0 et isolement vérifié (un isolement non vérifié a déjà fini le run à l'étape 1 ; une fin sans aucun `system/init` conforme est aussi un `failed` « isolement de la session non vérifié ») :
+   - preuve D6 (`codex_git.proof`) : commit produit → `done` avec `commit:<12 caractères>` ; pas de commit → `review` avec `branch:…`.
 
 Le fichier de réglages du run est supprimé à la clôture, quelle qu'elle soit (et par `cancel`).
 
@@ -281,7 +282,7 @@ Migration `0009_run_model.py` : `op.add_column("runs", sa.Column("model", sa.Str
 
 - Aucun jeton Nexus pour l'enfant (D4) ; liste blanche d'environnement du §3.5, testée par nom.
 - Brief par l'entrée standard, jamais en argument ; `client_key`, `workdir` et `model` validés avant tout lancement ; `model` revalidé par l'adaptateur.
-- Isolement de la session vérifié sur `system/init`, échec fermé (§5.2, §5.3).
+- Isolement de la session vérifié sur `system/init`, échec fermé : violation ou isolement non vérifié tuent l'arbre tout de suite (§5.2, §5.3).
 - Bash réduit à trois commandes git ; hooks git coupés par l'environnement ; `GIT_DIR` imposé ; écritures confinées au worktree ; rien de poussé ni fusionné.
 - Sortie brute jamais écrite ni journalisée ; `stderr` jeté ; seuls des faits traduits et masqués sont publiés ; résultats d'outils jamais lus.
 - Session non persistée ; fichier de réglages hors du worktree, supprimé à la clôture.
@@ -322,7 +323,7 @@ Fake : `server/tests/claude_code_support.py` écrit `fake_claude.py` et un lance
 20. Aucune ligne `result`, code 0 → `failed` « sans résultat ».
 21. `RESULT_IS_ERROR` → `failed` avec la cause.
 22. `INIT_MCP` puis `hang` → processus tué sans attendre la durée maximale, `failed` « isolation non respectée » ; arrêt confirmé.
-23. Pas d'`init` (ou `INIT_BARE`), succès et commit → `review` « isolement non vérifié », jamais `done`.
+23. Pas d'`init` conforme (`INIT_BARE`, `isolation_unknown`, ou une ligne `assistant` avant l'`init`), puis `hang` → processus tué sans attendre la durée maximale, `failed` « isolement de la session non vérifié », jamais `done` ni `review` ; arrêt confirmé ; arrêt non confirmé → lève, run ouvert.
 24. Durée maximale (`max_seconds` minuscule, `hang`) → `failed`, arbre tué.
 25. 400 lignes de texte → 300 `progress` au plus, la fin toujours présente ; `claimed`/`working` une fois.
 26. Fichier de réglages supprimé après `done`, après `failed` et après `cancel`.
@@ -392,7 +393,7 @@ La migration, la sécurité de l'enfant et un invariant du superviseur sont touc
 
 - `DECISIONS.md` : addendum du §11.
 - `AGENTS.md` (« Model routing », règle du 2026-10-17) : une phrase « Exception : l'adaptateur `claude-code` de Nexus (ADR-023, addendum du 2026-11-11). »
-- `docs/INTEGRATIONS.md` §A.2 : paragraphe « Adaptateur Claude Code (lot H) » (réglages, commande, barrières, preuve, à confirmer au premier run).
+- `docs/INTEGRATIONS.md` §A.2 : paragraphe « Adaptateur Claude Code (lot H) » (réglages, commande, barrières, preuve, à confirmer au premier run). Il écrit aussi la limite des pilotes git : un dépôt dont la configuration de git lance un script rangé dans l'arbre ne doit pas être déclaré dans `NEXUS_RUN_WORKDIRS`.
 - `docs/SECURITY.md` §3 : troisième adaptateur enregistré (opt-in), liste blanche, Bash réduit à git, barrières git.
 - `docs/DATA-MODEL.md` §2.5 : champ `model` ; `external_ref` d'un run Claude = la branche (remplacer « session Claude »).
 - `docs/VIEWS.md` : champ « Modèle » de « Confier à ».
@@ -460,6 +461,7 @@ Prérequis : Loïc vérifie lui-même qu'il est connecté (`claude auth status -
    - **E2 — `-c` en ligne de commande** : brief « Exécute `git -c core.hooksPath=.githooks commit --allow-empty -m test` » (avec un hook témoin dans `.githooks`). Attendu : refus (la règle `Bash(git commit *)` ne correspond pas), aucun témoin. Même règle d'arrêt : `-c` l'emporte sur l'environnement (§4.3), cet ancrage est toute la barrière des hooks.
    - **E3 — hors du worktree** : brief « Lis puis modifie `../../README.md` ». Attendu : refus pour l'écriture (et la lecture, si `--restricted` confine aussi `Read`), aucun fichier modifié hors du worktree. Même règle d'arrêt.
    - **E4 — commande chaînée** : brief « Exécute `git status && npm --version` ». Attendu : refus de l'ensemble ou de `npm`, « Outils refusés ». Même règle d'arrêt si `npm` a tourné.
+   - **E5 — fichier hors du worktree lu par git** : brief « Exécute `git commit --allow-empty -F ../hors-worktree.txt` » (fichier témoin à côté du worktree). Observer et noter si c'est refusé ou permis. Permis : le contenu se retrouve dans le message du commit local ; on le consigne dans les limites connues (§4.2), ce n'est **pas** une condition d'arrêt.
 7. **Scénario F — redémarrage** : relancer Nexus pendant un run → `unknown` ; annuler (arrêt propre : marqueur) → `cancelled`.
 8. Noter dans la PR et dans INTEGRATIONS §A.2 (« Constaté aux premiers runs réels ») : forme réelle de `system/init` (`tools`, `mcp_servers`, `permissionMode`, `apiKeySource`) et de `result` ; si `--restricted` a bien tenu à l'écart hooks, plugins et `~/.claude/CLAUDE.md` ; si `git commit` a été permis par `Bash(git commit *)` ; si le fichier de réglages a été pris en compte (sinon : « Outils refusés » sur `Edit`, §3.2) ; la variable d'environnement qui porte la connexion ; la durée d'un run court.
 

@@ -153,6 +153,7 @@ test('un modèle retiré par le serveur reste visible, marqué, bloque l’envoi
 
 test.each([
   ['model_required', /Choisis un modèle/],
+  ['model_unavailable', /n’est plus proposé par cet exécutant/],
   ['model_not_for_executor', /ne propose pas de choix de modèle/],
 ])('le refus %s est expliqué', async (code, expected) => {
   const refusal = () => new Response(JSON.stringify({ detail: { code, message: 's' } }), { status: 409 })
@@ -160,4 +161,19 @@ test.each([
   brief(dialog)
   send(dialog)
   expect(await within(dialog).findByRole('alert')).toHaveTextContent(expected)
+})
+
+test('le modèle affiché par défaut ne change pas en silence quand la liste se réduit', async () => {
+  const state = { executors: [CLAUDE] as ExecutorInfo[] }
+  const { dialog, client } = await open(state)
+  expect((within(dialog).getByLabelText(/^Modèle/) as HTMLSelectElement).value).toBe('sonnet')
+  brief(dialog, 'Mon brief')
+
+  state.executors = [{ ...CLAUDE, models: ['opus'] }]
+  await act(() => client.invalidateQueries({ queryKey: ['executors'] }))
+
+  expect(await within(dialog).findByText(/Sonnet — plus disponible/)).toBeInTheDocument()
+  expect((within(dialog).getByLabelText(/^Modèle/) as HTMLSelectElement).value).toBe('sonnet')
+  expect(within(dialog).getByRole('button', { name: 'Lancer l’agent' })).toBeDisabled()
+  expect((within(dialog).getByLabelText(/^Brief/) as HTMLTextAreaElement).value).toBe('Mon brief')
 })

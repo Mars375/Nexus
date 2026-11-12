@@ -47,6 +47,12 @@ export function ConfierDialog({ task, onClose }: { task: Task; onClose: () => vo
   const models = info?.models ?? []
   // Sonnet until Loïc picks another; a pick the server no longer offers stays, marked, and blocks.
   const theModel = model || defaultModel(models)
+  // The default shown is pinned as the choice once the models are known, so a later refresh of
+  // the list cannot move the select to another model in silence: it becomes « plus disponible ».
+  const pinned = model === '' && models.length > 0 ? defaultModel(models) : undefined
+  useEffect(() => {
+    if (pinned) setModel(pinned)
+  }, [pinned])
   const modelGone = model !== '' && !!info && !models.includes(model)
   const gone = executorGone || agentGone || workdirGone || modelGone
   const closed = HANDOVER_CLOSED.includes(task.status)

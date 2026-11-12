@@ -92,6 +92,11 @@ def check_dispatchable(
             "aucun adaptateur n'est configuré pour cet agent : rien n'est lancé",
         )
     check_model(executor, model)
+    offered = getattr(adapter, "models", None)
+    if model is not None and offered is not None and model not in offered:
+        raise RuleViolation(
+            "model_unavailable", "ce modèle n'est pas proposé par cet exécutant sur ce serveur"
+        )
     check_task_ready(session, task)
     active = session.scalar(
         select(Run).where(Run.task_id == task.id, Run.agent == agent, Run.status.in_(ACTIVE))
