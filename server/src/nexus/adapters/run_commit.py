@@ -211,8 +211,8 @@ class CommitSession:
 
     def _limit(self, final: bool) -> float:
         remaining = self._deadline - time.monotonic()
-        if final:  # the last proof always gets its reserve
-            return min(CALL_TIMEOUT, max(remaining, self._reserve))
+        if final:  # the reserve the earlier steps left, shared by the reads of the last proof
+            return min(CALL_TIMEOUT, remaining)
         return min(CALL_TIMEOUT, remaining - self._reserve)
 
     def git(
@@ -311,7 +311,8 @@ def _check_files(session: CommitSession, files: dict[str, int], max_bytes: int) 
 
 
 def _check_index(session: CommitSession, files: dict[str, int], max_bytes: int) -> bool:
-    """Step 5; False when the index holds no change. Raises _Stop on a refusal."""
+    """Step 5; False when the index holds no change (a deletion is one). Raises _Stop on a
+    refusal."""
     raw = session.git("index", ["diff-index", "--cached", "--raw", "-z", "--no-renames",
                                 session.request.tree.start])
     if raw.returncode != 0:
@@ -334,7 +335,7 @@ def _check_index(session: CommitSession, files: dict[str, int], max_bytes: int) 
         if any(not line.split()[-1].isdigit() or int(line.split()[-1]) > max_bytes
                for line in lines):
             raise _Stop(Refused("fichier trop gros"))
-    return bool(staged)
+    return bool(raw.stdout)
 
 
 def _commit(request: CommitRequest, max_bytes: int, budget: float) -> Outcome:

@@ -362,6 +362,26 @@ def test_a_slow_git_never_overruns_the_budget_by_more_than_one_call(monkeypatch,
     assert time.monotonic() - began <= 1.0 + 0.3 + 0.5
 
 
+def test_the_last_proof_shares_the_reserve_and_stops_at_the_deadline(monkeypatch, tmp_path):
+    job = make_job(tmp_path)
+    job.write("new.txt")
+    limits = []  # the timeout given to git commit, then to each read of the last proof
+    real = run_commit.run_git
+
+    def slow_from_commit(cwd, args, *, timeout, **kwargs):
+        if not limits and args[:1] != ["commit"]:
+            return real(cwd, args, timeout=timeout, **kwargs)
+        limits.append(timeout)
+        time.sleep(timeout * 0.95)  # slow, yet answering: the proof goes on to its next read
+        return CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(run_commit, "run_git", slow_from_commit)
+    outcome = run_commit.commit_run(job.request(), budget=1.0)
+    assert isinstance(outcome, GitFailed)
+    reserve = 1.0 * run_commit.FINAL_RESERVE / run_commit.COMMIT_BUDGET
+    assert sum(limits[1:]) <= reserve + 0.05  # one reserve for the whole proof, not one per read
+
+
 def test_the_module_survives_a_missing_git(monkeypatch, tmp_path):
     job = make_job(tmp_path)
     job.write("new.txt")

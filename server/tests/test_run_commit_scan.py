@@ -177,6 +177,17 @@ def test_no_change_is_nothing_to_commit(tmp_path):
     assert run_commit.commit_run(job.request()) == NothingToCommit()
 
 
+def test_a_run_that_only_deletes_a_file_commits_the_deletion(tmp_path):
+    job = make_job(tmp_path, {"obsolete.txt": "old"})
+    (job.tree.path / "obsolete.txt").unlink()
+    outcome = run_commit.commit_run(job.request())
+    assert outcome == Committed(job.branch_head()) and outcome.sha != job.tree.start
+    listed = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", outcome.sha], cwd=job.repo, capture_output=True,
+        text=True, check=True, env=codex_git.clean_env()).stdout.split()
+    assert "obsolete.txt" not in listed
+
+
 # --- 67: hard links ----------------------------------------------------------------------------
 
 
