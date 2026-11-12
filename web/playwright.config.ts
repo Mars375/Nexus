@@ -1,8 +1,9 @@
 import { defineConfig } from '@playwright/test'
-import { API_PORT, WEB_PORT, codexFixture, dataDirPath, storageStatePath } from './e2e/e2e-env'
+import { API_PORT, WEB_PORT, claudeFixture, codexFixture, dataDirPath, storageStatePath } from './e2e/e2e-env'
 
 const dataDir = dataDirPath()
 const codex = codexFixture()
+const claude = claudeFixture()
 
 export default defineConfig({
   testDir: './e2e',
@@ -30,6 +31,8 @@ export default defineConfig({
     // auth.spec joue les 401 du vrai serveur (deux tests seulement les simulent) ; il émet puis révoque un jeton et crée une tâche (« Brouillon sous verrou »), sans effet sur les autres projets.
     // runs.spec confie des tâches au faux Codex du serveur de test ; il crée ses propres tâches.
     { name: 'runs', testMatch: /runs.spec.ts/, dependencies: ['work'] },
+    // runs-claude.spec confie des tâches au faux Claude Code du serveur de test (Nexus fait le commit) ; il crée ses propres tâches.
+    { name: 'runs-claude', testMatch: /runs-claude.spec.ts/, dependencies: ['work'] },
     { name: 'auth', testMatch: /auth.spec.ts/, dependencies: ['work'] },
   ],
   webServer: [
@@ -40,6 +43,7 @@ export default defineConfig({
         NEXUS_DATA_DIR: dataDir,
         NEXUS_PORT: API_PORT,
         NEXUS_CODEX_BIN: codex.bin,
+        NEXUS_CLAUDE_BIN: claude.bin,
         NEXUS_RUN_WORKDIRS: codex.repo,
         NEXUS_RUN_MAX_MINUTES: '5',
       },

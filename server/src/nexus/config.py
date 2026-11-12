@@ -100,6 +100,9 @@ class Settings:
     # one); the Hermes profile that works for the agent `helios` (`default` on this machine).
     hermes_bin: str | None = None
     hermes_profile: str = "default"
+    # Claude Code adapter (ADR-023, lot H): opt-in too, never looked up on PATH (the real `claude`
+    # is installed on this machine and no test may reach it).
+    claude_bin: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "hosts", _normalize_hosts(self.hosts))
@@ -198,4 +201,5 @@ class Settings:
             run_max_minutes=float(os.environ.get("NEXUS_RUN_MAX_MINUTES", "60")),
             hermes_bin=os.environ.get("NEXUS_HERMES_BIN") or None,
             hermes_profile=os.environ.get("NEXUS_HERMES_PROFILE") or "default",
+            claude_bin=os.environ.get("NEXUS_CLAUDE_BIN") or None,
         )

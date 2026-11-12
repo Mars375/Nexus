@@ -243,6 +243,13 @@ def no_hermes_from_the_shell(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_claude_from_the_shell(monkeypatch):
+    """Same for the real run of Claude Code: `NEXUS_CLAUDE_BIN` exported by Loïc or the main agent
+    must not make the suite register the real binary."""
+    monkeypatch.delenv("NEXUS_CLAUDE_BIN", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def never_the_real_codex(monkeypatch):
     """No test may start the real `codex` binary (ADR-023, D8): tests use a fake executable."""
     import subprocess
@@ -254,7 +261,7 @@ def never_the_real_codex(monkeypatch):
         def __init__(self, args, *a, **kw):
             first = str(args).split()[0] if isinstance(args, str) else str((list(args) or [""])[0])
             stem = PurePath(first).stem.lower()
-            if stem in ("codex", "hermes"):
+            if stem in ("codex", "hermes", "claude"):
                 raise AssertionError(f"a test tried to start the real {stem} binary")
             super().__init__(args, *a, **kw)
 

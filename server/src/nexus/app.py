@@ -19,7 +19,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from nexus import backup, live, migrate, nodes
 from nexus import now as now_view
-from nexus.adapters import codex, hermes
+from nexus.adapters import claude_code, codex, hermes
 from nexus.adapters.registry import AdapterRegistry
 from nexus.approvals import api as approvals_api
 from nexus.approvals.service import ApprovalNotFound
@@ -177,6 +177,7 @@ def create_app(
     app.state.adapters = AdapterRegistry()
     codex.register_configured(app.state.adapters, settings)
     hermes.register_configured(app.state.adapters, settings)
+    claude_code.register_configured(app.state.adapters, settings)
     app.include_router(tasks_api.router)
     app.include_router(timeline_api.router)
     app.include_router(events_api.router)
