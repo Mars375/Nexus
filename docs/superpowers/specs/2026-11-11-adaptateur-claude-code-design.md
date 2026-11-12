@@ -137,6 +137,7 @@ La consigne ne contient ni référence de run ni chemin (constante, testée tell
 ### 3.4 Dossier de travail et identifiants
 
 - `codex_git.choose_repo(workdirs, run.workdir)` puis `codex_git.create_worktree(repo, <data>/worktrees, run.ref)` : mêmes règles que Codex (jamais le dépôt du serveur, jamais un dépôt hors liste), même chemin `<data>/worktrees/nx-run-<n>`, même branche `nexus/nx-run-<n>`. Les références de run sont uniques tous exécutants confondus : un worktree Codex et un worktree Claude ne se télescopent pas.
+- **Identité git vérifiée avant le lancement** : `git config user.email` lu dans le worktree (même environnement git que l'enfant). Absente → `ValueError`, donc `failed` « lancement impossible : aucune identité git (user.email) pour ce dépôt », sans lancer de modèle. Constaté le 2026-11-12 : Helios n'a pas d'identité git globale ; dans un dépôt sans identité locale, le `git commit` de l'agent échouerait et le run finirait en `review` sans cause lisible, après avoir consommé l'abonnement. Test : dépôt sans `user.email` → `failed` avec cette cause, aucun `Popen` de `fake-claude`.
 - `Dispatched(external_ref=tree.branch, native_status="started")`.
 - L'id de session (`session_id` de `system/init`) n'est pas conservé : la session n'est pas persistée, il ne désignerait rien.
 - Les modules `codex_git` et `codex_process` sont réutilisés **tels quels** ; les renommer en modules génériques est un sujet à part (une PR de renommage sans changement), pas ce lot.
@@ -149,7 +150,8 @@ La consigne ne contient ni référence de run ni chemin (constante, testée tell
 - **Jamais transmis** (testé par nom, sur un environnement qui les contient tous) : tout `NEXUS_*` ; tout `ANTHROPIC_*` (une `ANTHROPIC_API_KEY` ferait payer l'API au lieu de l'abonnement) ; `CLAUDECODE` et tout `CLAUDE_CODE_*` autre que `CLAUDE_CODE_GIT_BASH_PATH` (le serveur peut avoir été lancé depuis une session Claude Code : identifiant de session, socket et jeton de messagerie de la session parente) ; `CODEX_HOME` ; tout `GIT_*` hérité.
 - **Imposé par l'adaptateur** :
   - `GIT_DIR=<dépôt>/.git/worktrees/nx-run-<n>` (lu par `git rev-parse --absolute-git-dir` dans le worktree juste après sa création, avant tout lancement : git peut suffixer ce nom ; le chemin doit être sous `git rev-parse --git-common-dir` du dépôt, sinon `ValueError`) et `GIT_WORK_TREE=<worktree>` : git n'utilise plus le fichier `.git` du worktree, que l'agent pourrait réécrire (§4.3) ;
-  - `GIT_CONFIG_COUNT=2`, `GIT_CONFIG_KEY_0=core.hooksPath`, `GIT_CONFIG_VALUE_0=<os.devnull>`, `GIT_CONFIG_KEY_1=core.fsmonitor`, `GIT_CONFIG_VALUE_1=false` ;
+  - `GIT_CONFIG_COUNT=3`, `GIT_CONFIG_KEY_0=core.hooksPath`, `GIT_CONFIG_VALUE_0=<os.devnull>`, `GIT_CONFIG_KEY_1=core.fsmonitor`, `GIT_CONFIG_VALUE_1=false`, `GIT_CONFIG_KEY_2=commit.gpgsign`, `GIT_CONFIG_VALUE_2=false` (une signature demanderait une phrase secrète sans terminal et bloquerait le commit jusqu'à la durée maximale) ;
+  - `GIT_EDITOR=:` (un `git commit` sans `-m` n'ouvre aucun éditeur : message vide, commit abandonné au lieu d'attendre un éditeur jusqu'à la durée maximale) ;
   - `GIT_TERMINAL_PROMPT=0` ;
   - `DISABLE_AUTOUPDATER=1` (le binaire ne se remplace pas pendant un run).
   La configuration globale de git reste lue (identité de l'auteur du commit).
@@ -311,7 +313,7 @@ Fake : `server/tests/claude_code_support.py` écrit `fake_claude.py` et un lance
 13. `argv()` égale exactement la liste du §3.1 pour chaque modèle ; aucun drapeau exclu (§3.1) n'y figure ; le brief n'y figure pas.
 14. `argv()` avec `fable`, `""`, `None`, `opus --dangerously-skip-permissions` → `ValueError`, aucun processus.
 15. Fichier de réglages : contenu exact du §3.2, écrit sous `<data>/claude-code/`, jamais dans le worktree.
-16. Environnement : à partir d'un environnement qui contient `NEXUS_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_MESSAGING_TOKEN`, `CODEX_HOME`, `GIT_DIR`, `GIT_INDEX_FILE` (et leurs variantes en minuscules) → aucun ne passe ; `USERPROFILE`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_GIT_BASH_PATH` passent ; `GIT_DIR`, `GIT_WORK_TREE`, le trio `GIT_CONFIG_*`, `GIT_TERMINAL_PROMPT`, `DISABLE_AUTOUPDATER` valent ce que l'adaptateur impose.
+16. Environnement : à partir d'un environnement qui contient `NEXUS_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_MESSAGING_TOKEN`, `CODEX_HOME`, `GIT_DIR`, `GIT_INDEX_FILE` (et leurs variantes en minuscules) → aucun ne passe ; `USERPROFILE`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_GIT_BASH_PATH` passent ; `GIT_DIR`, `GIT_WORK_TREE`, les `GIT_CONFIG_*`, `GIT_EDITOR`, `GIT_TERMINAL_PROMPT`, `DISABLE_AUTOUPDATER` valent ce que l'adaptateur impose.
 
 **Adaptateur avec le faux — `test_claude_code_adapter.py`, `test_claude_code_errors.py`**
 17. Chemin heureux (`INIT_OK`, texte, `RESULT_OK`, commit) → `claimed`, `working`, `progress`, `done` `commit:<12>` ; `stdin.txt` = brief + consigne du §3.3 ; `args.json` contient `--model sonnet`.
@@ -410,10 +412,14 @@ Décidé par Loïc le 2026-11-11 (cadrage : `docs/superpowers/specs/2026-11-11-a
   de Loïc.
 - **Exception à la règle du 2026-10-17** (AGENTS.md, « Model routing » : les modèles Claude ne sont
   consommés que par le fil principal de Claude Code et les subagents de `.claude/agents/`) : un run
-  de l'adaptateur `claude-code` consomme lui aussi l'abonnement. L'exception ne vaut que pour ce
-  chemin : un run confié depuis Nexus par un humain (D2), lancé à la main par Loïc ou par l'agent
-  principal sur sa consigne, jamais par une CI ni de lui-même. Les tests n'utilisent qu'un faux
-  exécutable (D8). La règle reste entière pour tout autre harnais.
+  de l'adaptateur `claude-code` consomme lui aussi l'abonnement. Les tests n'utilisent qu'un faux
+  exécutable (D8) ; aucune CI ne lance de run réel. La règle reste entière pour tout autre harnais.
+
+Choix du cadrage, pris par l'agent sous le feu vert de Loïc du 2026-11-11 et **à confirmer par lui**
+(chacun se change sans migration) :
+
+- Un run réel est confié depuis Nexus par un humain (D2) : Loïc, ou l'agent principal avec le jeton
+  de navigateur de Loïc et sur sa consigne.
 - L'exécutant est l'acteur existant `claude`, qui ne sert que l'agent `claude` ; l'`origin` des
   événements est `claude-code`.
 - `runs.model` (migration `0009`) : exigé pour `claude` (409 `model_required`), refusé pour les
@@ -423,12 +429,25 @@ Décidé par Loïc le 2026-11-11 (cadrage : `docs/superpowers/specs/2026-11-11-a
   standard, worktree et preuve par commit, un run actif par exécutant, durée maximale, aucune
   relance). En plus : session isolée (`--restricted`, aucun MCP, ni hooks ni réglages de Loïc,
   vérifiée sur la ligne `system/init`), Bash réduit à `git status`, `git add` et `git commit`,
-  hooks git coupés par l'environnement de l'enfant.
+  hooks git coupés par l'environnement de l'enfant. Sonnet est présélectionné dans « Confier à ».
 ```
 
 ---
 
 ## 12. Run réel (manuel, jamais en CI)
+
+### 12.0 Relevé préalable du 2026-11-12 (Haiku, hors Nexus)
+
+Avant toute implémentation, sept runs réels de `claude` 2.1.322 avec Haiku ont été lancés à la main, avec l'argv exact du §3.1, le fichier de réglages du §3.2 et l'environnement du §3.5 (liste blanche et valeurs imposées), dans un dépôt jetable dont la configuration déclare `core.hooksPath=.githooks` avec un `pre-commit` témoin. Chaque run a duré de 4 à 11 s.
+
+- `system/init` réel : `tools = ["Bash","Edit","Glob","Grep","Read","Write"]` (ordre alphabétique : comparer en ensemble), `mcp_servers = []`, `permissionMode = "dontAsk"`, `model = "claude-haiku-5-5"`, `apiKeySource = "none"` (abonnement, pas de clé d'API), `slash_commands = []`. Le contrôle d'isolement du §5.2 passe tel quel.
+- Lignes vues en plus de la table du §5.2 : `system/thinking_tokens`, `system/vcs_state_changed`, `rate_limit_event` (type de premier niveau). Toutes → `()` (type ou sous-type sans fait).
+- `result` réel : `subtype`, `is_error`, `num_turns`, `duration_ms`, `result`, `errors` (`null` en succès), `permission_denials` d'objets `{tool_name, tool_use_id, tool_input}`. Un refus d'outil laisse `subtype = "success"` et `is_error = false` : la fin est jugée par la preuve, comme prévu.
+- **A** (modifier `README.md` puis commiter) : `Read`, `Edit`, `git status`, `git add README.md`, `git commit -m … -m "Co-Authored-By: …"` permis ; commit sur la branche du run, accents intacts en UTF-8, **hook témoin non lancé**, aucune session dans `~/.claude/projects`. L'agent ajoute de lui-même un second `-m` (attribution, consigne interne du CLI) : `Bash(git commit *)` le couvre.
+- **B** (`npm --version`), **E** (`git status > ../hors.txt`), **E2** (`git -c core.hooksPath=.githooks commit …`), **E4** (`git status && npm --version`) : refusés, `permission_denials` = `Bash`, aucun fichier `hors.txt`, aucun témoin, aucun commit.
+- **E3** (lire et modifier `../target/README.md`) : `Read` hors du worktree refusé, `cat` refusé ; rien modifié.
+- `--restricted` tient `~/.claude/CLAUDE.md` et les mémoires à l'écart (question posée au modèle sans outil : aucune instruction de ce genre, aucun contenu de la configuration de Loïc).
+- Les scénarios D (annulation) et F (redémarrage) dépendent de l'adaptateur : ils restent pour le premier run réel par Nexus.
 
 Prérequis : Loïc vérifie lui-même qu'il est connecté (`claude auth status --text`, dans son terminal ; la sortie n'est ni copiée ni journalisée). Un dépôt jetable avec un commit, déclaré seul dans `NEXUS_RUN_WORKDIRS`.
 
