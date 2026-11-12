@@ -31,7 +31,7 @@ def test_0008_creates_runs_matching_the_models_and_drops_it_again(settings):
     conn.close()
     assert "runs" not in tables(settings.db_path)
 
-    command.upgrade(cfg, "0008")
+    command.upgrade(cfg, "head")  # 0009 adds runs.model: the models describe the head schema
 
     assert "runs" in tables(settings.db_path)
     engine = create_engine(settings.db_url)

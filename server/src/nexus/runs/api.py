@@ -7,7 +7,7 @@ tasks. Nothing here starts a process: the supervisor does, through the registere
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Request, Response, status
 from pydantic import BaseModel, StringConstraints
@@ -18,7 +18,7 @@ from nexus.auth.deps import Authenticated
 from nexus.clock import now
 from nexus.models import Run
 from nexus.runs import service
-from nexus.runs.rules import AGENTS_OF
+from nexus.runs.rules import AGENTS_OF, MODELS_OF
 from nexus.tasks import service as tasks
 from nexus.tasks.api import ActorDep, SessionDep, commit, parse_ref
 from nexus.validation import InputModel
@@ -41,6 +41,8 @@ class RunIn(InputModel):
     workdir: Annotated[
         str, StringConstraints(strip_whitespace=True, min_length=1, max_length=WORKDIR_MAX)
     ] | None = None
+    # The closed list is `rules.RUN_MODELS`; an unknown value is a 422 that never echoes it.
+    model: Literal["haiku", "sonnet", "opus"] | None = None
 
 
 class ExecutorOut(BaseModel):
@@ -49,6 +51,7 @@ class ExecutorOut(BaseModel):
     executor: str
     agents: list[str]
     workdirs: list[str]
+    models: list[str]
     source: str = "nexus.db"
     measured_at: datetime
 
@@ -62,6 +65,7 @@ class RunOut(BaseModel):
     client_key: str
     brief: str
     workdir: str | None
+    model: str | None
     external_ref: str | None
     status: str
     native_status: str | None  # the executor's own word, as given
@@ -77,7 +81,7 @@ def to_out(run: Run) -> RunOut:
     return RunOut(
         id=run.ref, task=f"nx-task-{run.task_id}", executor=run.executor, agent=run.agent,
         dispatched_by=run.dispatched_by, client_key=run.client_key, brief=run.brief,
-        workdir=run.workdir, external_ref=run.external_ref, status=run.status,
+        workdir=run.workdir, model=run.model, external_ref=run.external_ref, status=run.status,
         native_status=run.native_status, created_at=run.created_at, ended_at=run.ended_at,
         cancel_requested_at=run.cancel_requested_at, version=run.version, measured_at=now(),
     )
@@ -93,7 +97,9 @@ def dispatch(
     task = tasks.get_task(session, parse_ref(task_ref))
     run, created = service.create_run(
         session, task, actor,
-        service.NewRun(body.executor, body.agent, body.client_key, body.brief, body.workdir),
+        service.NewRun(
+            body.executor, body.agent, body.client_key, body.brief, body.workdir, body.model
+        ),
         request.app.state.adapters,
     )
     commit(session)
@@ -118,6 +124,13 @@ def _served(name: str, adapter: object) -> frozenset[str]:
     return works_for if served is None else works_for & served
 
 
+def _models(name: str, adapter: object) -> tuple[str, ...]:
+    """The models the executor offers, narrowed like the agents by an optional `models`."""
+    offered = MODELS_OF.get(name, ())
+    served = getattr(adapter, "models", None)
+    return offered if served is None else tuple(m for m in offered if m in served)
+
+
 @router.get("/api/executors")
 def executors(request: Request) -> list[ExecutorOut]:
     """The executors with a registered adapter. Empty: nothing can be handed over (409)."""
@@ -126,7 +139,7 @@ def executors(request: Request) -> list[ExecutorOut]:
         ExecutorOut(
             executor=name, agents=sorted(_served(name, registry.get(name))),
             workdirs=[str(p) for p in getattr(registry.get(name), "workdirs", [])],
-            measured_at=now(),
+            models=list(_models(name, registry.get(name))), measured_at=now(),
         )
         for name in registry.executors()
     ]

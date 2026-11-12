@@ -36,6 +36,8 @@ class RunInfo:
     watch_cursor: str | None
     # Row version when the snapshot was taken: the supervisor writes an end only from this state.
     version: int
+    # Model alias chosen for the run (executors that serve models, ADR-023 addendum); else None.
+    model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -81,6 +83,8 @@ class Adapter(Protocol):
     name: str  # origin of the events it publishes: matches ADAPTER_NAME (checked at registration)
     # Optional `agents: frozenset[str]` attribute: the agents this deployment serves, a subset of
     # what the executor works for (`runs.rules.AGENTS_OF`). Absent: all of them.
+    # Optional `models` attribute, same idea: the model aliases this deployment serves, a subset
+    # of `runs.rules.MODELS_OF`. Absent: all of them.
 
     def probe(self) -> bool:
         """Whether the executor is usable right now (binary present, service reachable)."""

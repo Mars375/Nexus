@@ -32,6 +32,7 @@ class NewRun:
     client_key: str
     brief: str
     workdir: str | None = None
+    model: str | None = None
 
 
 def _record(session: Session, run: Run, actor: str, action: str) -> None:
@@ -60,8 +61,8 @@ def list_runs(session: Session, task: Task) -> list[Run]:
 
 
 def _same(run: Run, task_id: int, data: NewRun, brief: str, workdir: str | None) -> bool:
-    return (run.task_id, run.executor, run.agent, run.brief, run.workdir) == (
-        task_id, data.executor, data.agent, brief, workdir)
+    return (run.task_id, run.executor, run.agent, run.brief, run.workdir, run.model) == (
+        task_id, data.executor, data.agent, brief, workdir, data.model)
 
 
 def create_run(
@@ -102,7 +103,8 @@ def create_run(
         return replay
     try:
         rules.check_dispatchable(
-            session, task, executor=data.executor, agent=data.agent, registry=registry
+            session, task, executor=data.executor, agent=data.agent, registry=registry,
+            model=data.model,
         )
     except RuleViolation:
         # The click that won the race may have committed since the first look: it is a resend.
@@ -112,7 +114,8 @@ def create_run(
         raise
     run = Run(
         task_id=task_id, executor=data.executor, agent=data.agent, dispatched_by=actor,
-        client_key=data.client_key, brief=brief, workdir=workdir, status="dispatched",
+        client_key=data.client_key, brief=brief, workdir=workdir, model=data.model,
+        status="dispatched",
         created_at=now(),
     )
     session.add(run)
@@ -127,7 +130,8 @@ def create_run(
         # Lost on one of the live-run indexes: judge again on what the winner committed, so the
         # refusal names the right rule (same agent on the task, or executor already busy).
         rules.check_dispatchable(
-            session, task, executor=data.executor, agent=data.agent, registry=registry
+            session, task, executor=data.executor, agent=data.agent, registry=registry,
+            model=data.model,
         )
         raise rules.already_active("un autre run") from exc
     _record(session, run, actor, "run_created")
