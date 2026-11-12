@@ -185,7 +185,7 @@ Codex tourne sous `--sandbox workspace-write`. Claude Code n'a pas de bac à sab
 | Lecture hors du worktree par une option de git (§4.4) | **disparu** : l'agent ne lance plus git ; le commit de Nexus ne reçoit aucun argument écrit par l'agent (`git add -A`, message fixe) |
 | Fichier `.git` du worktree réécrit vers une configuration piégée | `GIT_DIR` imposé à l'enfant et au commit de Nexus (preuve locale §4.5, cas 5 : le commit arrive sur la vraie branche, aucun programme lancé) ; règles `deny` ; protection de `--restricted` sur les fichiers git |
 | Dépôt imbriqué (`sub/.git/` ou fichier `sub/.git`) | contrôle du worktree avant le commit : toute entrée nommée `.git` hors de la racine, quelle que soit la casse → commit refusé (§5.4) ; contrôle de l'index après `git add -A` : aucun lien de sous-module (mode `160000`) ajouté |
-| Lien symbolique ou point de jonction vers l'extérieur | contrôle du worktree : tout point d'analyse (*reparse point* : lien, jonction) → commit refusé ; contrôle de l'index : aucun lien (mode `120000`) ajouté ou modifié (§5.4) |
+| Lien symbolique, point de jonction ou lien physique vers l'extérieur | contrôle du worktree : tout point d'analyse (*reparse point* : lien, jonction) et tout fichier à liens multiples (`st_nlink > 1`) → commit refusé ; contrôle de l'index : aucun lien (mode `120000`) ajouté ou modifié, aucun chemin que le parcours n'a pas vu (§5.4). Claude Code sans Bash ne peut créer aucun des trois |
 | `.gitattributes` écrit par l'agent qui choisit un pilote de filtre | aucun pilote dans la configuration lue par le commit : configuration système et globale coupées, `core.attributesFile` et attributs système coupés, pilotes de la configuration du dépôt refusés avant le lancement et avant le commit (§3.4) |
 | Hook git écrit par l'agent (`.githooks/`, `.husky/`, `.git/hooks` impossible) | `core.hooksPath=<devnull>` pour l'enfant et pour le commit de Nexus ; le fichier est commité comme un autre et Loïc le voit dans la branche (même risque qu'avec Codex quand Loïc commite ensuite sur cette branche) |
 | Gros fichier | `MAX_FILE_BYTES` (20 Mio) par fichier ajouté ou modifié → commit refusé ; budget de temps du commit (§5.4) |
@@ -199,14 +199,14 @@ Dans un dépôt jetable (Windows, git 2.55) dont la configuration déclare `core
 
 ### 4.4 Lecture hors du worktree par les options de git (relevé du 2026-11-12 : pourquoi l'agent n'a pas de Bash)
 
-Relevé daté, gardé tel quel. Il a été fait à la suite d'une remarque de CodeRabbit sur la PR #184, avec le même montage que le §12.0 et un fichier témoin `../canary.txt` à côté du worktree (contenu inoffensif) ; la présence du témoin a été cherchée dans toute la sortie `stream-json`, lignes `user` comprises.
+Relevé daté, gardé tel quel (seule la colonne « Réglages » précise « du 2026-11-11 », puisque le §3.2 a changé ; « idem » renvoie à la ligne du dessus). Il a été fait à la suite d'une remarque de CodeRabbit sur la PR #184, avec le même montage que le §12.0 et un fichier témoin `../canary.txt` à côté du worktree (contenu inoffensif) ; la présence du témoin a été cherchée dans toute la sortie `stream-json`, lignes `user` comprises.
 
 | Commande demandée | Réglages | Résultat |
 |---|---|---|
 | `git commit --allow-empty -F ../canary.txt` | §3.2 du 2026-11-11 | **permise** ; le témoin devient le message du commit et revient au modèle dans la sortie de git |
-| `git add --pathspec-from-file=../canary.txt` | idem | **permise** ; le témoin revient au modèle dans le message d'erreur (`pathspec '…' did not match`) |
-| `git commit --allow-empty -m "$(cat ../canary.txt)"` | idem | refusée (substitution de commande), témoin absent |
-| `git commit --allow-empty -m x -F ../canary.txt` | idem + `deny` à jokers (`Bash(git commit *-F*)`, `*--file*`, `*-t*`, `*--template*`, `Bash(git add *--pathspec-from-file*)`) | refusée, témoin absent |
+| `git add --pathspec-from-file=../canary.txt` | §3.2 du 2026-11-11 | **permise** ; le témoin revient au modèle dans le message d'erreur (`pathspec '…' did not match`) |
+| `git commit --allow-empty -m "$(cat ../canary.txt)"` | §3.2 du 2026-11-11 | refusée (substitution de commande), témoin absent |
+| `git commit --allow-empty -m x -F ../canary.txt` | §3.2 du 2026-11-11 + `deny` à jokers (`Bash(git commit *-F*)`, `*--file*`, `*-t*`, `*--template*`, `Bash(git add *--pathspec-from-file*)`) | refusée, témoin absent |
 | `git add --pathspec-from-file=../canary.txt` | idem | refusée, témoin absent |
 | `git commit --allow-empty -sF ../canary.txt` | idem | **permise**, témoin revenu au modèle (option courte groupée) |
 | `git commit --allow-empty --pathspec-from-file=../canary.txt -m x` | idem | **permise**, témoin revenu au modèle (option de `git commit` non listée) |
@@ -235,7 +235,8 @@ Script jetable (dépôts temporaires, Windows 11, git 2.55.0.windows.3, Python 3
 | 7. aucun changement | index identique au départ | `review` sans commit |
 | 8. dépôt sans identité, configuration globale coupée | `git commit` échoue (« Author identity unknown ») ; avec `GIT_AUTHOR_*`/`GIT_COMMITTER_*` imposés : commit fait, auteur et committer = l'identité passée, trailers lus par `%(trailers:only)` | identité résolue avant le lancement et figée (§3.4) |
 | 9. `GIT_TRACE=1` sur `git commit` | lance `git maintenance run --auto --quiet --detach` ; avec `-c gc.auto=0 -c maintenance.auto=false` : aucun sous-processus | ces deux `-c` sont imposés |
-| 10. configuration globale `core.autocrlf=true` (ignorée des deux côtés) | seul le fichier nouveau est ajouté | même vue de la configuration pour l'extraction et le commit |
+| 10. fins de ligne : worktree extrait **avec** `core.autocrlf=true` (configuration globale lue), ajout **sans** elle ; `README.md` non touché par l'agent (avec et sans changement de sa date) | `README.md` extrait en CRLF puis **ajouté comme modifié** à côté du fichier nouveau. Contrôle : extraction et ajout avec la même vue (configuration globale coupée des deux côtés) → seul le fichier nouveau est ajouté | même vue de la configuration pour l'extraction et le commit (celle de `codex_git`) |
+| 11. lien physique (`os.link`, sans droit particulier) `inside.txt` → fichier hors du worktree | pas un point d'analyse (`st_nlink = 2`) ; `git add -A` l'ajoute et **son contenu entre dans les objets** | refus de tout fichier dont `st_nlink > 1` (inaccessible à Claude Code sans Bash, essentiel pour un exécutant qui a un shell, §14) |
 | Parcours du worktree avec `os.walk` (Python 3.13) | **descend dans le point de jonction** (`os.path.isjunction` vrai, mais `os.walk` le suit) | parcours écrit à la main avec `os.scandir`, qui ne descend jamais dans un point d'analyse |
 
 Ce que la preuve ne couvre pas : un vrai lien symbolique (4b) ; le comportement de l'outil `Write` de Claude Code face à un lien déjà présent (aucun n'existe dans un worktree neuf : `core.symlinks` vaut `false` par défaut sous Windows et le contrôle refuse le commit sinon) ; les flux de données alternatifs NTFS (ignorés par git).
@@ -246,8 +247,8 @@ Ce que la preuve ne couvre pas : un vrai lien symbolique (4b) ; le comportement 
 - Aucun argument venant de l'agent : `git add -A` sans chemin, message construit avec `run.ref` (déjà validé `nx-run-<n>`) et l'alias du modèle (liste fermée).
 - Environnement : celui de `codex_git` (liste blanche, `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=<devnull>`, `GIT_TERMINAL_PROMPT=0`) **plus** `GIT_ATTR_NOSYSTEM=1`, `GIT_DIR`, `GIT_WORK_TREE`, `GIT_EDITOR=:`, l'identité figée (`GIT_AUTHOR_*`, `GIT_COMMITTER_*`).
 - Options : `-c core.hooksPath=<devnull> -c core.fsmonitor=false -c commit.gpgsign=false -c core.attributesFile=<devnull> -c gc.auto=0 -c maintenance.auto=false`.
-- Contrôles : configuration sans pilote de filtre ; worktree sans entrée `.git` imbriquée, sans point d'analyse, sans fichier trop gros ; index sans mode `160000` ni `120000` nouveau.
-- Bornes : chaque appel ≤ 30 s, l'ensemble ≤ `COMMIT_BUDGET` (90 s).
+- Contrôles : configuration sans pilote de filtre ; worktree sans entrée `.git` imbriquée, sans point d'analyse, sans lien physique, sans fichier trop gros ; index sans mode `160000` ni `120000` nouveau, et chaque chemin ajouté est un fichier ordinaire vu par le parcours.
+- Bornes : chaque appel ≤ 30 s, l'ensemble (lectures de la preuve comprises) ≤ `COMMIT_BUDGET` (90 s).
 
 ---
 
@@ -297,7 +298,7 @@ Le fichier de réglages du run est supprimé à la clôture, quelle qu'elle soit
 
 ### 5.4 Commit par l'adaptateur (`run_commit.commit_run`, module neutre)
 
-Appelé seulement à l'étape 6 du §5.3, donc après que `process.poll()` a rendu 0 et que le fil de lecture a fini : l'agent n'écrit plus (sans Bash, Claude Code ne laisse aucun processus enfant qui écrive dans le worktree). Fonction du module **`run_commit.py`**, qui ne connaît aucun exécutant : il ne dépend que de `codex_git` (`Worktree`, `proof`, `clean_env`) et de `runs.rules.RUN_MODELS`, jamais d'un module `claude_code*`. Il renvoie une issue (`Committed(sha)`, `NothingToCommit`, `Refused(motif)`, `GitFailed(étape)`) et **ne lève jamais** : chaque échec devient un événement final, sinon le superviseur réessaierait à chaque tour (cas 1b du §4.5 : `git add` qui rend 128).
+Appelé seulement à l'étape 6 du §5.3, donc après que `process.poll()` a rendu 0 et que le fil de lecture a fini : l'agent n'écrit plus (sans Bash, Claude Code ne laisse aucun processus enfant qui écrive dans le worktree). Fonction du module **`run_commit.py`**, qui ne connaît aucun exécutant : il ne dépend que de `codex_git` (`Worktree`, `clean_env`), jamais d'un module `claude_code*`, de `codex.py` ni de `nexus.runs` (`runs.rules` importe `adapters.registry` : un module d'adaptateur qui importerait `runs.rules` ouvrirait la porte à un import circulaire ; l'alias du modèle est donc contrôlé ici par sa forme, et contre `RUN_MODELS` par l'adaptateur avant l'argv, §6.3). Il renvoie une issue (`Committed(sha)`, `NothingToCommit`, `Refused(motif)`, `GitFailed(étape)`) et **ne lève jamais** : chaque échec devient un événement final, sinon le superviseur réessaierait à chaque tour (cas 1b du §4.5 : `git add` qui rend 128).
 
 **Interface du module** (ce que l'`implementer` écrit, et ce qu'un adaptateur Codex appellerait plus tard tel quel) :
 
@@ -315,7 +316,7 @@ class CommitRequest:
     run_ref: str               # "nx-run-<n>"
     adapter: str               # Adapter.name: "claude-code", later "codex"
     label: str                 # human name in the subject: "Claude Code", later "Codex"
-    model: str | None          # an alias of RUN_MODELS, or None (no Nexus-Model trailer)
+    model: str | None          # a model alias already checked by the adapter, or None (no trailer)
 
 def worktree_gitdir(tree: codex_git.Worktree) -> Path: ...             # ValueError
 def resolve_identity(tree: codex_git.Worktree) -> Identity: ...        # ValueError
@@ -324,27 +325,32 @@ def commit_run(request: CommitRequest, *, max_file_bytes: int = MAX_FILE_BYTES,
                budget: float = COMMIT_BUDGET) -> Outcome: ...          # never raises
 ```
 
-Les trois premières servent au lancement (§3.4) et lèvent `ValueError` (le superviseur publie alors `failed` « lancement impossible ») ; `commit_run` sert à la fin. Une requête invalide (`run_ref` hors de `nx-run-[1-9][0-9]*`, `adapter` hors de `[a-z][a-z-]*`, `label` avec un caractère de contrôle, `model` hors de `RUN_MODELS`) rend `Refused("requête invalide")` sans appeler git : aucun de ces champs ne vient de l'agent, mais un message de commit ne doit jamais porter autre chose que ce qui a été validé.
+Les trois premières servent au lancement (§3.4) et lèvent `ValueError` (le superviseur publie alors `failed` « lancement impossible ») ; `commit_run` sert à la fin. Une requête invalide (`run_ref` hors de `nx-run-[1-9][0-9]*`, `adapter` hors de `[a-z][a-z-]*`, `label` avec un caractère de contrôle ou de plus de 40 caractères, `model` hors de `[a-z][a-z0-9-]{0,15}`) rend `Refused("requête invalide")` sans appeler git : aucun de ces champs ne vient de l'agent, mais un message de commit ne doit jamais porter autre chose que ce qui a été validé.
 
-**Précondition, à respecter par tout appelant :** l'agent n'a pas pu écrire dans le dossier git (`GIT_DIR` du worktree et dossier commun). C'est ce qui permet l'étape 1 : un commit présent sur la branche ne peut venir que de Nexus. Vrai pour `claude-code` (aucun Bash, `--restricted`), vrai pour Codex sous son bac à sable tel que relevé le 2026-11-12 (§14) ; un exécutant qui pourrait commiter lui-même n'utilise pas ce module tel quel.
+**Préconditions, à respecter par tout appelant :**
+
+1. **L'agent n'a pas pu écrire dans le dossier git** (`GIT_DIR` du worktree et dossier commun). C'est ce qui permet l'étape 1 : un commit présent sur la branche ne peut venir que de Nexus. Vrai pour `claude-code` (aucun Bash, `--restricted`), vrai pour Codex sous son bac à sable tel que relevé le 2026-11-12 (§14) ; un exécutant qui pourrait commiter lui-même n'utilise pas ce module tel quel.
+2. **Plus aucun processus du run ne peut écrire dans le worktree** pendant le contrôle et l'ajout (sinon un point de jonction posé entre le contrôle de l'étape 3 et le `git add` de l'étape 4 ferait lire dehors : le cas 4 du §4.5 montre que l'index reçoit alors un fichier ordinaire, mode `100644`, que le contrôle des modes ne voit pas). Vrai pour `claude-code` : sans Bash, Claude Code ne lance aucun programme qui écrive (`Edit` et `Write` agissent dans son propre processus, le `rg` de `Grep` ne fait que lire), et le commit n'a lieu qu'après la fin du processus. Pour un exécutant qui a un shell, il faut un arrêt **confirmé de tout l'arbre**, orphelins compris, ce que `codex_process.kill_tree` ne garantit pas sous Windows (il le dit lui-même : il faudrait un *job object*) ; voir §14.2. L'étape 5 ajoute une défense partielle : tout chemin ajouté doit être un fichier ordinaire vu par le parcours de l'étape 3 (une jonction posée après le parcours fait apparaître des chemins qu'il n'a pas vus) ; elle ne voit pas un fichier remplacé sous le même nom, d'où la précondition.
 
 **Séquence :**
 
-1. **Preuve d'abord** : `codex_git.proof(tree)`. Un commit qui descend du départ existe déjà → `done` avec lui, sans rien refaire. Par la précondition, un tel commit est celui d'un passage précédent de Nexus (serveur arrêté ou exception entre le commit et l'événement). Sans cette étape, un second passage trouverait un index vide et finirait à tort en `review`.
+1. **Preuve d'abord** : les trois lectures de `codex_git.proof` (`rev-parse --verify`, `merge-base --is-ancestor`, `rev-list --count`), refaites par `run_git` depuis le dépôt (`cwd = tree.repo`, sans le `GIT_DIR` du worktree) pour tenir dans le budget ; un test vérifie qu'elles rendent la même chose que `codex_git.proof` sur les mêmes cas. Un commit qui descend du départ existe déjà → `done` avec lui, sans rien refaire. Par la précondition, un tel commit est celui d'un passage précédent de Nexus (serveur arrêté ou exception entre le commit et l'événement). Sans cette étape, un second passage trouverait un index vide et finirait à tort en `review`.
 2. **Configuration** : aucun pilote de filtre (même contrôle qu'au §3.4) → sinon `Refused("pilote de filtre")`.
 3. **Contrôle du worktree** (Python, avant tout git) : parcours écrit avec `os.scandir`, sans jamais suivre ni traverser un point d'analyse (`os.walk` traverse les jonctions, §4.5) ; la racine `.git` (le fichier du worktree) est sautée. Refus au premier cas trouvé :
    - entrée nommée `.git` (fichier ou dossier), comparée sans la casse après retrait des points et espaces finaux → `Refused("dépôt git imbriqué")` ;
    - point d'analyse (`st_file_attributes & FILE_ATTRIBUTE_REPARSE_POINT` sous Windows, `S_ISLNK` ailleurs) → `Refused("lien ou point de jonction")` ;
+   - fichier ordinaire dont `st_nlink > 1` (lien physique, peut-être vers un fichier hors du worktree : cas 11 du §4.5) → `Refused("lien physique")` ;
+   - le parcours garde, pour chaque fichier ordinaire, son chemin relatif et sa taille (pour l'étape 5) ;
    - fichier de plus de `MAX_FILE_BYTES` (20 Mio) qui n'existe pas au départ avec la même taille (`git ls-tree -r -l -z <départ>`, lu une fois seulement si un tel fichier est trouvé) → `Refused("fichier trop gros")`.
 4. `git add -A`.
-5. **Contrôle de l'index** : `git diff-index --cached --raw -z --no-renames <départ>` (commande de plomberie : ni `textconv` ni programme de diff externe). Une ligne dont le mode d'arrivée est `160000` → `Refused("sous-module ajouté")` ; `120000` → `Refused("lien ajouté")`. Sortie vide → `NothingToCommit`.
+5. **Contrôle de l'index** : `git diff-index --cached --raw -z --no-renames <départ>` (commande de plomberie : ni `textconv` ni programme de diff externe). Une ligne dont le mode d'arrivée est `160000` → `Refused("sous-module ajouté")` ; `120000` → `Refused("lien ajouté")`. Tout chemin ajouté ou modifié (mode d'arrivée non nul) qui n'est pas un fichier ordinaire relevé à l'étape 3 → `Refused("worktree changé pendant le commit")` (comparaison des chemins seulement : la taille d'un blob peut différer de celle du fichier, un `.gitattributes` `eol=lf` convertit les fins de ligne). Sortie vide → `NothingToCommit`.
 6. `git commit -q -m <sujet> -m <trailers>` (jamais `--trailer` : il peut lancer un `trailer.*.cmd` de la configuration) :
    - sujet : `<run_ref> : travail de <label>` suivi de ` (<model>)` si `model` est donné ; pour H2 : `nx-run-<n> : travail de Claude Code (sonnet)` ;
    - trailers : `Nexus-Run: <run_ref>`, `Nexus-Executor: <adapter>`, et `Nexus-Model: <model>` si `model` est donné ;
    - auteur et committer : l'identité figée au lancement (§3.4).
-7. **Preuve à nouveau** : `codex_git.proof(tree)` → `Committed(sha)` ; sinon `GitFailed("commit")`.
+7. **Preuve à nouveau** (mêmes lectures qu'à l'étape 1) → `Committed(sha)` ; sinon `GitFailed("commit")`.
 
-Toutes les commandes passent par un seul `run_git` du module, avec l'environnement et les `-c` du §4.6, `cwd = worktree`. Si `git commit` échoue ou dépasse son délai, l'étape 7 est quand même tentée (un délai dépassé peut tuer git après l'écriture du commit) : un commit trouvé l'emporte.
+Toutes les commandes passent par un seul `run_git` du module, avec l'environnement et les `-c` du §4.6, `cwd = worktree` (`cwd = tree.repo` pour les lectures de la preuve). Si `git commit` échoue ou dépasse son délai, l'étape 7 est quand même tentée (un délai dépassé peut tuer git après l'écriture du commit) : un commit trouvé l'emporte. Les titres des événements (« Claude Code a terminé… ») sont construits par l'adaptateur avec son libellé, pas par `run_commit`.
 
 **Issues :**
 
@@ -357,7 +363,7 @@ Toutes les commandes passent par un seul `run_git` du module, avec l'environneme
 
 **Pourquoi `review` sans changement et `failed` sur refus.** D6 : sans commit, pas de preuve. Un run qui n'a rien changé peut être juste (question, constat « déjà fait ») : Loïc lit la réponse finale, d'où `review`. Un refus signale un contenu que Nexus n'enregistre pas par principe (dépôt imbriqué, lien, filtre, fichier trop gros) : c'est un échec du run, avec sa cause ; Loïc peut regarder le worktree et commiter lui-même s'il le veut.
 
-**Budget :** chaque appel de git ≤ 30 s, l'ensemble ≤ `COMMIT_BUDGET = 90 s` (délai de chaque appel = le reste du budget s'il est plus court ; budget épuisé → `GitFailed(<étape>)` « délai dépassé »). Le commit tourne dans le tour du superviseur (`tick`, sous `registry.tick_lock`) : il retarde les autres runs et l'arrêt du serveur d'au plus ce budget (`registry.close` attend la fin du tour).
+**Budget :** chaque appel de git ≤ 30 s, l'ensemble ≤ `COMMIT_BUDGET = 90 s`, **lectures de la preuve des étapes 1 et 7 comprises** (c'est pourquoi elles passent par `run_git` et non par `codex_git.proof`, dont chaque appel a son propre délai de 60 s). Délai de chaque appel = le reste du budget s'il est plus court ; 15 s sont réservées à l'étape 7, pour qu'un commit écrit soit toujours relu ; budget épuisé → `GitFailed(<étape>)` « délai dépassé ». Le commit tourne dans le tour du superviseur (`tick`, sous `registry.tick_lock`) : il retarde les autres runs et l'arrêt du serveur d'au plus ce budget (`registry.close` attend la fin du tour).
 
 **Annulation pendant le commit :** le tour du superviseur traite une demande d'annulation **avant** le suivi (`_step`) et sous le même verrou. Une annulation demandée avant le tour gagne : le processus est arrêté, aucun commit, `cancelled`. Une annulation arrivée pendant le commit est vue au tour suivant, sur un run déjà fermé (`done`, `review` ou `failed`) : elle ne change rien. Il n'existe donc pas de run `cancelled` avec un commit de Nexus sur sa branche.
 
@@ -410,7 +416,7 @@ Migration `0009_run_model.py` : `op.add_column("runs", sa.Column("model", sa.Str
 - **Redémarrage** : le run passe `unknown` (D3) ; `recover` rend `None` ; aucun commit après coup.
 - **Commit** : seulement à l'étape 6 du §5.3 ; jamais après une violation d'isolement, une durée maximale, un `result` en échec, un code non nul, une annulation ou un redémarrage. Idempotent par l'étape 1 du §5.4 : deux passages ne font jamais deux commits.
 - **Dispatch** : marqueur `dispatching` avant l'appel (superviseur existant) ; une exception avant le `Popen` (worktree, modèle invalide, identité absente, pilote de filtre, fichier de réglages) → `failed` « lancement impossible ». Pas de `LaunchUncertain` : le lancement d'un processus local est certain ou échoue.
-- **Tous les appels sont bornés** : sonde 10 s, git 60 s (`codex_git`), commit 30 s par appel et 90 s au total, `kill_tree` 10 s ; le fil de lecture est un démon.
+- **Tous les appels sont bornés** : sonde 10 s, git 60 s (`codex_git`), commit 30 s par appel et 90 s au total, lectures de la preuve comprises (§5.4), `kill_tree` 10 s ; le fil de lecture est un démon.
 - **Abonnement partagé** : un run et les sessions interactives de Loïc consomment le même quota ; une limite atteinte arrive en `result` d'erreur et termine le run en `failed` avec le message du CLI comme cause (heure de reprise comprise). Aucune relance automatique.
 
 ---
@@ -421,7 +427,7 @@ Migration `0009_run_model.py` : `op.add_column("runs", sa.Column("model", sa.Str
 - Brief par l'entrée standard, jamais en argument ; `client_key`, `workdir` et `model` validés avant tout lancement ; `model` revalidé par l'adaptateur.
 - Isolement de la session vérifié sur `system/init`, échec fermé : violation ou isolement non vérifié tuent l'arbre tout de suite (§5.2, §5.3) ; un outil hors de `Read`, `Edit`, `Write`, `Glob`, `Grep` est une violation.
 - **Aucun Bash ni autre outil qui exécute du code** (décidé par Loïc le 2026-11-12) ; écritures et lectures confinées au worktree par `--restricted` ; rien de poussé ni fusionné.
-- **Commit fait par le processus serveur** (§5.4), sans argument venant de l'agent, avec configuration système et globale coupées, attributs système et `core.attributesFile` coupés, hooks, `fsmonitor`, signature et maintenance automatique coupés, `GIT_DIR`/`GIT_WORK_TREE` imposés ; refus fermé d'un dépôt imbriqué, d'un lien ou point de jonction, d'un fichier de plus de 20 Mio, d'un pilote de filtre dans la configuration du dépôt ; identité figée avant le lancement ; appels bornés.
+- **Commit fait par le processus serveur** (§5.4), sans argument venant de l'agent, avec configuration système et globale coupées, attributs système et `core.attributesFile` coupés, hooks, `fsmonitor`, signature et maintenance automatique coupés, `GIT_DIR`/`GIT_WORK_TREE` imposés ; refus fermé d'un dépôt imbriqué, d'un lien, point de jonction ou lien physique, d'un fichier de plus de 20 Mio, d'un pilote de filtre dans la configuration du dépôt ; identité figée avant le lancement ; appels bornés.
 - Hooks git coupés aussi pour les appels de git que fait Claude Code lui-même (§3.5).
 - Sortie brute jamais écrite ni journalisée ; `stderr` jeté ; seuls des faits traduits et masqués sont publiés ; résultats d'outils jamais lus ; sortie de git du commit jamais recopiée.
 - Session non persistée ; fichier de réglages hors du worktree, supprimé à la clôture.
@@ -521,7 +527,10 @@ Numérotation : 1 à 37 sont les tests de H2 (non écrits avant ce recadrage, le
 63. **Message fixe** : le brief et la réponse finale contiennent un faux secret et une ligne `Nexus-Run: nx-run-999` → le message du commit est exactement celui du §5.4 (ni le brief ni la réponse n'y entrent).
 64. **Consigne et plafond** : la consigne du §3.3 cite le même nombre de Mo que `MAX_FILE_BYTES`.
 65. **Annulation contre commit** (superviseur réel, adaptateur avec le faux) : annulation demandée avant le tour où le processus a fini → `cancelled`, aucun commit ; annulation demandée après la fermeture `done` → le run reste `done`.
-66. **Neutralité** : `CommitRequest(adapter="codex", label="Codex", model=None)` → sujet `nx-run-1 : travail de Codex`, trailers `Nexus-Run` et `Nexus-Executor: codex`, **aucun** `Nexus-Model` ; requêtes invalides (`run_ref="nx-run-0"`, `"nx-run-1\nx"`, `adapter="Codex Evil"`, `label` avec `\n`, `model="fable"`) → `Refused("requête invalide")`, aucun appel de git. Test d'import : `run_commit` n'importe aucun module `nexus.adapters.claude_code*` ni `nexus.adapters.codex` (seulement `codex_git`).
+66. **Neutralité** : `CommitRequest(adapter="codex", label="Codex", model=None)` → sujet `nx-run-1 : travail de Codex`, trailers `Nexus-Run` et `Nexus-Executor: codex`, **aucun** `Nexus-Model` ; requêtes invalides (`run_ref="nx-run-0"`, `"nx-run-1\nx"`, `adapter="Codex Evil"`, `label` avec `\n`, `model="Opus x"`, `model="opus\n"`) → `Refused("requête invalide")`, aucun appel de git. Test d'import : `run_commit` n'importe aucun module `nexus.adapters.claude_code*`, ni `nexus.adapters.codex`, ni `nexus.runs` (seulement `codex_git`).
+67. **Lien physique** : `os.link` d'un fichier témoin hors du worktree vers `inside.txt` → `Refused("lien physique")`, aucun `git add`, contenu du témoin absent des objets.
+68. **Worktree changé entre le contrôle et l'ajout** (paramètre de test qui crée un fichier `late.txt` juste avant l'étape 4) → `Refused("worktree changé pendant le commit")`, aucun commit.
+69. **Preuve dans le budget** : les lectures des étapes 1 et 7 rendent le même résultat que `codex_git.proof` (branche absente, commit de départ seul, commit qui ne descend pas du départ, commit valable) ; avec un `run_git` de test lent, le budget total n'est jamais dépassé de plus d'un délai d'appel.
 
 **Bout en bout (Playwright)** — `web/e2e/fake-claude.mjs` (rejoue `INIT_OK`, un message, `RESULT_OK`, écrit un fichier ; **ne commite pas**) et `NEXUS_CLAUDE_BIN` dans `e2e-env.ts` : confier une tâche à Claude avec Opus → le run apparaît avec « Opus », se termine `done` avec la preuve de commit (le commit fait par Nexus).
 
@@ -538,7 +547,7 @@ Numérotation : 1 à 37 sont les tests de H2 (non écrits avant ce recadrage, le
 | `server/tests/conftest.py` | `no_claude_from_the_shell`, radical `claude` | +8 |
 | `server/tests/claude_code_support.py` (nouveau) | faux exécutable et actions du §9 | ≤ 350 |
 | `server/tests/test_claude_code_translate.py`, `test_claude_code_cli.py`, `test_claude_code_adapter.py`, `test_claude_code_errors.py`, `test_claude_code_git_barriers.py`, `test_claude_code_cancel.py`, `test_claude_code_registration.py` (nouveaux) | tests 1–37 | chacun ≤ 350 |
-| `server/tests/test_run_commit.py` (nouveau) | tests 48–64 et 66 (le 65 passe par le superviseur : `test_claude_code_cancel.py`) | ≤ 500 ; s'il dépasse, découper en `test_run_commit_scan.py` (48–57) et `test_run_commit_flow.py` (58–64, 66) |
+| `server/tests/test_run_commit.py` (nouveau) | tests 48–64 et 66–69 (le 65 passe par le superviseur : `test_claude_code_cancel.py`) | ≤ 550 ; s'il dépasse, découper en `test_run_commit_scan.py` (48–57, 67, 68) et `test_run_commit_flow.py` (58–64, 66, 69) |
 | `web/e2e/fake-claude.mjs`, `e2e-env.ts`, `runs-claude.spec.ts` (nouveaux ou modifiés) | e2e | |
 
 Livré par H1 (`feed224`), non retouché par H2 : `base.py` (`RunInfo.model`), `runs/rules.py`, `runs/service.py`, `runs/api.py`, `runs/supervisor.py`, `models.py`, migration `0009_run_model.py`, interface (`runsApi.ts`, `vocabulary.ts`, `ConfierDialog.tsx`, `RunsSection.tsx`). H2 touche encore `config.py` (`claude_bin`, +3) et `app.py` (enregistrement, +2).
@@ -547,7 +556,7 @@ Aucun fichier ne franchit son seuil ; aucune entrée de `file-size-baseline.json
 
 **Deux PR, l'une après l'autre, chacune depuis `master` à jour (jamais empilées) :**
 - **H1 — modèle par run** : fusionnée (`feed224`, #184).
-- **H2 — adaptateur `claude-code`** : §2 à §5, tests 1–37 et 48–65, e2e, INTEGRATIONS §A.2, SECURITY §3, ROADMAP, addendum du 2026-11-12 dans `DECISIONS.md` (§11).
+- **H2 — adaptateur `claude-code`** : §2 à §5, tests 1–37 et 48–69, e2e, INTEGRATIONS §A.2, SECURITY §3, ROADMAP, addendum du 2026-11-12 dans `DECISIONS.md` (§11).
 La sécurité de l'enfant, l'exécution de git par le serveur sur un contenu écrit par l'agent et un invariant du superviseur sont touchés : `architect` relit ce recadrage avant `implementer` (AGENTS.md, « Model routing »).
 
 ### Docs à mettre à jour (par H2)
@@ -583,8 +592,8 @@ Décidé par Loïc le 2026-11-12 (recadrage : `docs/superpowers/specs/2026-11-11
   vérifié), depuis le processus serveur : `git add -A` puis `git commit` avec un message fixe
   (référence du run et alias du modèle), l'identité git du dépôt figée avant le lancement,
   configuration système et globale coupées, hooks, `fsmonitor`, signature et maintenance coupés,
-  `GIT_DIR` imposé. Avant le commit, Nexus refuse (run `failed`) un dépôt git imbriqué, un lien ou
-  point de jonction, un fichier de plus de 20 Mio, et un pilote de filtre défini dans la
+  `GIT_DIR` imposé. Avant le commit, Nexus refuse (run `failed`) un dépôt git imbriqué, un lien, un
+  point de jonction ou un lien physique, un fichier de plus de 20 Mio, et un pilote de filtre défini dans la
   configuration du dépôt (ce dernier est aussi refusé avant le lancement).
 - D6 inchangé : la preuve est un commit qui descend du commit de départ, relu depuis le dépôt ;
   sans changement, le run finit en `review`. Aucun commit après une annulation, une durée maximale,
@@ -667,11 +676,13 @@ Rien de cette section ne change l'adaptateur Codex dans H2 : elle prépare une i
 | (c) Rendre accessible en écriture seulement `<dépôt>/.git/worktrees/nx-run-<n>` (`--add-dir`) | rejetée : un commit écrit aussi les objets et les références dans le dossier **commun** `.git`, donc il échouerait encore ; et le fichier `commondir` de ce dossier deviendrait modifiable par l'agent, qui pourrait faire lire à git (celui de Nexus compris) une configuration à lui | rejetée |
 | (d) Rendre `.git` du dépôt accessible en écriture | l'agent pourrait changer la configuration et les hooks du dépôt, au-delà du run | rejetée (Loïc) |
 
-**Pourquoi (a).** Un seul chemin de commit pour les deux exécutants, déjà testé (§9, tests 48–66) ; aucune écriture de l'agent dans un dossier git, donc la précondition du §5.4 tient sans effort ; identité de l'auteur fixée par Nexus (avec un clone, l'agent choisit l'auteur de ses commits : constaté ci-dessous) ; aucun git de Nexus lancé contre un dépôt que l'agent contrôle ; pas de coût disque. Ce que Codex perd : choisir ses propres messages et découper son travail en plusieurs commits. Ce qu'il garde, contrairement à Claude Code : exécuter des tests dans son bac à sable. Le choix `unelevated`/`elevated` reste à Loïc dans les deux cas (§14.4).
+**Pourquoi (a).** Un seul chemin de commit pour les deux exécutants, testé une fois (§9, tests 48–69) ; aucune écriture de l'agent dans un dossier git (la précondition 1 du §5.4 tient : c'est exactement ce que le bac à sable a refusé le 2026-11-12) ; identité de l'auteur fixée par Nexus (avec un clone, l'agent choisit l'auteur de ses commits : constaté ci-dessous) ; aucun git de Nexus lancé contre un dépôt que l'agent contrôle ; pas de coût disque. Ce que Codex perd : choisir ses propres messages et découper son travail en plusieurs commits. Ce qu'il garde, contrairement à Claude Code : exécuter des tests dans son bac à sable.
+
+**Ce que (a) coûte pour Codex, et que H2 n'a pas à payer.** Codex a un shell : il peut créer un point de jonction (`mklink /J`, sans droit particulier) ou un lien physique (cas 4 et 11 du §4.5), et laisser un processus orphelin. Le contrôle du §5.4 refuse ce qu'il trouve, mais la **précondition 2** (plus aucun processus du run ne peut écrire dans le worktree pendant le contrôle et l'ajout) ne tient pas avec `codex_process.kill_tree` sous Windows, qui ne retrouve pas un enfant orphelin. Un orphelin qui pose une jonction entre le contrôle et `git add -A` ferait entrer un fichier du dehors dans le commit ; le contrôle des chemins de l'étape 5 en attrape la forme simple (chemins que le parcours n'a pas vus), pas un fichier remplacé sous le même nom. (a) pour Codex demande donc d'abord un arrêt confirmé de tout l'arbre (*job object* Windows qui tue aussi les orphelins, ou vérification qu'aucun processus de l'arbre ne survit), testé, avant d'appeler `commit_run`. Il reste moins cher que (b) et ne touche pas `run_commit`. Le choix `unelevated`/`elevated` reste à Loïc dans les deux cas (§14.4).
 
 **Coût de (b), relevé localement le 2026-11-12 (sans LLM, git 2.55)** : un dépôt jetable, un clone `git clone --shared --no-checkout` par run, puis tout ce qu'un agent peut planter dans un clone qui lui appartient (configuration `core.fsmonitor`, `core.hooksPath` vers des hooks témoins, `uploadpack.packObjectsHook`, `core.sshCommand`, `core.pager`, un pilote de filtre et un `.gitattributes` qui le choisit, une identité `a@example.invalid`) ; l'agent commite (côté bac à sable, ses pièges tournent : attendu) ; puis le serveur rapatrie la branche avec `git fetch --no-tags --no-write-fetch-head <clone> +refs/heads/nexus/nx-run-1:refs/heads/nexus/nx-run-1`, environnement de `codex_git`.
-- Résultat : `fetch` réussi, **aucun programme lancé côté serveur** (le `git-upload-pack` lancé dans le clone ignore `uploadpack.packObjectsHook` d'une configuration de dépôt, et n'a pas de hook) ; la branche arrive dans le dépôt, mais **avec l'auteur choisi par l'agent** (`a@example.invalid`) ; le `.git` du clone pèse 30 Ko grâce à `--shared` (fichier `objects/info/alternates` vers les objets du dépôt).
-- Ce que (b) coûte en plus : (1) **disque** : `--shared` est presque gratuit mais le fichier `alternates` est modifiable par l'agent (il peut y ajouter un autre dépôt du disque, dont des objets pourraient alors être rapatriés) ; `--local` (liens physiques) est exclu, car un objet partagé par lien physique et réécrit dans le clone modifierait l'objet du dépôt ; `--no-hardlinks` copie tout le dépôt à chaque run ; (2) **preuve** : relue depuis le dépôt après le `fetch` (jamais depuis le clone), avec un plafond de taille du `fetch` et le même contrôle de liens et de sous-modules que le §5.4 sur l'arbre rapatrié ; (3) **nettoyage** : supprimer le clone à la clôture (sous Windows, objets en lecture seule à déverrouiller avant), et le garder tant que Loïc n'a pas relu si la branche n'a pas pu être rapatriée ; (4) **hooks et configuration du clone** : ils appartiennent à l'agent et tournent dans son bac à sable quand il commite (acceptable), mais Nexus ne doit **jamais** lancer git *dans* le clone (statut, preuve, nettoyage par git) : seulement le `fetch` depuis le dépôt ; (5) l'auteur des commits n'est plus garanti (forçable seulement en réécrivant les commits, ce qui revient à (a)) ; (6) la preuve D6 change de forme (commit dans un autre dépôt puis rapatrié), donc un amendement à D6.
+- Résultat : `fetch` réussi, **aucune exécution observée côté serveur** pour ces pièges-là (le `git-upload-pack` lancé dans le clone ignore `uploadpack.packObjectsHook` d'une configuration de dépôt, et n'a pas de hook) ; la branche arrive dans le dépôt, mais **avec l'auteur choisi par l'agent** (`a@example.invalid`) ; le `.git` du clone pèse 30 Ko grâce à `--shared` (fichier `objects/info/alternates` vers les objets du dépôt).
+- Ce que (b) coûte en plus : (1) **disque** : `--shared` est presque gratuit mais le fichier `alternates` est modifiable par l'agent (il peut y ajouter un autre dépôt du disque, dont des objets pourraient alors être rapatriés) ; `--local` (liens physiques) est exclu, car un objet partagé par lien physique et réécrit dans le clone modifierait l'objet du dépôt ; `--no-hardlinks` copie tout le dépôt à chaque run ; (2) **preuve** : relue depuis le dépôt après le `fetch` (jamais depuis le clone), avec un plafond de taille du `fetch` et le même contrôle de liens et de sous-modules que le §5.4 sur l'arbre rapatrié ; (3) **nettoyage** : supprimer le clone à la clôture (sous Windows, objets en lecture seule à déverrouiller avant), et le garder tant que Loïc n'a pas relu si la branche n'a pas pu être rapatriée ; (4) **hooks et configuration du clone** : ils appartiennent à l'agent et tournent dans son bac à sable quand il commite (acceptable), mais Nexus ne doit **jamais** lancer git *dans* le clone (statut, preuve, nettoyage par git) : seulement le `fetch` depuis le dépôt ; (5) l'auteur des commits n'est plus garanti (forçable seulement en réécrivant les commits, ce qui revient à (a)) ; (6) la preuve D6 change de forme (commit dans un autre dépôt puis rapatrié), donc un amendement à D6. En contrepartie, (b) ne fait lire aucun fichier du worktree par Nexus : ce que l'agent met dans ses commits (jonction, lien physique) est lu par son propre git, dans les limites de son bac à sable, et le problème des orphelins de (a) ne se pose pas pour le commit (il reste pour l'arrêt du run).
 
 ### 14.3 Point d'isolement de Codex
 
@@ -680,6 +691,6 @@ Rien de cette section ne change l'adaptateur Codex dans H2 : elle prépare une i
 
 ### 14.4 Ce qui revient à Loïc pour Codex
 
-1. (a) ou (b) — recommandation : (a).
+1. (a) ou (b) — recommandation : (a), avec un arrêt confirmé de tout l'arbre (orphelins compris) avant le commit.
 2. Le bac à sable Windows de Codex pour les runs de Nexus : `unelevated` passé par l'adaptateur (`-c windows.sandbox="unelevated"`, le seul relevé qui fonctionne en non interactif), ou `elevated` après une installation interactive de son assistant (à vérifier qu'elle suffit ensuite en non interactif).
 3. L'isolement de ta configuration Codex pendant un run (§14.3) : on part sur `--ignore-user-config` + `--ignore-rules` + un contrôle fermé de la sortie, à confirmer par un run réel.
