@@ -21,7 +21,9 @@ export type Run = {
   client_key: string
   brief: string
   workdir: string | null
-  /** The executor's own reference; for Codex, the branch `nexus/nx-run-<n>`. */
+  /** The model alias chosen for the run (Claude only); null for other executors and old runs. */
+  model: string | null
+  /** The executor's own reference; for Codex and Claude, the branch `nexus/nx-run-<n>`. */
   external_ref: string | null
   status: RunStatus
   /** The executor's own word, shown as given and never interpreted (ADR-005). */
@@ -39,6 +41,8 @@ export type ExecutorInfo = {
   executor: Actor
   agents: Actor[]
   workdirs: string[]
+  /** The model aliases the executor serves, cheapest first; empty: no choice to make. */
+  models: string[]
   source: string
   measured_at: string
 }
@@ -50,6 +54,8 @@ export type RunDraft = {
   client_key: string
   brief: string
   workdir?: string
+  /** Only for an executor that serves models (the server refuses it elsewhere). */
+  model?: string
 }
 
 const json = (body: unknown): RequestInit['body'] => JSON.stringify(body)

@@ -13,12 +13,12 @@ const T = '2026-11-05T10:00:00+01:00'
 
 const RUN: Run = {
   id: 'nx-run-1', task: 'nx-task-1', executor: 'codex', agent: 'codex', dispatched_by: 'loic',
-  client_key: 'k', brief: 'b', workdir: null, external_ref: 'nexus/nx-run-1', status: 'running',
+  client_key: 'k', brief: 'b', workdir: null, model: null, external_ref: 'nexus/nx-run-1', status: 'running',
   native_status: 'exited', created_at: T, ended_at: null, cancel_requested_at: null, version: 1,
   source: 'nexus.db', measured_at: T,
 }
-const CODEX: ExecutorInfo = { executor: 'codex', agents: ['codex'], workdirs: ['F:/depot'], source: 'nexus.db', measured_at: T }
-const HERMES: ExecutorInfo = { executor: 'hermes', agents: ['helios', 'mnema'], workdirs: [], source: 'nexus.db', measured_at: T }
+const CODEX: ExecutorInfo = { executor: 'codex', agents: ['codex'], workdirs: ['F:/depot'], models: [], source: 'nexus.db', measured_at: T }
+const HERMES: ExecutorInfo = { executor: 'hermes', agents: ['helios', 'mnema'], workdirs: [], models: [], source: 'nexus.db', measured_at: T }
 
 type Routes = { runs?: Run[] | 'error'; executors?: ExecutorInfo[]; events?: unknown[]; post?: Response }
 
@@ -302,4 +302,20 @@ test('les preuves se lisent sur les événements de clôture, pas sur une page d
     expect(urls.some((u) => u.includes('/api/events') && u.includes('kind=done'))).toBe(true)
     expect(urls.some((u) => u.includes('/api/events') && u.includes('kind=review'))).toBe(true)
   })
+})
+
+test('un run Claude montre son modèle et appelle sa référence « branche »', async () => {
+  serve({ runs: [{ ...RUN, executor: 'claude', agent: 'claude', model: 'sonnet' }] })
+  mount()
+  const row = (await screen.findByText('En cours')).closest('li') as HTMLElement
+  expect(row).toHaveTextContent('Claude → Claude · Sonnet')
+  expect(row).toHaveTextContent('Branche : nexus/nx-run-1')
+})
+
+test('un run sans modèle n’affiche aucun modèle', async () => {
+  serve({ runs: [RUN] })
+  mount()
+  const row = (await screen.findByText('En cours')).closest('li') as HTMLElement
+  expect(row).toHaveTextContent('Codex → Codex')
+  expect(row).not.toHaveTextContent('·')
 })

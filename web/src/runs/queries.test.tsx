@@ -12,7 +12,7 @@ vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), warning: v
 
 const run: Run = {
   id: 'nx-run-1', task: 'nx-task-1', executor: 'codex', agent: 'codex', dispatched_by: 'loic',
-  client_key: 'k', brief: 'b', workdir: null, external_ref: null, status: 'dispatched',
+  client_key: 'k', brief: 'b', workdir: null, model: null, external_ref: null, status: 'dispatched',
   native_status: null, created_at: '2026-11-05T10:00:00+01:00', ended_at: null,
   cancel_requested_at: null, version: 1, source: 'nexus.db', measured_at: '2026-11-05T10:00:01+01:00',
 }
