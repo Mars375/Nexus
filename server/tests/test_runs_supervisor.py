@@ -98,11 +98,11 @@ def test_a_failing_dispatch_fails_the_run_without_echoing_the_error(client):
 
 def test_restart_puts_unfinished_runs_in_unknown_with_an_event(client):
     register(client)
-    register(client, "claude")
+    register(client, "orca")
     task = make_task(client)
     dispatch(client, task)
     other = make_task(client, title="Fini")
-    dispatch(client, other, client_key="k2", executor="claude", agent="claude")
+    dispatch(client, other, client_key="k2", executor="orca", agent="orca")
     with client.app.state.sessionmaker() as session:
         session.get(Run, 2).status = "done"
         session.commit()

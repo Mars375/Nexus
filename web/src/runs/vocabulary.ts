@@ -12,6 +12,25 @@ export const RUN_STATUS_LABEL: Record<RunStatus, string> = {
   cancelled: 'Annulé',
 }
 
+export const MODEL_NAME: Record<string, string> = { haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' }
+
+/** What the « Modèle » field offers; a model this table does not know keeps its own name. */
+export const MODEL_LABEL: Record<string, string> = {
+  haiku: 'Haiku — rapide, le plus économe',
+  sonnet: 'Sonnet — équilibré',
+  opus: 'Opus — le plus capable, consomme le plus',
+}
+
+export const modelName = (model: string) => (Object.hasOwn(MODEL_NAME, model) ? MODEL_NAME[model] : model)
+export const modelLabel = (model: string) => (Object.hasOwn(MODEL_LABEL, model) ? MODEL_LABEL[model] : model)
+
+/** The model offered first: Sonnet, the default of the main thread (AGENTS.md), else the first served. */
+export const defaultModel = (models: string[]): string | undefined =>
+  models.includes('sonnet') ? 'sonnet' : models[0]
+
+/** An executor whose runs work on a branch `nexus/nx-run-<n>` (its `external_ref`). */
+export const BRANCH_EXECUTORS: readonly string[] = ['codex', 'claude']
+
 /** A task that ended (done) or was dropped cannot be handed over (the server says 409). */
 export const HANDOVER_CLOSED: readonly string[] = ['done', 'dropped']
 
@@ -27,6 +46,10 @@ const REFUSAL: Record<string, string> = {
     'Cet exécutant n’est pas configuré sur ce serveur : rien n’a été lancé. Il faut un binaire et un dépôt de travail déclarés (INTEGRATIONS §A.2).',
   executor_busy: 'Cet exécutant a déjà un run actif : annule-le ou attends sa fin.',
   run_already_active: 'Cet agent a déjà un run actif sur cette tâche : annule-le ou attends sa fin.',
+  model_required: 'Choisis un modèle pour ce run avant de le lancer.',
+  model_unavailable: 'Ce modèle n’est plus proposé par cet exécutant : choisis-en un autre dans la liste.',
+  model_not_for_executor:
+    'Cet exécutant ne propose pas de choix de modèle : change d’exécutant, le dialogue doit se rouvrir.',
   agent_not_for_executor: 'Cet exécutant ne travaille pas pour cet agent : choisis un autre couple.',
   transition_refused: 'Cette tâche a été abandonnée : reprends-la avant de la confier.',
   concurrent_update: 'La tâche vient d’être modifiée ailleurs : ferme ce dialogue, relis-la et réessaie.',

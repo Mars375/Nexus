@@ -8,7 +8,7 @@ import { actorName } from '@/tasks/vocabulary'
 import { Button, Dialog } from '@/ui'
 import { ConfierDialog } from './ConfierDialog'
 import { useCancelRun, useRunEvidence, useRuns } from './queries'
-import { CANCELLABLE, HANDOVER_CLOSED, RUN_STATUS_LABEL } from './vocabulary'
+import { BRANCH_EXECUTORS, CANCELLABLE, HANDOVER_CLOSED, modelName, RUN_STATUS_LABEL } from './vocabulary'
 
 export function RunsSection({ task }: { task: Task }) {
   const runs = useRuns(task.id)
@@ -39,6 +39,7 @@ export function RunsSection({ task }: { task: Task }) {
                 <span className="text-ink">{RUN_STATUS_LABEL[run.status]}</span>
                 <span className="text-muted">
                   {actorName(run.executor)} → {actorName(run.agent)}
+                  {run.model ? ` · ${modelName(run.model)}` : ''}
                 </span>
               </p>
               {run.native_status && (
@@ -48,7 +49,7 @@ export function RunsSection({ task }: { task: Task }) {
               )}
               {run.external_ref && (
                 <p className="text-muted">
-                  {run.executor === 'codex' ? 'Branche' : 'Référence de l’exécutant'} :{' '}
+                  {BRANCH_EXECUTORS.includes(run.executor) ? 'Branche' : 'Référence de l’exécutant'} :{' '}
                   <span className="font-data">{run.external_ref}</span>
                 </p>
               )}

@@ -239,6 +239,34 @@ Décidé par l'agent sous le feu vert du 2026-11-11, puis **confirmé par Loïc 
 - L'agent `helios` correspond au profil Hermes `default`.
 - Le comportement de D3 au redémarrage est inchangé (le run passe `unknown`, Loïc l'annule). Reprendre le suivi serait un vrai écart à D3 : addendum distinct, hors du lot G.
 
+### Addendum (2026-11-11) — Claude Code comme exécutant, modèle choisi à chaque run (lot H)
+
+Décidé par Loïc le 2026-11-11 (cadrage : `docs/superpowers/specs/2026-11-11-adaptateur-claude-code-design.md`) :
+
+- Nexus peut confier une tâche à Claude Code (`claude -p`), avec le modèle choisi à chaque run
+  parmi `haiku`, `sonnet` et `opus` dans « Confier à ». Chaque run consomme l'abonnement Claude
+  de Loïc.
+- **Exception à la règle du 2026-10-17** (AGENTS.md, « Model routing » : les modèles Claude ne sont
+  consommés que par le fil principal de Claude Code et les subagents de `.claude/agents/`) : un run
+  de l'adaptateur `claude-code` consomme lui aussi l'abonnement. Les tests n'utilisent qu'un faux
+  exécutable (D8) ; aucune CI ne lance de run réel. La règle reste entière pour tout autre harnais.
+
+Choix du cadrage, pris par l'agent sous le feu vert de Loïc du 2026-11-11 et **à confirmer par lui**
+(chacun se change sans migration) :
+
+- Un run réel est confié depuis Nexus par un humain (D2) : Loïc, ou l'agent principal avec le jeton
+  de navigateur de Loïc et sur sa consigne.
+- L'exécutant est l'acteur existant `claude`, qui ne sert que l'agent `claude` ; l'`origin` des
+  événements est `claude-code`.
+- `runs.model` (migration `0009`) : exigé pour `claude` (409 `model_required`), refusé pour les
+  autres exécutants (409 `model_not_for_executor`), sans défaut côté serveur ; `NULL` pour les runs
+  antérieurs.
+- D4, D6 et D7 s'appliquent sans changement (environnement par liste blanche, brief sur l'entrée
+  standard, worktree et preuve par commit, un run actif par exécutant, durée maximale, aucune
+  relance). En plus : session isolée (`--restricted`, aucun MCP, ni hooks ni réglages de Loïc,
+  vérifiée sur la ligne `system/init`), Bash réduit à `git status`, `git add` et `git commit`,
+  hooks git coupés par l'environnement de l'enfant. Sonnet est présélectionné dans « Confier à ».
+
 ---
 
 ## Décisions ouvertes

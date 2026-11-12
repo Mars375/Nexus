@@ -53,7 +53,7 @@ def info_of(run: Run) -> RunInfo:
         run_id=run.id, ref=run.ref, task=f"nx-task-{run.task_id}", executor=run.executor,
         agent=run.agent, brief=run.brief, workdir=run.workdir, external_ref=run.external_ref,
         status=run.status, native_status=run.native_status, watch_cursor=run.watch_cursor,
-        version=run.version,
+        version=run.version, model=run.model,
     )
 
 

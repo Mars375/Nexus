@@ -48,8 +48,32 @@ AGENTS_OF = {
 }
 
 
+# The models a run can ask for, cheapest first (ADR-023 addendum of 2026-11-11), and the
+# executors that serve them. An adapter may narrow the list with an optional `models` attribute,
+# like `agents`.
+RUN_MODELS = ("haiku", "sonnet", "opus")
+MODELS_OF = {"claude": RUN_MODELS}
+
+
+def check_model(executor: str, model: str | None) -> None:
+    """Required when the executor serves models, refused otherwise: never ignored in silence."""
+    if executor in MODELS_OF:
+        if model is None:
+            raise RuleViolation("model_required", "choisis un modèle pour ce run")
+    elif model is not None:
+        raise RuleViolation(
+            "model_not_for_executor", "cet exécutant ne propose pas de choix de modèle"
+        )
+
+
 def check_dispatchable(
-    session: Session, task: Task, *, executor: str, agent: str, registry: AdapterRegistry
+    session: Session,
+    task: Task,
+    *,
+    executor: str,
+    agent: str,
+    registry: AdapterRegistry,
+    model: str | None = None,
 ) -> None:
     if agent not in AGENTS_OF.get(executor, frozenset()):
         raise RuleViolation(
@@ -66,6 +90,12 @@ def check_dispatchable(
         raise RuleViolation(
             "executor_unavailable",
             "aucun adaptateur n'est configuré pour cet agent : rien n'est lancé",
+        )
+    check_model(executor, model)
+    offered = getattr(adapter, "models", None)
+    if model is not None and offered is not None and model not in offered:
+        raise RuleViolation(
+            "model_unavailable", "ce modèle n'est pas proposé par cet exécutant sur ce serveur"
         )
     check_task_ready(session, task)
     active = session.scalar(

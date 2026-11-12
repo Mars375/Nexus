@@ -5,7 +5,7 @@ import { useAuth } from '@/auth'
 import { Button, Dialog, Field, inputClass } from '@/ui'
 import { actorName } from '@/tasks/vocabulary'
 import { newClientKey, useDispatchRun, useExecutors } from './queries'
-import { HANDOVER_CLOSED, refusalText } from './vocabulary'
+import { defaultModel, HANDOVER_CLOSED, modelLabel, modelName, refusalText } from './vocabulary'
 
 export const BRIEF_MAX = 20_000
 
@@ -16,6 +16,7 @@ export function ConfierDialog({ task, onClose }: { task: Task; onClose: () => vo
   const [executor, setExecutor] = useState<Actor | ''>('')
   const [agent, setAgent] = useState<Actor | ''>('')
   const [workdir, setWorkdir] = useState('')
+  const [model, setModel] = useState('')
   const [brief, setBrief] = useState('')
   // One key per distinct request: a double click or a resend is the same run, an edited request
   // is a new one (the server refuses the same key for another content).
@@ -43,7 +44,17 @@ export function ConfierDialog({ task, onClose }: { task: Task; onClose: () => vo
   const workdirs = info?.workdirs ?? []
   const theWorkdir = workdir || workdirs[0]
   const workdirGone = workdir !== '' && !!info && !workdirs.includes(workdir)
-  const gone = executorGone || agentGone || workdirGone
+  const models = info?.models ?? []
+  // Sonnet until Loïc picks another; a pick the server no longer offers stays, marked, and blocks.
+  const theModel = model || defaultModel(models)
+  // The default shown is pinned as the choice once the models are known, so a later refresh of
+  // the list cannot move the select to another model in silence: it becomes « plus disponible ».
+  const pinned = model === '' && models.length > 0 ? defaultModel(models) : undefined
+  useEffect(() => {
+    if (pinned) setModel(pinned)
+  }, [pinned])
+  const modelGone = model !== '' && !!info && !models.includes(model)
+  const gone = executorGone || agentGone || workdirGone || modelGone
   const closed = HANDOVER_CLOSED.includes(task.status)
   const showForm = !!info || executorGone
   const ready = showForm && !gone && !closed && !!theAgent && brief.trim().length > 0 && !dispatch.isPending
@@ -58,10 +69,14 @@ export function ConfierDialog({ task, onClose }: { task: Task; onClose: () => vo
     event.preventDefault()
     if (!ready || !selected || !theAgent) return
     const text = brief.trim()
-    const signature = JSON.stringify([selected, theAgent, theWorkdir ?? null, text])
+    const sendModel = models.length > 0 ? theModel : undefined
+    const signature = JSON.stringify([selected, theAgent, theWorkdir ?? null, sendModel ?? null, text])
     if (sent.current?.signature !== signature) sent.current = { signature, key: newClientKey() }
     dispatch.mutate(
-      { executor: selected, agent: theAgent, client_key: sent.current.key, brief: text, workdir: theWorkdir },
+      {
+        executor: selected, agent: theAgent, client_key: sent.current.key, brief: text,
+        workdir: theWorkdir, ...(sendModel ? { model: sendModel } : {}),
+      },
       {
         onSuccess: (run) => {
           toast.success(`Confié à ${actorName(run.agent)} (${run.id})`)
@@ -122,6 +137,7 @@ export function ConfierDialog({ task, onClose }: { task: Task; onClose: () => vo
                   edit(setExecutor)(e.target.value as Actor)
                   setAgent('')
                   setWorkdir('')
+                  setModel('')
                 }}
                 autoFocus
               >
@@ -158,6 +174,22 @@ export function ConfierDialog({ task, onClose }: { task: Task; onClose: () => vo
                 </select>
               </Field>
             )}
+            {(models.length > 0 || modelGone) && (
+              <Field label="Modèle" hint="Choisi à chaque run : le plus capable consomme le plus.">
+                <select
+                  className={inputClass}
+                  value={theModel}
+                  disabled={pending}
+                  aria-invalid={modelGone || undefined}
+                  onChange={(e) => edit(setModel)(e.target.value)}
+                >
+                  {modelGone && <option value={model}>{modelName(model)} — plus disponible</option>}
+                  {models.map((m) => (
+                    <option key={m} value={m}>{modelLabel(m)}</option>
+                  ))}
+                </select>
+              </Field>
+            )}
             <Field label="Brief" hint="Ce que l’agent doit faire, écrit par toi : il ne reprend ni les commentaires ni les notes d’agents.">
               <textarea
                 className={inputClass}
@@ -172,6 +204,7 @@ export function ConfierDialog({ task, onClose }: { task: Task; onClose: () => vo
             <p className="rounded-sm border border-attention/50 px-3 py-2 text-xs text-attention">
               Lance un LLM : l’agent travaille réellement, consomme du quota et peut modifier des fichiers dans son
               worktree. Rien n’est poussé ni fusionné.
+              {selected === 'claude' && ' Ce run consomme l’abonnement Claude de Loïc.'}
             </p>
           </>
         )}

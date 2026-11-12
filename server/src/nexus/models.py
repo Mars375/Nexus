@@ -253,6 +253,9 @@ class Run(Base):
     # What Loïc wrote, masked by the secret scanner before it is stored (ADR-006).
     brief: Mapped[str] = mapped_column(Text)
     workdir: Mapped[str | None] = mapped_column(Text)
+    # Alias of the model chosen for this run (`runs.rules.RUN_MODELS`); NULL for executors that
+    # serve none and for runs created before migration 0009.
+    model: Mapped[str | None] = mapped_column(String(16))
     external_ref: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16))
     # The executor's own word for the state, shown as such and never interpreted (ADR-005).
