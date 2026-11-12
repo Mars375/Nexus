@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 import pytest
-from run_commit_support import Spy, isolate_home, make_dir_link, make_job
+from run_commit_support import Spy, isolate_home, make_dir_link, make_job, symlink_or_skip
 
 from nexus.adapters import codex_git, run_commit, run_commit_scan
 from nexus.adapters.run_commit import Committed, NothingToCommit, Refused
@@ -76,10 +76,7 @@ def test_a_symlink_to_a_file_is_refused(tmp_path):
     job = make_job(tmp_path)
     target = tmp_path / "target.txt"
     target.write_text("x", encoding="utf-8")
-    try:
-        os.symlink(target, job.tree.path / "file-link")
-    except (OSError, NotImplementedError) as error:
-        pytest.skip(f"lien symbolique non créable ici : {type(error).__name__}")
+    symlink_or_skip(target, job.tree.path / "file-link")
     assert run_commit.commit_run(job.request()) == Refused("lien ou point de jonction")
 
 

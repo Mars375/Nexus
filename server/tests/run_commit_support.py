@@ -127,7 +127,7 @@ class Spy:
 
 
 def make_dir_link(kind: str, link: Path, target: Path) -> None:
-    """A junction (Windows only) or a symbolic link to a folder; skips where it cannot be made."""
+    """A junction (Windows only) or a symbolic link to a folder (see `symlink_or_skip`)."""
     if kind == "junction":
         if sys.platform != "win32":
             pytest.skip("point de jonction : Windows seulement")
@@ -135,7 +135,15 @@ def make_dir_link(kind: str, link: Path, target: Path) -> None:
 
         _winapi.CreateJunction(str(target), str(link))
         return
+    symlink_or_skip(target, link, directory=True)
+
+
+def symlink_or_skip(target: Path, link: Path, *, directory: bool = False) -> None:
+    """A symbolic link; skipped only on Windows, where creating one needs a privilege. Anywhere
+    else a failure fails the test, so that the link checks always run in the Linux CI."""
     try:
-        os.symlink(target, link, target_is_directory=True)
+        os.symlink(target, link, target_is_directory=directory)
     except (OSError, NotImplementedError) as error:
+        if sys.platform != "win32":
+            raise
         pytest.skip(f"lien symbolique non créable ici : {type(error).__name__}")
