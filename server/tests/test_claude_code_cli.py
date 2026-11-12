@@ -137,6 +137,18 @@ def test_the_instruction_quotes_the_cap_of_the_commit():
     assert re.findall(r"(\d+) Mo", cli.INSTRUCTION) == [str(megabytes)]
 
 
+def test_the_instruction_is_the_text_of_the_spec():
+    assert cli.INSTRUCTION == (
+        "\n\n---\n"
+        "Consigne de Nexus : tu travailles dans un dossier à part, créé pour ce run.\n"
+        "Tu peux lire, créer et modifier des fichiers de ce dossier ; tu ne peux lancer aucune "
+        "commande\n(ni git, ni tests). Ne touche pas aux dossiers .git et ne crée ni dépôt git, "
+        "ni lien, ni fichier\nde plus de 20 Mo : Nexus refuserait alors d'enregistrer le travail.\n"
+        "Quand tu as fini, arrête-toi : Nexus enregistre lui-même tes changements dans un commit, "
+        "que Loïc\nrelira. Si rien n'est à changer, dis pourquoi dans ta réponse finale.\n"
+    )
+
+
 def test_the_instruction_names_no_run_no_path_and_no_model():
     text = cli.INSTRUCTION.lower()
     for word in ("nx-run", "sonnet", "opus", "haiku", "\\", ":/", "nexus/"):

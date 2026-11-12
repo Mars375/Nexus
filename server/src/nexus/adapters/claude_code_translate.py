@@ -1,6 +1,6 @@
 """Pure translation of `claude -p --output-format stream-json` lines into facts (ADR-023, D3).
 
-Shapes as relevé from claude 2.1.322 (spec 2026-11-11, §5.2 and §12.0): everything uncertain is
+Shapes as observed on claude 2.1.322 (spec 2026-11-11, §5.2 and §12.0): everything uncertain is
 isolated here. An unexpected line is ignored, never raised, and neither the content of a file nor
 the result of a tool is ever read into a fact. The isolation check lives on `system/init` and fails
 closed: a departure is a `breach`, a field that cannot be read leaves the isolation unknown.
@@ -59,6 +59,10 @@ def _init(event: dict) -> tuple[Fact, ...]:
     return (Fact("breach", BREACH, f"{BREACH} : {why}"),)
 
 
+def _is_file_tool(name: object) -> bool:
+    return isinstance(name, str) and name in FILE_TOOLS  # a list or dict would be unhashable
+
+
 def _assistant(event: dict) -> tuple[Fact, ...]:
     facts = [Fact("working", "Claude Code travaille")]
     message = event.get("message")
@@ -70,7 +74,7 @@ def _assistant(event: dict) -> tuple[Fact, ...]:
             body = cut(block.get("text"))
             if body:
                 facts.append(Fact("progress", "Message de Claude Code", body))
-        elif block.get("type") == "tool_use" and block.get("name") in FILE_TOOLS:
+        elif block.get("type") == "tool_use" and _is_file_tool(block.get("name")):
             given = block.get("input")
             body = cut(given.get("file_path")) if isinstance(given, dict) else None
             if body:

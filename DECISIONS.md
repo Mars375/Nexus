@@ -286,8 +286,11 @@ Cadrage : `docs/superpowers/specs/2026-11-11-adaptateur-claude-code-design.md` (
   et maintenance automatique coupés, `GIT_DIR` imposé. Le module (`run_commit.py`) ne connaît aucun
   exécutant : Codex pourra l'appeler plus tard (spec, §14, hors de ce lot).
 - Le modèle reste choisi à chaque run (décision du 2026-11-11, inchangée par ce lot).
-- Le choix `unelevated` ou `elevated` du bac à sable Windows de Codex ne concerne que Codex : il n'est
-  pas décidé ici (spec, §14.4).
+- D6 inchangé : la preuve est un commit qui descend du commit de départ, relu depuis le dépôt ; aucun
+  commit après une annulation, une durée maximale, un échec, une violation d'isolement ou un
+  redémarrage.
+- Le bac à sable `unelevated` ne concerne que Codex : cet adaptateur n'a aucun réglage de bac à sable
+  (pas de Bash), et le choix pour Codex reste hors de ce lot (spec, §14.4).
 
 **Choix du cadrage, pris par l'agent et en attente de la confirmation de Loïc** (chacun se change
 sans migration) :
@@ -304,9 +307,6 @@ sans migration) :
   (`core.symlinks=true`), chaque commit y serait refusé.
 - **Identité git exigée par dépôt** (locale ou globale), lue avant le lancement ; sans elle, le run
   est `failed` « lancement impossible » et rien n'est créé.
-- D6 inchangé : la preuve est un commit qui descend du commit de départ, relu depuis le dépôt ; aucun
-  commit après une annulation, une durée maximale, un échec, une violation d'isolement ou un
-  redémarrage.
 
 ---
 

@@ -114,6 +114,12 @@ def test_reading_tools_unknown_tools_and_thinking_tell_nothing_more():
     assert kinds(ASSISTANT_BASH) == ["working"]
 
 
+@pytest.mark.parametrize("name", [["Edit"], {"Edit": 1}, None, 3, True])
+def test_a_tool_name_of_the_wrong_type_never_raises(name):
+    text = assistant({"type": "tool_use", "name": name, "input": {"file_path": "a.txt"}})
+    assert kinds(text) == ["working"]
+
+
 def test_a_file_change_without_a_usable_path_adds_nothing():
     for bad in ({}, {"file_path": 3}, {"file_path": ""}):
         text = assistant({"type": "tool_use", "name": "Edit", "input": bad})
