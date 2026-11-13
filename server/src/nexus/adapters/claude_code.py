@@ -206,6 +206,13 @@ class ClaudeCodeAdapter:
             job.settle_lock.release()
 
     def _close_ended(self, job: Job) -> None:
+        # Checked again now that the reader is over: it may have noted a breach (a second, bad
+        # `system/init`) between the first check of `_settle` and the end of the process.
+        if job.breach is not None or job.unverified:
+            self._stop_tree(job)
+            self._fail(job, "Isolation de la session non respectée",
+                       job.breach or "isolement de la session non vérifié")
+            return
         code, result = job.process.returncode, job.result
         if result is not None and not result.ok:
             self._fail(job, "Claude Code a échoué", result.cause or "échec sans détail")

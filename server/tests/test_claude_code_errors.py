@@ -128,6 +128,25 @@ def test_nothing_read_after_a_breach_is_recorded(rig):
     assert [e.kind for e in r.watch().events] == ["failed"]
 
 
+def test_a_breach_noted_as_the_reader_ends_is_seen_before_the_commit(rig, no_commit):
+    """The reader may note a breach after the first check of a tick and end at once: the tick
+    that sees it ended must not commit (CodeRabbit, #189)."""
+    r = rig(lines=OK_LINES, actions=[write()])
+    r.adapter.dispatch(claude_info())
+    job = r.adapter._job("nx-run-1")
+    r.adapter.join("nx-run-1", 20.0)
+    assert job.breach is None and job.isolated
+
+    def ends_with_a_breach():  # the breach lands between the two checks of `_settle`
+        job.breach = "isolation non respectée : serveur MCP présent"
+        return False
+
+    job.reader.is_alive = ends_with_a_breach
+    last = r.last()
+    assert last.kind == "failed" and last.payload["cause"].startswith("isolation non respectée")
+    assert not no_commit and r.head() == r.start()
+
+
 # --- 23: an isolation that was never proved ---------------------------------------------------
 
 
