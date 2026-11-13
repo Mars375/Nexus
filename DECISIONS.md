@@ -289,8 +289,10 @@ Cadrage : `docs/superpowers/specs/2026-11-11-adaptateur-claude-code-design.md` (
 - D6 inchangé : la preuve est un commit qui descend du commit de départ, relu depuis le dépôt ; aucun
   commit après une annulation, une durée maximale, un échec, une violation d'isolement ou un
   redémarrage.
-- Le bac à sable `unelevated` ne concerne que Codex : cet adaptateur n'a aucun réglage de bac à sable
-  (pas de Bash), et le choix pour Codex reste hors de ce lot (spec, §14.4).
+
+**Lecture de l'agent, pas une décision de Loïc sur cet adaptateur :** le choix `unelevated` de Loïc
+(2026-11-12) porte sur le bac à sable de Codex sous Windows (#186) ; l'adaptateur `claude-code` n'a
+aucun réglage de bac à sable (pas de Bash).
 
 **Choix du cadrage, pris par l'agent et en attente de la confirmation de Loïc** (chacun se change
 sans migration) :
