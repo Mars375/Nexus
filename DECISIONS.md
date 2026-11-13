@@ -334,9 +334,11 @@ options ; il peut l'infirmer :
 délégation ; chacun se change sans migration) :
 
 - Avant le commit de Nexus : arrêt **confirmé** de tout l'arbre par un *job object* Windows
-  (`KILL_ON_JOB_CLOSE`, sans sortie autorisée ; groupe de processus vidé sous POSIX), repris pour
+  (`KILL_ON_JOB_CLOSE`, sans sortie autorisée), repris pour
   `claude-code` ; la branche doit être restée au départ et le fichier `.git` du worktree inchangé,
-  sinon `failed` sans commit.
+  sinon `failed` sans commit. Sous POSIX, un groupe de processus vidé ne confirme pas l'arrêt
+  d'un descendant sorti du groupe : l'exécutant `codex` n'y est pas enregistré, sauf
+  `NEXUS_RUN_WEAK_CONTAINMENT=1` (faux exécutable des tests, jamais un vrai run).
 - **Configuration de Loïc hors des runs** : un `CODEX_HOME` propre à Nexus
   (`<NEXUS_DATA_DIR>/codex-home`, où Loïc se connecte une fois ; Nexus ne lit ni ne copie la
   connexion), `--ignore-user-config`, `--ignore-rules`, `--ephemeral`, bloc des skills retiré de
