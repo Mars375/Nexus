@@ -310,6 +310,37 @@ sans migration) :
 - **Identité git exigée par dépôt** (locale ou globale), lue avant le lancement ; sans elle, le run
   est `failed` « lancement impossible » et rien n'est créé.
 
+### Addendum (2026-11-13) — Codex : bac à sable `unelevated`, commit fait par Nexus, configuration de Loïc tenue à l'écart
+
+Cadrage : `docs/superpowers/specs/2026-11-13-codex-commit-par-nexus-design.md` (issue #186).
+Implémentation en quatre PR à venir (§9 du cadrage) ; rien de ceci n'est encore livré.
+
+**Décidé par Loïc le 2026-11-12** (#186) : Nexus passe `windows.sandbox=unelevated` à **ses** runs
+Codex, sous Windows seulement ; sa propre configuration (`[windows] sandbox = "elevated"`) ne change
+pas.
+
+**Choisi par l'agent sous la délégation de Loïc du 2026-11-13** (« je te laisse gérer ce que tu
+préfères niveau option ») — ce n'est pas Loïc qui a choisi entre les options ; il peut infirmer
+chaque point, aucun ne demande de migration :
+
+- **Nexus commite pour Codex** à la fin d'un tour réussi, par `run_commit` (comme pour
+  `claude-code`) ; l'agent ne commite plus (sous le bac à sable, il ne le peut pas : `index.lock`
+  refusé le 2026-11-12). **Pas de clone par run** : il laisserait l'agent choisir l'auteur des
+  commits, rendrait modifiable le fichier `alternates` du clone, coûterait un nettoyage par run et
+  un amendement de D6, sans régler l'arrêt de l'arbre de processus. D6 inchangé : la preuve est un
+  commit qui descend du départ, relu depuis le dépôt.
+- Avant ce commit : arrêt **confirmé** de tout l'arbre par un *job object* Windows
+  (`KILL_ON_JOB_CLOSE`, sans sortie autorisée ; groupe de processus vidé sous POSIX), repris pour
+  `claude-code` ; la branche doit être restée au départ et le fichier `.git` du worktree inchangé,
+  sinon `failed` sans commit.
+- **Configuration de Loïc hors des runs** : un `CODEX_HOME` propre à Nexus
+  (`<NEXUS_DATA_DIR>/codex-home`, où Loïc se connecte une fois ; Nexus ne lit ni ne copie la
+  connexion), `--ignore-user-config`, `--ignore-rules`, `--ephemeral`, skills coupées, hooks,
+  plugins, connecteurs, navigateur et mémoires coupés ; contrôle fermé avant le lancement
+  (`codex mcp list --json` vide, aucun bloc de skills dans `codex debug prompt-input`) ; un
+  `mcp_tool_call` pendant le run le termine en `failed`.
+- Fins alignées sur `claude-code` : refus de Nexus → `failed`, aucun changement → `review`.
+
 ---
 
 ## Décisions ouvertes
