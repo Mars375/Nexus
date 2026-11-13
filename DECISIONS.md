@@ -267,6 +267,47 @@ Choix du cadrage, pris par l'agent sous le feu vert de Loïc du 2026-11-11 et **
   vérifiée sur la ligne `system/init`), Bash réduit à `git status`, `git add` et `git commit`,
   hooks git coupés par l'environnement de l'enfant. Sonnet est présélectionné dans « Confier à ».
 
+### Addendum (2026-11-12) — Claude Code sans Bash, commit fait par Nexus (lot H2)
+
+Cadrage : `docs/superpowers/specs/2026-11-11-adaptateur-claude-code-design.md` (§4 et §5.4 ; issue
+#185 ; implémentation : #183, branche `feat/183-adaptateur-claude-code`).
+
+**Décidé par Loïc le 2026-11-12 :**
+
+- Un run de l'adaptateur `claude-code` n'a **aucun outil qui exécute une commande** : seulement
+  `Read`, `Edit`, `Write`, `Glob` et `Grep` (`--tools`), dans le worktree du run. Cette puce remplace
+  « Bash réduit à `git status`, `git add` et `git commit` » de l'addendum du 2026-11-11 : un relevé
+  réel a montré que des options de ces commandes lisent un fichier hors du worktree et en renvoient
+  le contenu au modèle (le fournisseur du modèle le recevrait).
+- **Nexus fait le commit** à la fin d'un run réussi (ligne `result` en succès, code 0, isolement
+  vérifié, processus réellement terminé), depuis le processus serveur : `git add -A` puis
+  `git commit` avec un message fixe (référence du run et alias du modèle), l'identité git du dépôt
+  figée avant le lancement, configuration système et globale coupées, hooks, `fsmonitor`, signature
+  et maintenance automatique coupés, `GIT_DIR` imposé. Le module (`run_commit.py`) ne connaît aucun
+  exécutant : Codex pourra l'appeler plus tard (spec, §14, hors de ce lot).
+- Le modèle reste choisi à chaque run (décision du 2026-11-11, inchangée par ce lot).
+- D6 inchangé : la preuve est un commit qui descend du commit de départ, relu depuis le dépôt ; aucun
+  commit après une annulation, une durée maximale, un échec, une violation d'isolement ou un
+  redémarrage.
+- Le bac à sable `unelevated` ne concerne que Codex : cet adaptateur n'a aucun réglage de bac à sable
+  (pas de Bash), et le choix pour Codex reste hors de ce lot (spec, §14.4).
+
+**Choix du cadrage, pris par l'agent et en attente de la confirmation de Loïc** (chacun se change
+sans migration) :
+
+- **Attribution** : auteur et committer = l'identité git du dépôt ; trailers `Nexus-Run`,
+  `Nexus-Executor`, `Nexus-Model` ; **pas** de `Co-Authored-By: Claude …`.
+- **Un refus de Nexus (dépôt git imbriqué, lien ou point de jonction ou lien physique, fichier trop
+  gros, pilote de filtre) termine le run en `failed`**, avec sa cause en mots fixes ; les fichiers
+  restent dans le worktree, rien n'est commité. **Aucun changement** termine le run en `review`.
+- **Plafond de 20 Mio** par fichier ajouté ou modifié ; aucun plafond total (le budget de 90 s du
+  commit le borne).
+- **Dépôts refusés** : pilote de filtre dans la configuration locale du dépôt (Git LFS déclaré
+  localement), refusé au lancement ; dépôt qui extrait de vrais liens symboliques
+  (`core.symlinks=true`), chaque commit y serait refusé.
+- **Identité git exigée par dépôt** (locale ou globale), lue avant le lancement ; sans elle, le run
+  est `failed` « lancement impossible » et rien n'est créé.
+
 ---
 
 ## Décisions ouvertes

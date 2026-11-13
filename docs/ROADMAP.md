@@ -72,7 +72,7 @@ Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un 
 - Suivi des runs (événements traduits, preuves rapatriées) ;
 - Historique par carte : événements + runs + preuves.
 
-**Avancement :** adaptateur `hermes` (lot G, #179) : Helios seul, via le tableau `nexus` ; cadrage dans `docs/superpowers/specs/2026-11-11-adaptateur-hermes-design.md` ; vrai run de Loïc à faire.
+**Avancement :** adaptateur `hermes` (lot G, #179) : Helios seul, via le tableau `nexus` ; cadrage dans `docs/superpowers/specs/2026-11-11-adaptateur-hermes-design.md` ; vrai run de Loïc à faire. Adaptateur `claude-code` (lot H, #183) : modèle choisi à chaque run (H1, #184), sans Bash, commit fait par Nexus et neutre envers l'exécutant (H2a, #188), adaptateur et faux exécutant des tests (H2b, #185) ; cadrage dans `docs/superpowers/specs/2026-11-11-adaptateur-claude-code-design.md` ; premier run réel par Nexus à faire (spec, §12.1).
 
 **Critère de sortie :** une tâche confiée à Helios (via Hermes) et une à Codex racontent leur histoire complète dans Nexus, vérifiable de bout en bout, sans copie manuelle.
 

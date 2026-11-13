@@ -55,6 +55,9 @@ export function codexFixture(): { bin: string; repo: string } {
     const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')))
     const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, env, stdio: 'ignore' })
     git('init', '-q')
+    // Une identité propre au dépôt : Nexus fait lui-même le commit d'un run Claude Code et l'exige.
+    git('config', 'user.name', 'e2e')
+    git('config', 'user.email', 'e2e@example.invalid')
     writeFileSync(join(repo, 'LISEZMOI.txt'), 'dépôt de test\n')
     git('add', 'LISEZMOI.txt')
     git('-c', 'user.name=e2e', '-c', 'user.email=e2e@example.invalid', 'commit', '--no-gpg-sign', '-q', '-m', 'départ')
@@ -65,4 +68,23 @@ export function codexFixture(): { bin: string; repo: string } {
     }
   }
   return { bin, repo }
+}
+
+/**
+ * Un faux `claude` (e2e/fake-claude.mjs) dans la base jetable : le serveur de test le déclare
+ * (NEXUS_CLAUDE_BIN) et travaille dans le même dépôt jetable que le faux Codex. Idempotent.
+ */
+export function claudeFixture(): { bin: string } {
+  const root = join(dataDirPath(), 'claude-e2e')
+  const script = resolve('e2e/fake-claude.mjs')
+  const bin = join(root, process.platform === 'win32' ? 'claude-e2e.cmd' : 'claude-e2e')
+  if (!existsSync(bin)) {
+    mkdirSync(root, { recursive: true })
+    if (process.platform === 'win32') {
+      writeFileSync(bin, `@"${process.execPath}" "${script}" %*\r\n`)
+    } else {
+      writeFileSync(bin, `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`, { mode: 0o755 })
+    }
+  }
+  return { bin }
 }

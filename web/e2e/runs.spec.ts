@@ -27,6 +27,8 @@ function runRow(pane: ReturnType<Page['getByRole']>) {
 async function hand(page: Page, pane: ReturnType<Page['getByRole']>, title: string, brief: string) {
   await pane.getByRole('button', { name: 'Confier à…' }).click()
   const dialog = page.getByRole('dialog', { name: `Confier « ${title} »` })
+  // Claude Code est aussi déclaré sur le serveur de test (runs-claude.spec.ts) et passe avant Codex.
+  await dialog.getByLabel(/^Exécutant/).selectOption('codex')
   await expect(dialog.getByText(/Lance un LLM/)).toBeVisible()
   await dialog.getByLabel(/^Brief/).fill(brief)
   await dialog.getByRole('button', { name: 'Lancer l’agent' }).click()
