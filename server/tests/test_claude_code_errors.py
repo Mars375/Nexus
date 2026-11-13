@@ -122,6 +122,16 @@ def test_a_breach_kills_the_tree_at_once_without_waiting_for_the_maximum(rig, no
     assert [e.kind for e in r.watch().events].count("claimed") == 0
 
 
+@pytest.mark.parametrize("lines", [[INIT_MCP], [ASSISTANT_TEXT]])
+def test_a_doubt_on_the_isolation_kills_the_tree_without_waiting_for_a_tick(rig, lines):
+    """§5.3 step 1: at once, from the reader, not on the next turn of the supervisor."""
+    r = rig(lines=lines, hang=True)
+    r.adapter.dispatch(claude_info())
+    job = r.adapter._job("nx-run-1")
+    wait_until(lambda: job.process.poll() is not None, "the tree killed with no watch", 10.0)
+    assert r.watch().events[-1].kind == "failed"
+
+
 def test_nothing_read_after_a_breach_is_recorded(rig):
     r = rig(lines=[INIT_MCP, ASSISTANT_TEXT, INIT_OK, ASSISTANT_TEXT], hang=True)
     r.adapter.dispatch(claude_info())

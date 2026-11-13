@@ -2,8 +2,9 @@
 
 A reader thread turns each stream-json line into facts as it comes; the raw output is never kept.
 The isolation of the session is judged on `system/init`: a breach, or an agent that speaks before
-the isolation was proved, is only noted here (and nothing more is recorded); the adapter kills the
-tree on its next turn (spec 2026-11-11, §5.3).
+the isolation was proved, stops the recording and kills the tree at once, from the reader thread
+(spec 2026-11-11, §5.3 step 1); the adapter writes the closing event on its next turn, and stops the
+tree again there if this kill could not be confirmed.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from nexus.adapters import codex_git, run_commit
+from nexus.adapters import codex_git, codex_process, run_commit
 from nexus.adapters.base import RunEvent
 from nexus.adapters.claude_code_translate import Fact, translate_line
 from nexus.clock import now
@@ -72,17 +73,12 @@ class Job:
         return self.breach is not None or self.unverified
 
     def take(self, fact: Fact) -> None:
+        if self._doubt(fact):
+            # At once, not on the next turn of the supervisor: the session may still be acting.
+            codex_process.kill_tree(self.process)
+            return
         with self.lock:
             if self.stopped_reading():
-                return
-            if fact.kind == "breach":
-                self.breach = fact.body
-                return
-            if fact.kind == "isolation_unknown":
-                self.unverified = True
-                return
-            if fact.kind in ("working", "progress") and not self.isolated:
-                self.unverified = True  # the agent works before its isolation was proved
                 return
             if fact.kind == "finished":
                 self.result = Result(True)
@@ -100,6 +96,19 @@ class Job:
             else:
                 self.progress += 1
         self.add(fact.kind, fact.subject, fact.body, fact.payload)
+
+    def _doubt(self, fact: Fact) -> bool:
+        """Note a first doubt on the isolation; True when this fact raised it."""
+        with self.lock:
+            if self.stopped_reading():
+                return False
+            if fact.kind == "breach":
+                self.breach = fact.body
+            elif fact.kind == "isolation_unknown" or (
+                fact.kind in ("working", "progress") and not self.isolated
+            ):
+                self.unverified = True  # unreadable init, or the agent works before the proof
+            return self.stopped_reading()
 
     def read(self) -> None:
         """Reader thread: translate each line as it comes, keep only the translation."""
