@@ -319,8 +319,8 @@ Implémentation en quatre PR à venir (§9 du cadrage) ; rien de ceci n'est enco
 Codex, sous Windows seulement ; sa propre configuration (`[windows] sandbox = "elevated"`) ne change
 pas.
 
-**Choisi par l'agent sous la délégation de Loïc du 2026-11-13** (« je te laisse gérer ce que tu
-préfères niveau option », à propos de l'option de commit) — ce n'est pas Loïc qui a choisi entre les
+**Choisi par l'agent sous la délégation de Loïc du 2026-11-13** (« Je te laisse gérer en vrai ce
+que tu préfères niveau option », en réponse aux options laissées ouvertes, dont celle du commit) — ce n'est pas Loïc qui a choisi entre les
 options ; il peut l'infirmer :
 
 - **Nexus commite pour Codex** à la fin d'un tour réussi, par `run_commit` (comme pour

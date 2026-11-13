@@ -4,7 +4,7 @@
 **Issue :** #186 (refs #183, Phase 2) ; précédent : `docs/superpowers/specs/2026-11-11-adaptateur-claude-code-design.md` (lot H2, §4, §5.4 et §14), module commun `run_commit` livré par #188.
 **Décisions d'origine :**
 - **Décidé par Loïc le 2026-11-12** (commentaire de #186) : Nexus passe `windows.sandbox=unelevated` à **ses** runs Codex seulement ; la configuration de Loïc (`~/.codex/config.toml`, `[windows] sandbox = "elevated"`) ne change pas.
-- **Choisi par l'agent sous la délégation de Loïc du 2026-11-13** (« je te laisse gérer ce que tu préfères niveau option ») : Nexus commite pour Codex à la fin du run par `run_commit`, comme pour `claude-code` ; **pas** de clone par run. Ce n'est pas un choix de Loïc entre deux options : il a délégué le choix, l'agent l'a fait et l'écrit comme tel (`DECISIONS.md`, addendum du 2026-11-13).
+- **Choisi par l'agent sous la délégation de Loïc du 2026-11-13** (« Je te laisse gérer en vrai ce que tu préfères niveau option », en réponse aux options laissées ouvertes, dont celle du commit) : Nexus commite pour Codex à la fin du run par `run_commit`, comme pour `claude-code` ; **pas** de clone par run. Ce n'est pas un choix de Loïc entre deux options : il a délégué le choix, l'agent l'a fait et l'écrit comme tel (`DECISIONS.md`, addendum du 2026-11-13).
 **Entrées :** ADR-023 (D1–D8 et addenda), INTEGRATIONS §A.2 (adaptateurs Codex et Claude Code), SECURITY §3, `server/src/nexus/adapters/codex.py`, `codex_git.py`, `codex_process.py`, `codex_translate.py`, `run_commit.py`, `run_commit_scan.py`, `claude_code*.py`, `runs/supervisor.py`, `tasks/timeline_api.py`, `web/src/runs/Timeline.tsx`, les tests `server/tests/test_codex_*.py` et `web/e2e/fake-codex.mjs`.
 **`CONTEXT.md` :** absent à la racine du dépôt ; les décisions viennent de `DECISIONS.md`.
 
@@ -67,12 +67,14 @@ Elle ne contient ni référence de run, ni chemin. `CodexAdapter._feed` écrit `
 
 ### 1.3 Séquence de fin (`CodexAdapter._close_ended`)
 
-Dans l'ordre, après la fin réelle du processus principal (fil de lecture fini, `poll()` non nul) :
+**Détection de la fin.** La fin se juge sur `poll()` non nul du processus principal **seulement**, plus sur « fil de lecture fini » : un processus de fond lancé par l'agent hérite du tube de sortie, le fil de lecture attendrait sa fin (EOF) et le run resterait ouvert jusqu'à la durée maximale. Dès que `poll()` est non nul, `_settle` fait l'arrêt confirmé de l'arbre (§4), ce qui ferme les derniers écrivains du tube, puis `job.reader.join(5.0)` ; ce que le tube contenait déjà reste lu. Fil de lecture encore vivant après ce délai → `RuntimeError`, le run reste ouvert et le tour suivant réessaie (aucune décision sur une sortie lue à moitié). Même changement dans `ClaudeCodeAdapter._settle` ; les deux arrivent avec la PR B (test B11).
+
+Ensuite, dans l'ordre :
 
 1. **Violation d'isolement lue pendant le run** (§5.4, `mcp_tool_call`) : l'arbre a déjà été tué par le fil de lecture ; `_settle` refait l'arrêt confirmé, puis `failed` « isolation non respectée : <mots fixes> ». **Aucun commit.**
 2. **Durée maximale** : arbre arrêté, `failed` « Durée maximale dépassée » (inchangé). **Aucun commit.**
 3. `turn.failed`, code non nul, ou pas de `turn.completed` : `failed` avec la cause actuelle (`failure or last_error or …`, inchangé, #176). **Aucun commit.** L'arbre est arrêté d'abord, comme à l'étape 4 : **toute** fin d'un run lancé avec `contain=True` passe par un `kill_tree` confirmé avant l'événement final (rien ne survit au run, et le handle du job n'est fermé qu'à ce moment) ; arrêt non confirmé → le run reste ouvert.
-4. **Arrêt de tout l'arbre** (§4) : `codex_process.kill_tree(job.process)`, même après une sortie propre (un serveur de développement ou un `start /b` lancé par l'agent peut survivre au processus principal). Arrêt non confirmé → `RuntimeError`, le run reste ouvert et le superviseur réessaie au tour suivant (comportement existant de `_settle`).
+4. **Arrêt de tout l'arbre** (§4), déjà fait par la détection de la fin ci-dessus et jamais sauté : `codex_process.kill_tree(job.process)`, même après une sortie propre (un serveur de développement ou un `start /b` lancé par l'agent peut survivre au processus principal). Arrêt non confirmé → `RuntimeError`, le run reste ouvert et le superviseur réessaie au tour suivant (comportement existant de `_settle`).
 5. **Gardes de la précondition 1** (§2.3), sauf si `job.commit_attempted` est vrai (un passage précédent de Nexus, voir 6) :
    - la branche `refs/heads/nexus/nx-run-<n>` pointe toujours sur `tree.start` (lu par `codex_git.git` depuis le dépôt) ; sinon `failed` « isolation non respectée : la branche du run a changé pendant le run » ;
    - le fichier `.git` du worktree a exactement les octets lus juste après `create_worktree` ; absent, changé ou devenu un dossier → `failed` « isolation non respectée : fichier .git du worktree modifié ».
@@ -84,7 +86,9 @@ Dans l'ordre, après la fin réelle du processus principal (fil de lecture fini,
 
 **Si l'agent a touché à l'état git sans pouvoir l'écrire** (`git add`, `git commit`, `git stash` qui échouent sur `index.lock`) : rien à faire ; la commande échoue dans son bac à sable, Codex le voit dans sa sortie, le tour continue. Si l'agent a écrit dans le worktree un dossier qui ressemble à un dépôt (`sub/.git/`, `sub/.GIT`, fichier `sub/.git`) ou un lien, `commit_run` le refuse (étape 3 de `run_commit`) → `failed` « commit refusé par Nexus : … ».
 
-**Redémarrage et annulation** : inchangés. Une annulation demandée avant le tour gagne (`_step` traite l'annulation avant le suivi, sous le même verrou) : arbre arrêté, `cancelled`, aucun commit. Un run en cours au redémarrage passe `unknown` et n'est jamais commité ensuite (`recover` rend `None`).
+**Annulation après le commit de Nexus.** Fenêtre étroite : `commit_run` a réussi, puis l'événement final n'a pas pu être ajouté (exception) ; le run est encore ouvert, la branche porte le commit de Nexus, et une annulation arrive. Règle : **le commit gagne**. `CodexAdapter.cancel`, quand `job.commit_attempted` est vrai et que le job n'est pas clos, arrête l'arbre puis appelle `_settle` (l'étape 1 de `commit_run` rend le même sha) ; si l'issue est `Committed`, il lève `RunAlreadyCommitted` (nouvelle exception de `nexus.adapters.base`). Le superviseur (`_cancel`) l'attrape à part : il fait un `_watch` au lieu de `_close_cancelled`, ce qui publie `done` avec `commit:<12>` ; le run finit `done`, pas `cancelled`. Toute autre issue (rien à commiter, refus, échec de git) laisse la branche au départ : l'annulation se poursuit, `cancelled`. Un run `cancelled` n'a donc jamais de commit de Nexus sur sa branche. `ClaudeCodeAdapter.cancel` suit la même règle, dans la PR D (même mécanisme du superviseur ; test D14).
+
+**Redémarrage et annulation avant le commit** : inchangés. Une annulation demandée avant le tour gagne (`_step` traite l'annulation avant le suivi, sous le même verrou) : arbre arrêté, `cancelled`, aucun commit. Un run en cours au redémarrage passe `unknown` et n'est jamais commité ensuite (`recover` rend `None`).
 
 ### 1.4 Ce qui est contrôlé avant le lancement (ordre de `dispatch`)
 
@@ -125,8 +129,8 @@ Comparaison sur les chemins résolus, sans la casse sous Windows (`os.path.normc
 
 Pour les tests et l'e2e, dont les dossiers sont sous le dossier temporaire du système, l'environnement de l'enfant reçoit `TEMP`, `TMP` et `TMPDIR` pointés vers un dossier à part, voisin et non parent de `tmp_path` : le contrôle compare à **ces** valeurs.
 - **pytest** : la plupart des tests construisent `CodexAdapter(...)` sans `environ` (`rig` de `test_codex_adapter.py` et `test_codex_security.py`, `adapter_for` de `test_codex_review2.py` et `test_codex_review3.py`, `test_codex_errors.py`, et `register_configured` dans `test_codex_supervisor.py`) : l'enfant lit alors `os.environ`. Une fixture **autouse** de `conftest.py` (`child_temp_outside_tmp_path`) fait `monkeypatch.setenv` de `TEMP`, `TMP` et `TMPDIR` vers `tmp_path_factory.mktemp("child-temp")` ; `tempfile` a déjà mis en cache son dossier, pytest n'en est pas gêné. Aucun de ces tests n'est réécrit pour cela.
-- **e2e** : `global-setup.ts` donne au serveur de test `TEMP`, `TMP` et `TMPDIR` dans `<dataDir>/tmp`.
-- **CI Linux** : sous POSIX, `tmp_path` et le dossier de l'e2e (`os.tmpdir()`) sont sous `/tmp` par défaut, que le contrôle refuse. Les deux suivent `TMPDIR` : la PR C pose `TMPDIR: ${{ runner.temp }}` (hors de `/tmp`) dans les tâches de `.github/workflows/` qui lancent pytest et Playwright. Aucun réglage réservé aux tests dans le code. Un test dédié vérifie le refus d'un dépôt sous `/tmp` (POSIX seulement).
+- **e2e** : `playwright.config.ts` (`webServer[0].env`) donne au serveur de test `TEMP`, `TMP` et `TMPDIR` dans un dossier **voisin** de `dataDir` (`<dataDir>-tmp`, jamais dedans : le `CODEX_HOME` de Nexus et le dépôt de l'e2e sont sous `dataDir`). Pas `global-setup.ts` : Playwright démarre `webServer` avant `globalSetup`, une variable posée là n'atteint pas le serveur. Sous POSIX, `e2e-env.ts` crée `dataDir` hors de `/tmp` (`RUNNER_TEMP` en CI, sinon `~/.cache/nexus-e2e-…`) : `/tmp` est refusé quel que soit `TMPDIR`.
+- **CI Linux** : sous POSIX, `tmp_path` et le dossier de l'e2e (`os.tmpdir()`) sont sous `/tmp` par défaut, que le contrôle refuse. pytest suit `TMPDIR` : la PR C pose `TMPDIR: ${{ runner.temp }}` (hors de `/tmp`) dans la tâche de `.github/workflows/` qui lance pytest ; l'e2e est réglé par `e2e-env.ts` (ci-dessus). En local sous Linux ou macOS, lancer pytest avec un `TMPDIR` hors de `/tmp` (à écrire dans AGENTS.md, « Development ») : sinon les tests Codex échouent sur un refus d'emplacement, dont le message le dit. Aucun réglage réservé aux tests dans le code. Un test dédié vérifie le refus d'un dépôt sous `/tmp` (POSIX seulement).
 
 ### 2.3 Ce que Nexus contrôle à la fin
 
@@ -189,7 +193,7 @@ Le handle du job est gardé par l'objet `Popen` (attribut `nexus_job` posé par 
 
 ### 4.3 POSIX
 
-`start_new_session=True` existe déjà (le processus est chef de session et de groupe). `kill_tree` : `os.killpg(pgid, SIGKILL)`, `process.wait(timeout)`, puis attente bornée que `os.killpg(pgid, 0)` lève `ProcessLookupError` (le groupe est vide). **Limite documentée :** un descendant qui appelle `setsid()` ou `setpgid()` quitte le groupe et n'est ni tué ni vu. Nexus tourne sous Windows (Helios) ; une enveloppe par cgroup sous Linux est hors de ce lot.
+`start_new_session=True` existe déjà (le processus est chef de session et de groupe). `kill_tree` : `os.killpg(pgid, SIGKILL)`, `process.wait(timeout)`, puis attente bornée que `os.killpg(pgid, 0)` lève `ProcessLookupError` (le groupe est vide). **Limite :** un descendant qui appelle `setsid()` ou `setpgid()` quitte le groupe et n'est ni tué ni vu ; un groupe vide ne prouve donc pas la précondition 2 face à un agent qui a un shell. Conséquence, **échec fermé** : hors Windows, l'exécutant `codex` n'est **pas enregistré** (`register_configured`), sauf si l'opérateur pose `NEXUS_RUN_WEAK_CONTAINMENT=1` (réglage `Settings.run_weak_containment`, faux par défaut, décrit dans INTEGRATIONS §A.2 comme « arrêt des processus non garanti : jamais pour un vrai run »). Le serveur l'écrit au démarrage (`log.warning`) quand il est posé. La CI Linux le pose pour l'e2e (faux Codex) ; les tests pytest construisent l'adaptateur directement et n'en ont pas besoin, sauf `test_codex_supervisor.py`, qui le pose sous POSIX. `claude-code` n'a pas de shell (cinq outils de fichiers) : il reste enregistré sous POSIX. Nexus tourne sous Windows (Helios) ; une enveloppe par cgroup sous Linux, qui lèverait cette limite, est hors de ce lot. Arrive avec la PR D (c'est le commit qui dépend de la précondition).
 
 ### 4.4 Interface
 
@@ -264,7 +268,7 @@ L'adaptateur publie `failed` avec le sujet « Codex a échoué » et la cause da
 ### 6.2 Changement
 
 - **Serveur** (`tasks/timeline_api.py`) : `EntryOut.cause: str | None = None`, rempli dans `entry_out` pour un événement **seulement si** `e.kind in ("failed", "blocked")`, `e.payload.get("cause")` est une chaîne non vide après `strip()`, et différente du sujet (évite le double affichage des échecs du superviseur). Coupée à 500 caractères (même borne que `text.cut`).
-- **Interface** (`timelineApi.ts`, `Timeline.tsx`) : `TimelineEntry.cause?: string | null` ; dans `EntryRow`, après le sujet : `<p className="whitespace-pre-wrap">Cause : {entry.cause}</p>`. Texte en français, aucune interprétation.
+- **Interface** (`timelineApi.ts`, `Timeline.tsx`) : `TimelineEntry.cause?: string | null` ; dans `EntryRow`, après le sujet : `{entry.cause && <p className="whitespace-pre-wrap">Cause : {entry.cause}</p>}`, et la condition du bloc devient `entry.subject || entry.cause || entry.body` (rien n'est affiché quand `cause` est absent ou `null`). Texte en français, aucune interprétation.
 
 ### 6.3 Exposition
 
@@ -287,7 +291,8 @@ L'adaptateur publie `failed` avec le sujet « Codex a échoué » et la cause da
 | `turn.failed`, code ≠ 0, pas de `turn.completed` | `failed` | « Codex a échoué », cause actuelle | — | aucun |
 | Durée maximale | `failed` | « Durée maximale dépassée » | — | aucun |
 | Contrôle avant lancement en échec (identité, pilote, emplacements, isolement, job) | `failed` | « lancement impossible » (superviseur) | — | rien de créé, ou worktree et branche retirés |
-| Annulation | `cancelled` | « run annulé » (superviseur) | — | aucun |
+| Annulation avant le commit de Nexus | `cancelled` | « run annulé » (superviseur) | — | aucun |
+| Annulation après un `Committed` dont l'événement final manquait (§1.3) | `done` | « Codex a terminé ; Nexus a commité » | `commit:<12>` | celui de Nexus |
 | Redémarrage pendant le run | `unknown` | « suivi perdu au redémarrage de Nexus » | — | jamais après coup |
 | Arrêt de l'arbre non confirmé | reste ouvert | aucun (nouvelle tentative au tour suivant ; l'exécutant reste occupé) | — | aucun |
 
@@ -299,9 +304,9 @@ Mêmes raisons que pour `claude-code` (§5.4 de son cadrage) : sans commit, pas 
 
 Règles : faux exécutables seulement (`GuardedPopen` refuse déjà le radical `codex`), aucun vrai LLM en CI ; faux secrets construits à l'exécution (`"ghp_" + "A" * 36`) ; les git des tests avec `env=codex_git.clean_env()` ; `MAX_FILE_BYTES` et `COMMIT_BUDGET` réduits par les attributs de l'adaptateur ; `TEMP`/`TMP`/`TMPDIR` de l'enfant pointés vers `tmp_path / "tmp"` (§2.2).
 
-**Faux Codex** (`server/tests/codex_support.py`, script `FAKE_SCRIPT`) : il garde `lines`, `commit`, `hang`, `exit`, et reçoit les actions de `claude_code_support.py` (`write`, `write_named`, `nested_repo`, `gitfile`, `junction`, `big_file`, `attributes`, `ignore_all`, `rewrite_dotgit`) plus : `detach` (lance un petit-enfant détaché avec battement, §4.6), `breakaway` (tente `CREATE_BREAKAWAY_FROM_JOB` et note le refus), `delete_dotgit`. Il répond aux sous-commandes de contrôle : `mcp list --json` → `[]` (ou le contenu de `scenario.mcp_list`), `debug prompt-input` → `scenario.prompt_input` (par défaut un JSON sans bloc de skills), et note ces appels dans `calls.json`. **`commit` devient le scénario « l'agent a commité malgré tout »**, attendu en `failed`.
+**Faux Codex** (`server/tests/codex_support.py`, script `FAKE_SCRIPT`) : il garde `lines`, `commit`, `hang`, `exit`, et reçoit les actions de `claude_code_support.py` (`write`, `write_named`, `nested_repo`, `gitfile`, `junction`, `big_file`, `attributes`, `ignore_all`, `rewrite_dotgit`) plus : `detach` (lance un petit-enfant détaché avec battement, §4.6), `breakaway` (tente `CREATE_BREAKAWAY_FROM_JOB` et note le refus), `delete_dotgit`. Il répond aux sous-commandes de contrôle : `mcp list --json` → `[]` (ou le contenu de `scenario.mcp_list`), `debug prompt-input` → `scenario.prompt_input` (par défaut un JSON sans bloc de skills), et note ces appels dans `calls.json`. **`commit` devient le scénario « l'agent a commité malgré tout »**, attendu en `failed`. `make_repo` écrit une identité **dans le dépôt** (`git config user.name`, `git config user.email`, comme `Rig` de `claude_code_support.py`) : aujourd'hui il ne la passe qu'en `-c` à ses propres commandes, et `resolve_identity` (§1.4, 2) ferait échouer tous les tests Codex sur une machine sans identité globale (Helios) ; PR D.
 
-### PR A — cause dans la chronologie (`test_timeline_api.py`, `Timeline.test.tsx`)
+### PR A — cause dans la chronologie (`test_task_timeline.py`, fichier existant ; `Timeline.test.tsx`)
 - A1. `failed` publié par un adaptateur avec `payload.cause` → `cause` rendu, masqué (une cause contenant un faux secret arrive `[REDACTED]`).
 - A2. Échec du superviseur (`subject == cause`) → `cause` absent.
 - A3. `payload.cause` non chaîne, vide ou blanc → absent ; `blocked` avec cause → rendu ; `progress`, `done`, entrées `history` et jalons de run → absent.
@@ -318,6 +323,7 @@ Règles : faux exécutables seulement (`GuardedPopen` refuse déjà le radical `
 - B7. `ActiveProcesses` qui ne tombe pas à 0 dans le délai (fonction de requête remplacée) → `False`, le run reste ouvert (nouveau test, à côté de `test_a_kill_that_times_out_is_reported_as_unconfirmed`, qui ne change pas).
 - B8. `contain=False` : argv, drapeaux de création et comportement identiques à avant (non-régression pour Hermes).
 - B9. POSIX : petit-enfant dans le même groupe arrêté ; `kill_tree` attend le groupe vide ; groupe qui ne se vide pas dans le délai → `False`.
+- B11. **Tube hérité** : le faux lance un petit-enfant détaché qui garde la sortie standard ouverte, puis sort avec le code 0 → le run est clos au tour suivant (arbre arrêté, fil de lecture joint), sans attendre la durée maximale ; fil de lecture qui ne finit pas (remplacé) → run ouvert. Pour Codex et pour `claude-code`.
 - B10. `claude-code` : `dispatch` passe `contain=True` (test d'argument) ; `test_claude_code_cancel.py` reste vert.
 
 ### PR C — isolement et `unelevated` (`test_codex_cli.py`, `test_codex_isolation.py`)
@@ -343,6 +349,7 @@ Règles : faux exécutables seulement (`GuardedPopen` refuse déjà le radical `
 - D8. `ignore_all` + `write` → `review`.
 - D9. `turn.failed`, code 1 après `turn.completed`, pas de `turn.completed`, durée maximale, chacun avec `write` → `failed`, aucun commit, le fichier reste dans le worktree.
 - D10. Annulation pendant `hang` après `write` → `cancelled`, aucun commit ; annulation après la fermeture `done` → reste `done` (superviseur réel).
+- D14. **Annulation après le commit** : `commit_run` réussit, l'ajout de l'événement final échoue (exception injectée), puis annulation → `done` `commit:<12>`, un seul commit, aucun événement « run annulé » ; même scénario avec `NothingToCommit` → `cancelled`, branche au départ ; même test pour `claude-code`.
 - D11. Identité absente / pilote de filtre dans la configuration du dépôt → « lancement impossible », ni `Popen`, ni branche, ni worktree.
 - D12. Consigne : constante testée telle quelle, « 20 Mo » égal à `MAX_FILE_BYTES` en Mio.
 - D13. `GuardedPopen` refuse toujours le radical `codex` ; `run_commit` n'importe toujours aucun module d'exécutant (test 66 de #188 inchangé).
@@ -351,7 +358,7 @@ Règles : faux exécutables seulement (`GuardedPopen` refuse déjà le radical `
 
 ### Bout en bout (Playwright)
 - PR A : `web/e2e/fake-codex.mjs` gagne un brief « ÉCHOUER » qui écrit `turn.failed` avec un message ; `runs.spec.ts` vérifie « Cause : … » dans la chronologie.
-- PR C : `fake-codex.mjs` répond à `mcp list --json` (`[]`) et à `debug prompt-input` (JSON sans skills) ; `global-setup.ts` donne au serveur de test `TEMP`/`TMP`/`TMPDIR` dans `<dataDir>/tmp` (§2.2).
+- PR C : `fake-codex.mjs` répond à `mcp list --json` (`[]`) et à `debug prompt-input` (JSON sans skills) ; `playwright.config.ts` donne au serveur de test `TEMP`/`TMP`/`TMPDIR` à côté de `dataDir`, et `e2e-env.ts` sort `dataDir` de `/tmp` sous POSIX (§2.2).
 - PR D : `fake-codex.mjs` **écrit un fichier** au lieu de commiter ; les attentes « Preuve : commit:<12> » de `runs.spec.ts` restent vraies (le commit est celui de Nexus).
 
 ### Tailles (seuils 400 / 600)
@@ -379,9 +386,9 @@ Chacune part de `master` à jour **après** la fusion de la précédente (jamais
 | Ordre | Branche | Contenu | Critères d'acceptation |
 |---|---|---|---|
 | A | `fix/186-cause-chronologie` | §6 ; tests A1–A5 ; e2e « ÉCHOUER » | la chronologie affiche la cause d'un `failed` d'adaptateur, une seule fois pour un échec du superviseur ; `pnpm test`, `pnpm lint`, build web et Playwright verts |
-| B | `feat/186-job-object` | §4 ; `contain=True` pour Codex et `claude-code` ; tests B1–B10 ; INTEGRATIONS §A.2 (« Garde-fous » de Codex et de Claude Code), SECURITY §3 | B1–B7 verts **dans le hook local Windows** (le corps de la PR le dit : la CI Linux les saute) ; B8–B10 verts partout ; aucun test existant modifié |
+| B | `feat/186-job-object` | §4 ; `contain=True` pour Codex et `claude-code` ; fin jugée sur `poll()` puis arrêt confirmé (§1.3) ; tests B1–B11 ; INTEGRATIONS §A.2 (« Garde-fous » de Codex et de Claude Code), SECURITY §3 | B1–B7 verts **dans le hook local Windows** (le corps de la PR le dit : la CI Linux les saute) ; B8–B10 verts partout ; aucun test existant modifié |
 | C | `feat/186-codex-isolation` | §3, §5, §2.2, §2.4 ; tests C1–C10 ; fixture autouse `child_temp_outside_tmp_path` ; `TMPDIR` de la CI hors de `/tmp` ; e2e (faux qui répond aux contrôles, `TEMP` du serveur de test) ; INTEGRATIONS §A.2 (commande, `CODEX_HOME` de Nexus, connexion à faire par Loïc, dépôts sous `%TEMP%` ou `/tmp` refusés), SECURITY §3 | argv et environnement égaux au cadrage ; tout contrôle en échec → « lancement impossible » sans modèle ; seul test existant dont le texte change : `test_the_child_environment_is_an_allow_list` (les autres tests Codex passent sans changement grâce à la fixture, notée dans la PR) |
-| D | `feat/186-codex-commit-par-nexus` | §1, §2.3, §7 ; tests D1–D13 ; tests existants listés au §8 ; e2e (faux qui écrit) ; INTEGRATIONS §A.2, SECURITY §3, ROADMAP | un run réussi finit `done` sur le commit de Nexus ; un commit de l'agent finit `failed` ; aucun commit sans arrêt confirmé de l'arbre |
+| D | `feat/186-codex-commit-par-nexus` | §1, §2.3, §4.3 (exécutant non enregistré hors Windows sans réglage), §7 ; `RunAlreadyCommitted` dans le superviseur ; tests D1–D14 ; tests existants listés au §8 ; e2e (faux qui écrit) ; INTEGRATIONS §A.2, SECURITY §3, ROADMAP | un run réussi finit `done` sur le commit de Nexus ; un commit de l'agent finit `failed` ; aucun commit sans arrêt confirmé de l'arbre |
 | E | `docs/186-runs-reels-codex` | relevé des runs réels (§10) dans INTEGRATIONS §A.2, comme #190 | scénarios du §10 faits, conditions d'arrêt respectées |
 
 C ne dépend pas de B ; D dépend de B (arrêt confirmé) et de C (argv et environnement du run) : l'ordre A, B, C, D le garantit. A est indépendante et passe d'abord, pour que les échecs des runs réels soient lisibles.
@@ -443,7 +450,7 @@ Noter dans la PR E et dans INTEGRATIONS §A.2 (« Constaté aux premiers runs r�
 
 ### Limites connues, assumées
 - Sous `workspace-write`, l'agent **lit** tout le disque (profil de permissions vu dans `prompt-input` : lecture de la racine) : fichiers de `~/.codex`, `~/.agents/skills`, clés. C'était déjà le cas ; ce lot ne le change pas.
-- POSIX : un descendant qui quitte son groupe échappe à l'arrêt (§4.3).
+- POSIX : un descendant qui quitte son groupe échappe à l'arrêt ; l'exécutant `codex` n'y est donc pas enregistré sans `NEXUS_RUN_WEAK_CONTAINMENT=1` (§4.3).
 - Un dépôt sous `%TEMP%` n'est pas utilisable avec Codex (§2.2).
 
 ---
