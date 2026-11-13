@@ -20,6 +20,7 @@ from claude_code_support import (
     Rig,
     claude_info,
     init,
+    wait_until,
     write,
 )
 
@@ -180,7 +181,8 @@ def test_a_stop_that_is_not_confirmed_raises_and_leaves_the_run_open(rig, monkey
     r.adapter.dispatch(claude_info())
     real = codex_process.kill_tree
     monkeypatch.setattr(codex_process, "kill_tree", lambda *a, **k: False)
-    time.sleep(0.5)  # the reader has read the init line
+    job = r.adapter._job("nx-run-1")
+    wait_until(lambda: job.breach is not None, "the reader noted the breach")
 
     with pytest.raises(RuntimeError, match="non confirmé"):
         r.watch()

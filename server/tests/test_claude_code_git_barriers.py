@@ -216,7 +216,7 @@ def test_a_failing_git_fails_the_run_without_copying_its_output(rig, tmp_path):
 
 def test_an_exhausted_budget_says_so_and_never_raises(rig):
     r = rig(lines=OK_LINES, actions=[write()])
-    r.adapter.commit_budget = 0.001
+    r.adapter.commit_budget = 0.0  # spent before the first call: no race with a fast git
     r.run()
     last = r.last()
     assert last.kind == "failed"

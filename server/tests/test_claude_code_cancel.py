@@ -2,7 +2,7 @@
 and 65). A cancel or a restart never leaves a commit of Nexus behind."""
 
 import pytest
-from claude_code_support import OK_LINES, Rig, claude_info, settings_for, write
+from claude_code_support import OK_LINES, Rig, claude_info, settings_for, wait_until, write
 from codex_support import git
 from conftest import ActorClient, tailscale_json
 from runs_support import code_of, dispatch, make_task, tick
@@ -37,6 +37,7 @@ def test_cancel_kills_the_tree_and_commits_nothing(rig, commits):
     r.adapter.keep_finished = 0
     r.adapter.dispatch(claude_info())
     job = r.adapter._job("nx-run-1")
+    wait_until((r.worktree / "a.txt").exists, "the fake wrote a.txt")
 
     r.adapter.cancel(claude_info(external_ref="nexus/nx-run-1"))
 

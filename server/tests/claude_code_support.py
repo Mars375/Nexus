@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 from codex_support import git, make_repo
@@ -198,3 +199,12 @@ def settings_for(r: Rig, **extra) -> Settings:
     # `codex_bin` points nowhere: Codex would otherwise look itself up on the PATH.
     return Settings(data_dir=r.data, claude_bin=str(r.bin), run_workdirs=(r.repo,),
                     codex_bin=str(r.dir / "no-codex"), **extra)
+
+
+def wait_until(condition, what: str, timeout: float = 20.0) -> None:
+    """A bounded wait for a state the fake reaches on its own; fails clearly at the deadline."""
+    deadline = time.monotonic() + timeout
+    while not condition():
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"never reached: {what}")
+        time.sleep(0.02)
