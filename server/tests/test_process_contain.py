@@ -274,3 +274,47 @@ def test_an_empty_group_of_a_reaped_leader_is_never_signalled(monkeypatch):
 
     assert codex_process._stop_group(Reaped(), 4242, 1.0) is True
     assert sent == [0]  # only the probe: the id may belong to another group by now
+
+
+class Running:
+    """A group leader still running, then reaped by the stop."""
+
+    def __init__(self):
+        self.code = None
+
+    def poll(self):
+        return self.code
+
+    def wait(self, timeout=None):
+        self.code = -9
+        return self.code
+
+
+def test_a_confirmed_group_stop_never_signals_again(monkeypatch):
+    sent, alive = [], [True]
+
+    def killpg(pgid, sig):
+        sent.append(sig)
+        if sig == 0 and not alive[0]:
+            raise ProcessLookupError
+        if sig != 0:
+            alive[0] = False
+
+    monkeypatch.setattr(codex_process.os, "killpg", killpg, raising=False)
+    monkeypatch.setattr(codex_process.signal, "SIGKILL", 9, raising=False)
+    process = Running()
+
+    assert codex_process._stop_group(process, 4242, 1.0) is True
+    first = list(sent)
+    alive[0] = True  # the id now leads another group
+    assert codex_process._stop_group(process, 4242, 1.0) is True
+    assert sent == first and 9 in first  # no signal, not even a probe, after the confirmation
+
+
+def test_an_unconfirmed_group_stop_may_be_tried_again(monkeypatch):
+    monkeypatch.setattr(codex_process.os, "killpg", lambda pgid, sig: None, raising=False)
+    monkeypatch.setattr(codex_process.signal, "SIGKILL", 9, raising=False)
+    process = Running()
+
+    assert codex_process._stop_group(process, 4242, 0.1) is False  # the group never empties
+    assert not getattr(process, "nexus_stopped", False)

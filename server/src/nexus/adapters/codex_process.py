@@ -114,10 +114,13 @@ def _group_alive(pgid: int) -> bool:
 
 def _stop_group(process: subprocess.Popen, pgid: int, timeout: float) -> bool:
     """POSIX: kill the group, reap its leader, then wait (bounded) until the group is empty."""
+    if getattr(process, "nexus_stopped", False):  # confirmed once: its id may be reused since
+        return True
     deadline = time.monotonic() + timeout
     if process.poll() is not None and not _group_alive(pgid):
         # Leader reaped and group empty: its id may already belong to another group, so no
         # signal is sent (a pid is not reused while a group of that id still exists).
+        process.nexus_stopped = True  # type: ignore[attr-defined]
         return True
     try:
         os.killpg(pgid, signal.SIGKILL)
@@ -133,4 +136,5 @@ def _stop_group(process: subprocess.Popen, pgid: int, timeout: float) -> bool:
         if time.monotonic() >= deadline:
             return False
         time.sleep(GROUP_POLL)
+    process.nexus_stopped = True  # type: ignore[attr-defined]
     return True
