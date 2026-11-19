@@ -99,7 +99,8 @@ class _Job:
                 self.progress += 1
                 self.add(fact.kind, fact.subject, fact.body)
         self.process.wait()
-        self.ended_at = time.monotonic()
+        if self.ended_at is None:  # `_settle` may have seen the exit first
+            self.ended_at = time.monotonic()
 
 
 class CodexAdapter:
@@ -139,8 +140,12 @@ class CodexAdapter:
         tree = codex_git.create_worktree(repo, self.worktrees, run.ref)
         argv = [self.binary, "exec", "--json", "--sandbox", "workspace-write",
                 "--cd", str(tree.path), "-"]  # "-": the prompt is read from stdin
-        process = codex_process.spawn(
-            argv, str(tree.path), codex_process.child_env(self.environ), contain=True)
+        try:
+            process = codex_process.spawn(
+                argv, str(tree.path), codex_process.child_env(self.environ), contain=True)
+        except BaseException:
+            self._undo_launch(tree)
+            raise
         job = _Job(tree, process)
         job.reader = threading.Thread(target=job.read, daemon=True)
         job.reader.start()
@@ -149,6 +154,16 @@ class CodexAdapter:
             self._jobs[run.ref] = job
             self._prune()
         return Dispatched(external_ref=tree.branch, native_status="started")
+
+    @staticmethod
+    def _undo_launch(tree: codex_git.Worktree) -> None:
+        """Remove the worktree and branch of a launch that failed; never hides the cause."""
+        for args in (("worktree", "remove", "--force", str(tree.path)),
+                     ("branch", "-D", tree.branch)):
+            try:
+                codex_git.git(tree.repo, *args)
+            except Exception as exc:
+                log.warning("nettoyage d'un lancement : %s", type(exc).__name__)
 
     @staticmethod
     def _feed(process: subprocess.Popen, brief: str) -> None:
@@ -205,6 +220,8 @@ class CodexAdapter:
             return
         try:
             ended = job.process.poll() is not None
+            if ended and job.ended_at is None:  # a pipe held open must not age the run
+                job.ended_at = time.monotonic()
             elapsed = (job.ended_at or time.monotonic()) - job.started
             over = elapsed >= self.max_seconds  # judged on when it ended, not when we looked
             if not ended and not over:

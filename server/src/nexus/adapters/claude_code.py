@@ -198,6 +198,8 @@ class ClaudeCodeAdapter:
                 self._fail(job, "Isolation de la session non respectée", cause)
                 return
             ended = job.process.poll() is not None
+            if ended and job.ended_at is None:  # a pipe held open must not age the run
+                job.ended_at = time.monotonic()
             elapsed = (job.ended_at or time.monotonic()) - job.started
             over = elapsed >= self.max_seconds  # judged on when it ended, not when we looked
             if not ended and not over:

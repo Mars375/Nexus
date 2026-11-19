@@ -4,6 +4,7 @@ detection of §1.3; tests B8, B10 and B11). Ungated: they run in the Linux CI an
 import signal
 import subprocess
 import sys
+import time
 
 import pytest
 from claude_code_support import OK_LINES as CLAUDE_OK
@@ -188,3 +189,88 @@ def test_claude_code_keeps_the_run_open_while_the_reader_has_not_finished(tmp_pa
     with pytest.raises(RuntimeError):
         r.watch()
     assert not job.settled and r.head() == r.start()  # nothing decided, nothing committed
+
+
+class FinishedReader:
+    """A reader thread that has ended."""
+
+    def join(self, timeout=None):
+        pass
+
+    def is_alive(self):
+        return False
+
+
+def test_codex_judges_the_deadline_on_when_the_exit_was_first_seen(tmp_path, monkeypatch):
+    adapter = codex_adapter(tmp_path, lines=OK_LINES)
+    adapter.dispatch(run_info(1))
+    job = adapter._job("nx-run-1")
+    adapter.join("nx-run-1", 20)
+    job.reader, job.ended_at = StuckReader(), None  # the pipe is still held: no EOF yet
+
+    with pytest.raises(RuntimeError):
+        adapter.watch(run_info(1, external_ref="x"))
+    later = time.monotonic() + 10**6  # the next tick comes after the maximum duration
+    monkeypatch.setattr(time, "monotonic", lambda: later)
+    job.reader = FinishedReader()
+    result = adapter.watch(run_info(1, external_ref="x"))
+
+    assert job.settled and result.events[-1].kind == "review"
+    assert all(e.subject != "Durée maximale dépassée" for e in job.events)
+
+
+def test_claude_code_judges_the_deadline_on_when_the_exit_was_first_seen(tmp_path, monkeypatch):
+    r = Rig(tmp_path, monkeypatch, lines=CLAUDE_OK, actions=[write()])
+    info, _ = r.run()
+    job = r.adapter._job(info.ref)
+    job.reader, job.ended_at = StuckReader(), None
+
+    with pytest.raises(RuntimeError):
+        r.watch()
+    later = time.monotonic() + 10**6
+    monkeypatch.setattr(time, "monotonic", lambda: later)
+    job.reader = FinishedReader()
+
+    assert r.last().kind == "done"
+
+
+def test_a_failed_contained_codex_launch_leaves_no_worktree(tmp_path, monkeypatch):
+    adapter = codex_adapter(tmp_path, lines=OK_LINES)
+
+    def refuse(*args, **kwargs):
+        raise OSError("AssignProcessToJobObject : refusé")
+
+    monkeypatch.setattr(codex_process, "spawn", refuse)
+    with pytest.raises(OSError):
+        adapter.dispatch(run_info(1))
+
+    repo = tmp_path / "repo"
+    branches = subprocess.run(["git", "-C", str(repo), "branch", "--list", "nexus/*"],
+                              capture_output=True, text=True, check=True).stdout
+    worktrees = subprocess.run(["git", "-C", str(repo), "worktree", "list"],
+                               capture_output=True, text=True, check=True).stdout
+    assert branches.strip() == "" and "nx-run-1" not in worktrees
+
+
+class Reaped:
+    """A group leader already reaped."""
+
+    def poll(self):
+        return 0
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def test_an_empty_group_of_a_reaped_leader_is_never_signalled(monkeypatch):
+    sent = []
+
+    def killpg(pgid, sig):
+        sent.append(sig)
+        if sig == 0:
+            raise ProcessLookupError
+
+    monkeypatch.setattr(codex_process.os, "killpg", killpg, raising=False)
+
+    assert codex_process._stop_group(Reaped(), 4242, 1.0) is True
+    assert sent == [0]  # only the probe: the id may belong to another group by now
