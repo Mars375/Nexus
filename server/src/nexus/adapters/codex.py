@@ -139,7 +139,8 @@ class CodexAdapter:
         tree = codex_git.create_worktree(repo, self.worktrees, run.ref)
         argv = [self.binary, "exec", "--json", "--sandbox", "workspace-write",
                 "--cd", str(tree.path), "-"]  # "-": the prompt is read from stdin
-        process = codex_process.spawn(argv, str(tree.path), codex_process.child_env(self.environ))
+        process = codex_process.spawn(
+            argv, str(tree.path), codex_process.child_env(self.environ), contain=True)
         job = _Job(tree, process)
         job.reader = threading.Thread(target=job.read, daemon=True)
         job.reader.start()
@@ -192,11 +193,18 @@ class CodexAdapter:
         Nothing is sealed before the closing event exists: a failed kill raises and leaves the
         run open, to be tried again on the next tick, so the executor is never freed while its
         process may still be working.
+
+        The end is judged on the main process alone (spec #186, §1.3, end detection): a
+        background process of the agent may inherit the output pipe, and waiting for the reader
+        would keep the run open until the maximum duration. Once it has exited, the whole tree is
+        stopped (confirmed), which closes the last writers of the pipe, and the reader is joined:
+        what the pipe already held is still read. A reader still alive after that leaves the run
+        open (no decision on half-read output).
         """
         if job.settled or not job.settle_lock.acquire(blocking=False):
             return
         try:
-            ended = not job.reader.is_alive() and job.process.poll() is not None
+            ended = job.process.poll() is not None
             elapsed = (job.ended_at or time.monotonic()) - job.started
             over = elapsed >= self.max_seconds  # judged on when it ended, not when we looked
             if not ended and not over:
@@ -209,6 +217,11 @@ class CodexAdapter:
                 job.add("failed", "Durée maximale dépassée", final=True,
                         payload={"cause": "durée maximale dépassée : processus arrêté"})
                 return
+            if not codex_process.kill_tree(job.process):  # also after a clean exit
+                raise RuntimeError("arrêt du processus non confirmé")
+            job.reader.join(5.0)
+            if job.reader.is_alive():
+                raise RuntimeError("lecture de la sortie non terminée")
             self._close_ended(job)
         finally:
             job.settle_lock.release()
