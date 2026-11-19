@@ -116,4 +116,5 @@ class Job:
             for fact in translate_line(raw.decode("utf-8", "replace")):
                 self.take(fact)
         self.process.wait()
-        self.ended_at = time.monotonic()
+        if self.ended_at is None:  # `_settle` may have seen the exit first
+            self.ended_at = time.monotonic()

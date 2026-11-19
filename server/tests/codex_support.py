@@ -11,10 +11,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+from process_support import LAUNCH
+
 from nexus.adapters.base import RunInfo
 from nexus.adapters.codex_git import clean_env
 
-FAKE_SCRIPT = '''
+FAKE_SCRIPT = LAUNCH + '''
 import json, os, subprocess, sys
 from pathlib import Path
 
@@ -34,6 +36,8 @@ if scenario.get("commit"):
     subprocess.run(
         ["git", "-c", "user.name=fake", "-c", "user.email=fake@example.invalid",
          "commit", "--allow-empty", "-m", "work"], cwd=cd, check=True, capture_output=True)
+if scenario.get("detach"):  # a grandchild that outlives this process and holds its stdout
+    launch_detached(scenario["detach"])
 if scenario.get("hang"):
     import time
     while True:

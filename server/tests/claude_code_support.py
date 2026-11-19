@@ -13,13 +13,14 @@ import time
 from pathlib import Path
 
 from codex_support import git, make_repo
+from process_support import LAUNCH
 from run_commit_support import isolate_home
 
 from nexus.adapters.base import RunInfo
 from nexus.adapters.claude_code import ClaudeCodeAdapter
 from nexus.config import Settings
 
-FAKE_SCRIPT = '''
+FAKE_SCRIPT = LAUNCH + '''
 import json, os, sys, time
 from pathlib import Path
 
@@ -61,6 +62,8 @@ for text in scenario.get("lines", []):
     print(text, flush=True)
 for step in scenario.get("actions", []):
     act(step)
+if scenario.get("detach"):  # a grandchild that outlives this process and holds its stdout
+    launch_detached(scenario["detach"])
 if scenario.get("hang"):
     while True:
         time.sleep(0.05)

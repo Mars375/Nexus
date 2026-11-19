@@ -92,6 +92,7 @@ class ClaudeCodeAdapter:
             process = codex_process.spawn(
                 cli.argv(self.binary, run.model, settings), str(tree.path),
                 cli.child_env(self.environ, gitdir=gitdir, worktree=tree.path), text=False,
+                contain=True,
             )
             job = Job(tree, process, gitdir=gitdir, identity=identity, run_ref=run.ref,
                       model=run.model, settings=settings)
@@ -182,6 +183,11 @@ class ClaudeCodeAdapter:
         Nothing is sealed before the closing event exists: a failed kill raises and leaves the run
         open, to be tried again on the next tick, so the executor is never freed while its process
         may still be working.
+
+        The end is judged on the main process alone (spec #186, §1.3, end detection): a
+        background process may inherit the output pipe, and waiting for the reader would keep the
+        run open until the maximum duration. Once it has exited, the whole tree is stopped
+        (confirmed) and the reader joined; a reader still alive after that leaves the run open.
         """
         if job.settled or not job.settle_lock.acquire(blocking=False):
             return
@@ -191,7 +197,9 @@ class ClaudeCodeAdapter:
                 cause = job.breach or "isolement de la session non vérifié"
                 self._fail(job, "Isolation de la session non respectée", cause)
                 return
-            ended = not job.reader.is_alive() and job.process.poll() is not None
+            ended = job.process.poll() is not None
+            if ended and job.ended_at is None:  # a pipe held open must not age the run
+                job.ended_at = time.monotonic()
             elapsed = (job.ended_at or time.monotonic()) - job.started
             over = elapsed >= self.max_seconds  # judged on when it ended, not when we looked
             if not ended and not over:
@@ -201,6 +209,9 @@ class ClaudeCodeAdapter:
                 self._fail(job, "Durée maximale dépassée",
                            "durée maximale dépassée : processus arrêté")
                 return
+            self._stop_tree(job)  # also after a clean exit: a background process may survive it
+            if job.reader.is_alive():
+                raise RuntimeError("lecture de la sortie non terminée")
             self._close_ended(job)
         finally:
             job.settle_lock.release()
