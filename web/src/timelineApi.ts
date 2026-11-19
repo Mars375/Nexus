@@ -19,6 +19,8 @@ export type TimelineEntry = {
   requested_kind?: string | null
   subject?: string | null
   body?: string | null
+  /** `failed` and `blocked` only, already masked; absent from older servers. */
+  cause?: string | null
   origin?: string | null
   effects?: TimelineEffect[] | null
   evidence?: string[] | null

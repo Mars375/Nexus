@@ -150,3 +150,25 @@ test('l’historique des modifications reste lisible dans la chronologie', async
   mount()
   expect(await screen.findByText(/Loïc l'a passée de à faire à en cours/)).toBeInTheDocument()
 })
+
+test('la cause d’un échec s’affiche sous son sujet', async () => {
+  serve(() => page([event('failed', { subject: 'Codex a échoué', cause: 'quota épuisé jusqu’à 14 h' })]))
+  mount()
+  const subject = await screen.findByText('Codex a échoué', { selector: 'p' })
+  const cause = screen.getByText('Cause : quota épuisé jusqu’à 14 h')
+  expect(subject.nextElementSibling).toBe(cause)
+})
+
+test('une cause sans sujet s’affiche quand même', async () => {
+  serve(() => page([event('blocked', { subject: '', cause: 'attend la clé' })]))
+  mount()
+  expect(await screen.findByText('Cause : attend la clé')).toBeInTheDocument()
+})
+
+test('rien n’est dit quand la cause est absente ou nulle (ancien serveur)', async () => {
+  const absent = event('failed', { subject: 'lancement impossible' })
+  serve(() => page([absent, event('failed', { subject: 'Codex a échoué', cause: null })]))
+  mount()
+  expect(await screen.findByText('lancement impossible', { selector: 'p' })).toBeInTheDocument()
+  expect(screen.queryByText(/Cause :/)).not.toBeInTheDocument()
+})

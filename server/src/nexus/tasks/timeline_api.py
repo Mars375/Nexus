@@ -2,7 +2,9 @@
 
 Open to any authenticated actor, like the rest of the task reads. Nothing is formatted for the
 screen here: the history keeps its `action` and `changes`, the events their kind, effects and
-proofs (subject and body were masked before they were stored), the runs their milestones.
+proofs (subject, body and payload were masked before they were stored), the runs their
+milestones. A `failed` or `blocked` event also gives its `payload.cause`, unless it only repeats
+the subject (the supervisor's own failures).
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from nexus.adapters.text import TEXT_MAX
 from nexus.auth.deps import Authenticated
 from nexus.clock import now
 from nexus.models import Event, TaskHistory
@@ -36,6 +39,7 @@ class EntryOut(BaseModel):
     requested_kind: str | None = None
     subject: str | None = None
     body: str | None = None
+    cause: str | None = None  # failed and blocked only
     origin: str | None = None
     effects: list[dict[str, Any]] | None = None
     evidence: list[str] | None = None
@@ -57,6 +61,17 @@ class TimelineOut(BaseModel):
     measured_at: datetime
 
 
+def cause_of(e: Event) -> str | None:
+    """The stored (already masked) cause of a failure or a block, if it adds to the subject."""
+    if e.kind not in ("failed", "blocked") or not isinstance(e.payload, dict):
+        return None
+    cause = e.payload.get("cause")
+    if not isinstance(cause, str) or not cause.strip():
+        return None
+    cause = cause.strip()
+    return None if cause == (e.subject or "").strip() else cause[:TEXT_MAX]
+
+
 def entry_out(entry: timeline.Entry, measured_at: datetime) -> EntryOut:
     base = {"id": entry.ref, "kind": entry.kind, "at": entry.at, "measured_at": measured_at}
     if entry.kind == "history":
@@ -66,8 +81,8 @@ def entry_out(entry: timeline.Entry, measured_at: datetime) -> EntryOut:
         e: Event = entry.data["row"]
         return EntryOut(
             **base, actor=e.actor, event=e.ref, event_kind=e.kind,
-            requested_kind=e.requested_kind, subject=e.subject, body=e.body, origin=e.origin,
-            effects=e.effects, evidence=e.evidence, needs=e.needs, run=e.run_ref,
+            requested_kind=e.requested_kind, subject=e.subject, body=e.body, cause=cause_of(e),
+            origin=e.origin, effects=e.effects, evidence=e.evidence, needs=e.needs, run=e.run_ref,
         )
     return EntryOut(**base, **entry.data)
 

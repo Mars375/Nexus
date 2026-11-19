@@ -22,9 +22,10 @@ function EntryRow({ entry }: { entry: TimelineEntry }) {
           {origin && <span className="ml-2 text-muted">· {origin}</span>}
         </span>
       </p>
-      {entry.kind === 'event' && (entry.subject || entry.body) && (
+      {entry.kind === 'event' && (entry.subject || entry.cause || entry.body) && (
         <div className="pl-[7.5rem] text-muted">
           {entry.subject && <p className="whitespace-pre-wrap">{entry.subject}</p>}
+          {entry.cause && <p className="whitespace-pre-wrap">Cause : {entry.cause}</p>}
           {entry.body && <p className="whitespace-pre-wrap">{entry.body}</p>}
         </div>
       )}
