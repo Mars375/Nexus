@@ -86,3 +86,14 @@ test('la chronologie raconte la tâche confiée dans l’ordre, jusqu’à la pr
   expect(at.every((i) => i >= 0)).toBe(true)
   expect(at).toEqual([...at].sort((a, b) => a - b))
 })
+
+test('la chronologie donne la cause d’un run échoué', async ({ page }) => {
+  await createTask('Run qui échoue')
+  const pane = await openPane(page, 'Run qui échoue')
+  await hand(page, pane, 'Run qui échoue', 'ÉCHOUER tout de suite')
+
+  // The run is closed before the test ends: the executor takes one run at a time.
+  await expect(runRow(pane).getByText('Échoué', { exact: true })).toBeVisible({ timeout: 30_000 })
+  const story = pane.locator('section').filter({ has: page.getByRole('heading', { name: 'Chronologie' }) })
+  await expect(story.getByText('Cause : quota épuisé (faux Codex), reprise à 14 h', { exact: true })).toBeVisible()
+})

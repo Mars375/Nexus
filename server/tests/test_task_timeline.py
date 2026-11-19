@@ -3,8 +3,9 @@
 from datetime import UTC, datetime, timedelta
 
 from events_support import AT, publish
-from runs_support import dispatch, make_task, register, tick
+from runs_support import FakeAdapter, dispatch, make_task, register, tick
 
+from nexus.adapters.base import RunEvent
 from nexus.models import Event, TaskHistory
 
 T0 = datetime(2026, 11, 10, 9, 0, tzinfo=UTC)
@@ -43,11 +44,11 @@ def hist(at, n):
     return TaskHistory(task_id=1, actor="loic", at=at, action="updated", changes={"title": [n, n]})
 
 
-def evt(at, n, kind="progress"):
+def evt(at, n, kind="progress", *, subject=None, payload=None):
     return Event(
         actor="helios", actor_event_id=f"e{n}", at=at, received_at=at, task_id=1, run_ref=None,
-        kind=kind, subject=f"fait {n}", body=None, payload={}, evidence=[], needs=[], redacted=[],
-        origin="api", effects=[])
+        kind=kind, subject=subject or f"fait {n}", body=None, payload=payload or {}, evidence=[],
+        needs=[], redacted=[], origin="api", effects=[])
 
 
 def test_the_story_merges_history_events_and_runs_newest_first(client):
@@ -157,3 +158,66 @@ def test_an_agent_may_read_the_story(client):
     ref = task(client)
     res = client.get(f"/api/tasks/{ref}/timeline", headers={"X-Nexus-Actor": "helios"})
     assert res.status_code == 200
+
+
+def causes(client, ref="nx-task-1"):
+    """Each event's subject with its cause (None when the entry carries none)."""
+    return {e["subject"]: e["cause"] for e in timeline(client, ref)["entries"]
+            if e["kind"] == "event"}
+
+
+def test_an_adapter_failure_shows_its_masked_cause(client):
+    secret = "ghp_" + "A" * 36
+    register(client, adapter=FakeAdapter([
+        RunEvent(seq=1, at=T0, kind="claimed", subject="pris en charge"),
+        RunEvent(seq=2, at=T0, kind="failed", subject="Codex a échoué",
+                 payload={"cause": f"  quota épuisé, clé {secret}  "}),
+    ]))
+    ref = make_task(client)
+    dispatch(client, ref)
+    tick(client)
+
+    entries = timeline(client, ref)["entries"]
+
+    [failed] = [e for e in entries if e.get("event_kind") == "failed"]
+    assert failed["cause"].startswith("quota épuisé, clé ") and "[REDACTED]" in failed["cause"]
+    assert secret not in str(entries)
+    assert all(e["cause"] is None for e in entries if e is not failed)  # history, run milestones
+
+
+def test_a_supervisor_failure_shows_its_cause_once(client):
+    adapter = register(client)
+    adapter.fail_dispatch = True
+    ref = make_task(client)
+    dispatch(client, ref)
+    tick(client)
+
+    [failed] = [e for e in timeline(client, ref)["entries"] if e.get("event_kind") == "failed"]
+
+    assert failed["subject"] == "lancement impossible" and failed["cause"] is None
+
+
+def test_only_a_readable_cause_of_a_failure_or_a_block_is_given(client):
+    task(client)
+    insert(client, [
+        evt(T0, 1, "failed", payload={"cause": 42}),
+        evt(T0, 2, "failed", payload={"cause": ""}),
+        evt(T0, 3, "failed", payload={"cause": " \n\t "}),
+        evt(T0, 4, "failed", subject="même", payload={"cause": " même "}),
+        evt(T0, 5, "blocked", payload={"cause": "attend la clé", "plan": "la poser"}),
+        evt(T0, 6, "progress", payload={"cause": "pas une cause"}),
+        evt(T0, 7, "done", payload={"cause": "pas une cause"}),
+        evt(T0, 8, "failed", payload={"cause": "disque plein"}),
+    ])
+
+    assert causes(client) == {
+        "fait 1": None, "fait 2": None, "fait 3": None, "même": None,
+        "fait 5": "attend la clé", "fait 6": None, "fait 7": None, "fait 8": "disque plein",
+    }
+
+
+def test_a_long_cause_is_cut_to_500_characters(client):
+    task(client)
+    insert(client, [evt(T0, 1, "failed", payload={"cause": "é" * 2000})])
+
+    assert causes(client)["fait 1"] == "é" * 500
