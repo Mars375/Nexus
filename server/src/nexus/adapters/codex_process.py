@@ -33,11 +33,12 @@ def child_env(
 
 def spawn(
     argv: list[str], cwd: str, env: dict[str, str], *, text: bool = True,
-    stderr: int | None = None, contain: bool = False,
+    stderr: int | None = None, contain: bool = False, stdin: int = subprocess.PIPE,
 ) -> subprocess.Popen:
     """A list of arguments, never a shell. Its own process group so the tree can be killed.
 
-    `text=False` gives bytes pipes (no newline translation); `stderr` defaults to discarded.
+    `text=False` gives bytes pipes (no newline translation); `stderr` defaults to discarded;
+    `stdin` defaults to a pipe (the control calls of Codex pass `DEVNULL`).
     `contain=True` (runs of Codex and claude-code, spec #186 §4): under Windows the process starts
     inside a job object (`process_job_win`); under POSIX `kill_tree` also waits until its process
     group is empty. `contain=False` (Hermes) launches exactly as before.
@@ -53,11 +54,11 @@ def spawn(
         from nexus.adapters import process_job_win
 
         return process_job_win.spawn(
-            argv, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            argv, cwd=cwd, env=env, stdin=stdin, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL if stderr is None else stderr, **options,
         )
     process = subprocess.Popen(
-        argv, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        argv, cwd=cwd, env=env, stdin=stdin, stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL if stderr is None else stderr, **options,
     )
     if contain:

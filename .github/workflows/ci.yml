@@ -58,7 +58,11 @@ jobs:
       - name: Build web
         run: pnpm --dir web build
 
+      # pytest follows TMPDIR: under /tmp, every Codex launch of the tests would be refused (/tmp
+      # is a writable root of the Codex sandbox under POSIX, spec #186 §2.2).
       - name: Tests
+        env:
+          TMPDIR: ${{ runner.temp }}
         run: pnpm test
 
   e2e:

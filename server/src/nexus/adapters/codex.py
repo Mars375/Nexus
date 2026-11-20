@@ -1,8 +1,9 @@
 """The Codex adapter (ADR-023, lot C): `codex exec` in a git worktree of its own.
 
 How a run goes: a worktree and a branch `nexus/nx-run-<n>` are made in a repository of
-`NEXUS_RUN_WORKDIRS`; `codex exec --json --sandbox workspace-write` starts there with the brief on
-its standard input (never in an argument) and a filtered environment; a reader thread turns the
+`NEXUS_RUN_WORKDIRS`; after the checks of `codex_cli` (locations, home of Nexus, MCP servers and
+skills, spec #186 §5.3), `codex exec --json --sandbox workspace-write` starts there with the brief
+on its standard input (never in an argument) and a filtered environment; a reader thread turns the
 JSONL it prints into events kept in memory (the raw output is never written anywhere);
 `watch` hands them to the supervisor, which publishes them (masking secrets). The end is judged on
 a commit that descends from the start commit, not on Codex's word (D6). Nexus never pushes or
@@ -17,16 +18,17 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from nexus.adapters import codex_git, codex_process
-from nexus.adapters.base import Dispatched, RunEvent, RunInfo, WatchResult
-from nexus.adapters.codex_translate import translate_line
+from nexus.adapters import codex_cli, codex_git, codex_process, run_commit
+from nexus.adapters.base import Dispatched, RunInfo, WatchResult
+from nexus.adapters.codex_job import Job as _Job
+from nexus.adapters.codex_translate import BREACH_SUBJECT
 from nexus.adapters.registry import AdapterRegistry
-from nexus.clock import now
 from nexus.config import Settings
 
 log = logging.getLogger("nexus.codex")
@@ -34,73 +36,6 @@ log = logging.getLogger("nexus.codex")
 PROBE_TIMEOUT = 10.0
 SHORT_SHA = 12
 KEEP_FINISHED = 20  # closed jobs kept in memory, for a late re-read
-MAX_PROGRESS = 300  # progress facts kept per run; the end is always kept
-
-
-class _Job:
-    """One running `codex exec`: its process, its worktree and the story told so far."""
-
-    def __init__(self, tree: codex_git.Worktree, process: subprocess.Popen) -> None:
-        self.tree, self.process = tree, process
-        self.started = time.monotonic()
-        self.lock = threading.Lock()
-        self.events: list[RunEvent] = []
-        self.progress = 0
-        self.opened: set[str] = set()
-        self.turn_done = False
-        self.failure: str | None = None  # from `turn.failed`: it decides, the latest wins
-        self.last_error: str | None = None  # from `error` lines: a cause only when nothing better
-        self.settled = False
-        self.settle_lock = threading.Lock()  # one closing attempt at a time
-        self.ended_at: float | None = None  # when the process was seen gone, whatever the polling
-        self.reader: threading.Thread | None = None
-
-    def add(
-        self,
-        kind: str,
-        subject: str,
-        body: str | None = None,
-        payload: dict | None = None,
-        evidence: list[str] | None = None,
-        final: bool = False,
-    ) -> None:
-        """Append a fact. The closing one (`final`) seals the story: nothing follows it."""
-        with self.lock:
-            if self.settled:
-                return
-            self.settled = final
-            seq = len(self.events) + 1
-            # `seq` in the payload makes two identical progress facts distinct (anti-noise).
-            self.events.append(RunEvent(
-                seq=seq, at=now(), kind=kind, subject=subject, body=body,
-                payload={"seq": seq} | (payload or {}), evidence=evidence or [],
-            ))
-
-    def read(self) -> None:
-        """Reader thread: translate each line as it comes, keep only the translation."""
-        for line in self.process.stdout:
-            fact = translate_line(line)
-            if fact is None:
-                continue
-            if fact.kind == "finished":
-                with self.lock:
-                    self.turn_done = True
-            elif fact.kind == "failed":
-                with self.lock:
-                    self.failure = fact.body
-            elif fact.kind == "error":
-                with self.lock:
-                    self.last_error = fact.body
-            elif fact.kind in ("claimed", "working"):
-                if fact.kind not in self.opened:  # once each: a loop of them would flood
-                    self.opened.add(fact.kind)
-                    self.add(fact.kind, fact.subject, fact.body)
-            elif self.progress < MAX_PROGRESS:
-                self.progress += 1
-                self.add(fact.kind, fact.subject, fact.body)
-        self.process.wait()
-        if self.ended_at is None:  # `_settle` may have seen the exit first
-            self.ended_at = time.monotonic()
 
 
 class CodexAdapter:
@@ -116,6 +51,8 @@ class CodexAdapter:
     ) -> None:
         self.binary, self.workdirs = binary, list(workdirs)
         self.worktrees = data_dir.resolve() / "worktrees"
+        self.codex_home = data_dir.resolve() / "codex-home"  # Loïc logs in there once (§5.2)
+        self.control_timeout = codex_cli.CONTROL_TIMEOUT  # each control call of the launch
         self.keep_finished = KEEP_FINISHED
         self.max_seconds, self.environ = max_seconds, environ
         self._jobs: dict[str, _Job] = {}
@@ -137,12 +74,27 @@ class CodexAdapter:
             if run.ref in self._jobs:
                 raise ValueError("run déjà lancé")
         repo = codex_git.choose_repo(self.workdirs, run.workdir)
+        common = codex_git.common_dir(repo)
+        if common is None:
+            raise ValueError("dossier git du dépôt illisible")
+        env = codex_cli.child_env(self.environ, self.codex_home)
+        windows = sys.platform == "win32"
+        places = {"common_dir": common, "codex_home": self.codex_home}
+        # Before the worktree exists: a refusal leaves neither branch nor worktree (§1.4, 4).
+        codex_cli.check_locations(env, gitdir=None, worktree=self.worktrees / run.ref, **places)
+        self.codex_home.mkdir(parents=True, exist_ok=True)
         tree = codex_git.create_worktree(repo, self.worktrees, run.ref)
-        argv = [self.binary, "exec", "--json", "--sandbox", "workspace-write",
-                "--cd", str(tree.path), "-"]  # "-": the prompt is read from stdin
         try:
+            codex_cli.check_locations(env, gitdir=run_commit.worktree_gitdir(tree),
+                                      worktree=tree.path, **places)
+            codex_cli.check_isolation(self.binary, tree.path, env, windows=windows,
+                                      timeout=self.control_timeout)
             process = codex_process.spawn(
-                argv, str(tree.path), codex_process.child_env(self.environ), contain=True)
+                codex_cli.argv(self.binary, tree.path, windows=windows), str(tree.path), env,
+                contain=True)
+        except codex_cli.ControlNotStopped:
+            log.warning("contrôle de %s non arrêté : worktree laissé en place", run.ref)
+            raise
         except BaseException:
             self._undo_launch(tree)
             raise
@@ -219,6 +171,10 @@ class CodexAdapter:
         if job.settled or not job.settle_lock.acquire(blocking=False):
             return
         try:
+            if job.breach is not None:  # at once: no wait for the end nor the maximum duration
+                self._stop_tree(job)
+                self._fail_breach(job)
+                return
             ended = job.process.poll() is not None
             if ended and job.ended_at is None:  # a pipe held open must not age the run
                 job.ended_at = time.monotonic()
@@ -227,16 +183,11 @@ class CodexAdapter:
             if not ended and not over:
                 return
             if over:
-                # Also when it already ended: its children may not have.
-                if not codex_process.kill_tree(job.process):
-                    raise RuntimeError("arrêt du processus non confirmé")
-                job.reader.join(5.0)
+                self._stop_tree(job)  # also when it already ended: its children may not have
                 job.add("failed", "Durée maximale dépassée", final=True,
                         payload={"cause": "durée maximale dépassée : processus arrêté"})
                 return
-            if not codex_process.kill_tree(job.process):  # also after a clean exit
-                raise RuntimeError("arrêt du processus non confirmé")
-            job.reader.join(5.0)
+            self._stop_tree(job)  # also after a clean exit
             if job.reader.is_alive():
                 raise RuntimeError("lecture de la sortie non terminée")
             self._close_ended(job)
@@ -244,7 +195,20 @@ class CodexAdapter:
             job.settle_lock.release()
 
     @staticmethod
-    def _close_ended(job: _Job) -> None:
+    def _stop_tree(job: _Job) -> None:
+        if not codex_process.kill_tree(job.process):
+            raise RuntimeError("arrêt du processus non confirmé")
+        job.reader.join(5.0)
+
+    @staticmethod
+    def _fail_breach(job: _Job) -> None:
+        job.add("failed", BREACH_SUBJECT, payload={"cause": job.breach}, final=True)
+
+    def _close_ended(self, job: _Job) -> None:
+        # Checked again now that the reader is over: a breach may have come in its last lines.
+        if job.breach is not None:
+            self._fail_breach(job)
+            return
         code = job.process.returncode
         with job.lock:
             failure, last_error, turn_done = job.failure, job.last_error, job.turn_done

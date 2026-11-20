@@ -1,7 +1,10 @@
 """Support for the Codex adapter tests: a fake `codex` executable and throwaway git repos.
 
 No test ever runs the real `codex` binary: `NEXUS_CODEX_BIN` points to a launcher around
-`fake_codex.py`, which replays a scenario and never talks to any model.
+`fake_codex.py`, which replays a scenario and never talks to any model. It answers the control
+calls of the launch (`mcp list --json`, `debug prompt-input`, spec #186 §5.3) from the scenario
+(`mcp_list`, `prompt_input`, and their `_exit` and `_hang`) and notes every call, with its
+environment, in `calls.json`.
 """
 
 from __future__ import annotations
@@ -26,6 +29,35 @@ args = sys.argv[1:]
 if args == ["--version"]:
     print("codex-cli 0.0.0-fake")
     sys.exit(0)
+
+
+def record(kind):
+    """Every call with its full environment (C4), apart from the files of the run."""
+    path = here / "calls.json"
+    calls = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+    calls.append({"kind": kind, "args": args, "env": dict(os.environ)})
+    path.write_text(json.dumps(calls), encoding="utf-8")
+
+
+def control(name, default):
+    """Answer a control call before anything else: no stdin read, no file of the run touched."""
+    record(name)
+    if scenario.get(name + "_hang"):
+        import time
+        end = time.monotonic() + 60
+        while time.monotonic() < end:
+            time.sleep(0.05)
+    sys.stdout.write(scenario.get(name, default))
+    sys.stdout.flush()
+    sys.exit(scenario.get(name + "_exit", 0))
+
+
+if args[:3] == ["mcp", "list", "--json"]:
+    control("mcp_list", "[]")
+if args[:2] == ["debug", "prompt-input"]:
+    control("prompt_input", json.dumps([{"type": "message", "role": "developer", "content": [
+        {"type": "input_text", "text": "Instructions de base."}]}]))
+record("run")
 (here / "args.json").write_text(json.dumps(args), encoding="utf-8")
 (here / "env.json").write_text(json.dumps(sorted(os.environ)), encoding="utf-8")
 (here / "stdin.txt").write_text(sys.stdin.buffer.read().decode("utf-8"), encoding="utf-8")
@@ -57,6 +89,12 @@ FAILED = json.dumps({"type": "turn.failed", "error": {"message": "le modèle a �
 OK_LINES = [THREAD, TURN, MESSAGE, COMMAND, DONE]
 
 
+def mcp_call(event: str = "item.completed", server: str = "srv", tool: str = "tool") -> str:
+    return json.dumps({"type": event, "item": {
+        "id": "i9", "type": "mcp_tool_call", "server": server, "tool": tool,
+        "arguments": {}, "status": "completed"}})
+
+
 def make_fake_codex(folder: Path, **scenario) -> Path:
     """A launcher for the fake binary in `folder`, replaying `scenario`."""
     folder.mkdir(parents=True, exist_ok=True)
@@ -71,6 +109,13 @@ def make_fake_codex(folder: Path, **scenario) -> Path:
         launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n')
         launcher.chmod(0o755)
     return launcher
+
+
+def calls(folder: Path) -> list[dict]:
+    """The calls the fake received, in order: `kind` (`mcp_list`, `prompt_input`, `run`), `args`,
+    `env`."""
+    path = folder / "calls.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
 
 
 def git(cwd: Path, *args: str) -> str:
