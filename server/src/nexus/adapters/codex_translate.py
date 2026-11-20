@@ -15,7 +15,10 @@ from typing import Literal
 
 from nexus.adapters.text import cut
 
-FactKind = Literal["claimed", "working", "progress", "finished", "failed", "error"]
+FactKind = Literal["claimed", "working", "progress", "finished", "failed", "error", "breach"]
+BREACH_SUBJECT = "Isolation de la session non respectée"
+# Fixed words (spec #186, §5.4): neither the server nor the tool is copied.
+MCP_BREACH = "isolation non respectée : outil MCP appelé"
 
 
 @dataclass(frozen=True)
@@ -23,7 +26,8 @@ class Fact:
     """What one line says. `finished` is the end of a turn: the adapter judges the proof.
 
     `error` is a signal only (codex-cli prints one per reconnection attempt): `failed`, from
-    `turn.failed`, is what decides a failure (#176).
+    `turn.failed`, is what decides a failure (#176). `breach` (an MCP tool called: no server
+    should be in sight) stops the run at once.
     """
 
     kind: FactKind
@@ -33,6 +37,8 @@ class Fact:
 
 def _item(item: dict) -> Fact | None:
     match item.get("type"):
+        case "mcp_tool_call":
+            return Fact("breach", BREACH_SUBJECT, MCP_BREACH)
         case "agent_message":
             body = cut(item.get("text"))
             return Fact("progress", "Message de Codex", body) if body else None
@@ -66,6 +72,10 @@ def translate_line(line: str) -> Fact | None:
         case "item.completed":
             item = event.get("item")
             return _item(item) if isinstance(item, dict) else None
+        case "item.started":  # only a breach is told this early; the rest waits for completion
+            item = event.get("item")
+            if isinstance(item, dict) and item.get("type") == "mcp_tool_call":
+                return _item(item)
         case "turn.completed":
             return Fact("finished", "Codex a terminé son tour")
         case "turn.failed":

@@ -249,6 +249,23 @@ def no_claude_from_the_shell(monkeypatch):
     monkeypatch.delenv("NEXUS_CLAUDE_BIN", raising=False)
 
 
+@pytest.fixture(scope="session")
+def child_temp(tmp_path_factory) -> str:
+    """One folder for the whole session: `<basetemp>/child-temp0`, a sibling of every `tmp_path`."""
+    return str(tmp_path_factory.mktemp("child-temp"))
+
+
+@pytest.fixture(autouse=True)
+def child_temp_outside_tmp_path(monkeypatch, child_temp):
+    """The temporary directory a child inherits is a writable root of the Codex sandbox, and the
+    Codex adapter refuses a launch whose git directories or `CODEX_HOME` lie under it (spec #186,
+    §2.2). Every test directory sits under the system's temporary directory: children get a
+    sibling of `tmp_path` instead (`<basetemp>/child-temp<n>`, never a parent of it). `tempfile`
+    has already cached its own directory, and pytest's base is fixed: neither moves."""
+    for name in ("TEMP", "TMP", "TMPDIR"):
+        monkeypatch.setenv(name, child_temp)
+
+
 @pytest.fixture(autouse=True)
 def never_the_real_codex(monkeypatch):
     """No test may start the real `codex` binary (ADR-023, D8): tests use a fake executable."""

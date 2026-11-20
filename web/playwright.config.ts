@@ -1,9 +1,10 @@
 import { defineConfig } from '@playwright/test'
-import { API_PORT, WEB_PORT, claudeFixture, codexFixture, dataDirPath, storageStatePath } from './e2e/e2e-env'
+import { API_PORT, WEB_PORT, childTempPath, claudeFixture, codexFixture, dataDirPath, storageStatePath } from './e2e/e2e-env'
 
 const dataDir = dataDirPath()
 const codex = codexFixture()
 const claude = claudeFixture()
+const childTemp = childTempPath()
 
 export default defineConfig({
   testDir: './e2e',
@@ -46,6 +47,10 @@ export default defineConfig({
         NEXUS_CLAUDE_BIN: claude.bin,
         NEXUS_RUN_WORKDIRS: codex.repo,
         NEXUS_RUN_MAX_MINUTES: '5',
+        // Here, not in global-setup.ts: Playwright starts webServer before globalSetup.
+        TEMP: childTemp,
+        TMP: childTemp,
+        TMPDIR: childTemp,
       },
       url: `http://127.0.0.1:${API_PORT}/api/health`,
       reuseExistingServer: false,

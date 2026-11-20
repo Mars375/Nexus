@@ -313,7 +313,7 @@ sans migration) :
 ### Addendum (2026-11-13) — Codex : bac à sable `unelevated`, commit fait par Nexus, configuration de Loïc tenue à l'écart
 
 Cadrage : `docs/superpowers/specs/2026-11-13-codex-commit-par-nexus-design.md` (issue #186).
-Implémentation en quatre PR à venir (§9 du cadrage) ; rien de ceci n'est encore livré.
+Implémentation en cinq PR (§9 du cadrage), livrées une à une : l'état est suivi dans #186.
 
 **Décidé par Loïc le 2026-11-12** (#186) : Nexus passe `windows.sandbox=unelevated` à **ses** runs
 Codex, sous Windows seulement ; sa propre configuration (`[windows] sandbox = "elevated"`) ne change
@@ -348,6 +348,23 @@ délégation ; chacun se change sans migration) :
 - Dépôts et `CODEX_HOME` de Nexus refusés sous le dossier temporaire de l'enfant (`%TEMP%`, `/tmp`).
 - Fins alignées sur `claude-code` : refus de Nexus → `failed`, aucun changement → `review` ;
   auteur = l'identité git du dépôt, trailers `Nexus-Run` et `Nexus-Executor: codex`.
+
+### Addendum (2026-11-20) — Codex : un dépôt qui a une configuration de projet `.codex` est refusé
+
+Cadrage : `docs/superpowers/specs/2026-11-13-codex-commit-par-nexus-design.md`, §11, Q5 (issue #186, PR C).
+
+**Choisi par l'agent sous la délégation de Loïc du 2026-11-13** — ce n'est pas Loïc qui a choisi ;
+il peut l'infirmer :
+
+- **Contexte :** on ne sait pas si une configuration de projet (`.codex/` à la racine du dépôt)
+  peut déclarer des serveurs MCP ou des hooks dans un run non interactif, ni si
+  `codex mcp list` la voit ; le contrôle avant le lancement ne pourrait donc pas la juger.
+- **Décision :** un dépôt dont le worktree a une entrée `.codex` à sa racine (dossier, fichier ou
+  lien) est refusé au lancement (échec fermé) : `failed` « lancement impossible », sans modèle,
+  worktree et branche retirés.
+- **Conséquences :** un dépôt qui range une configuration Codex ne peut pas être confié à Codex
+  par Nexus. La règle se revoit quand un run réel aura montré ce qu'une configuration de projet
+  peut déclarer en non interactif (§10 du cadrage).
 
 ---
 

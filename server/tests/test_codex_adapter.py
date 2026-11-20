@@ -77,6 +77,7 @@ def test_the_child_environment_is_an_allow_list(rig):
     assert not {n for n in names if n.startswith("NEXUS_")}
     assert not names & {"OPENAI_API_KEY", "GITHUB_TOKEN"}
     assert "PATH" in names
+    assert "CODEX_HOME" in names  # imposed: the home of Nexus, never the inherited one (PR C)
 
 
 def test_a_turn_with_a_commit_after_the_start_ends_done_with_the_commit_as_proof(rig):

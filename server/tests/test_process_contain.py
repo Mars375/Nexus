@@ -9,7 +9,7 @@ import time
 import pytest
 from claude_code_support import OK_LINES as CLAUDE_OK
 from claude_code_support import Rig, claude_info, write
-from codex_support import OK_LINES, make_fake_codex, make_repo, run_info
+from codex_support import OK_LINES, calls, make_fake_codex, make_repo, run_info
 from process_support import detach_spec, grandchild_pid, stopped, wait_until
 
 from nexus.adapters import codex_process, hermes_cli
@@ -107,10 +107,12 @@ def test_claude_code_launches_its_run_contained(tmp_path, monkeypatch, spawned):
 
 
 def test_codex_launches_its_run_contained(tmp_path, spawned):
+    # PR C: the two control calls of the launch (spec #186, §5.3) are spawns too, contained.
     adapter = codex_adapter(tmp_path, lines=OK_LINES)
     adapter.dispatch(run_info(1))
     adapter.join("nx-run-1", 20)
-    assert [kw.get("contain") for kw in spawned] == [True]
+    assert spawned and all(kw.get("contain") is True for kw in spawned)
+    assert [c["kind"] for c in calls(tmp_path / "fake")][-1] == "run"
 
 
 # --- B11: a grandchild that holds the output pipe does not keep the run open ---------------------

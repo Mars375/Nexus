@@ -1,7 +1,7 @@
 // Constantes partagées par playwright.config.ts, le setup global et les specs.
 import { execFileSync } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 
 export const API_PORT = '8799'
@@ -21,24 +21,49 @@ function isRealDirectory(path: string): boolean {
 }
 
 /**
+ * Where the throwaway data dirs live. Under POSIX, never under `/tmp`: Nexus refuses a Codex run
+ * whose repository or CODEX_HOME lies there, whatever TMPDIR says (spec #186, §2.2). In CI the
+ * runner's own temp dir (outside `/tmp`), else `~/.cache`. Under Windows, the OS temp dir: the
+ * test server gets its TEMP next to the data dir instead (`childTempPath`).
+ */
+function e2eRoot(): string {
+  if (process.platform === 'win32') return resolve(tmpdir())
+  const root = resolve(process.env.RUNNER_TEMP || join(homedir(), '.cache'))
+  if (root === '/tmp' || root.startsWith('/tmp/')) throw new Error('dossier des e2e sous /tmp : refusé par Nexus pour Codex')
+  mkdirSync(root, { recursive: true })
+  return root
+}
+
+/**
  * Base jetable : les tests de bout en bout ne touchent jamais la vraie nexus.db. Le processus
  * principal la crée et la publie dans l'environnement ; les workers, qui relisent la config, la
  * retrouvent au lieu d'en créer une autre.
  */
 export function dataDirPath(): string {
   // An inherited value is trusted only if it is one of our throwaway directories: directly under
-  // the OS temp dir, named `nexus-e2e-*`. Anything else (a real data dir) is replaced.
+  // the e2e root, named `nexus-e2e-*`. Anything else (a real data dir) is replaced.
   const inherited = process.env.NEXUS_E2E_DATA_DIR
   const ours =
     inherited !== undefined &&
-    resolve(dirname(resolve(inherited))) === resolve(tmpdir()) &&
+    resolve(dirname(resolve(inherited))) === e2eRoot() &&
     basename(resolve(inherited)).startsWith('nexus-e2e-') &&
     isRealDirectory(resolve(inherited))
-  if (!ours) process.env.NEXUS_E2E_DATA_DIR = mkdtempSync(join(tmpdir(), 'nexus-e2e-'))
+  if (!ours) process.env.NEXUS_E2E_DATA_DIR = mkdtempSync(join(e2eRoot(), 'nexus-e2e-'))
   return process.env.NEXUS_E2E_DATA_DIR as string
 }
 
 export const storageStatePath = (): string => join(dataDirPath(), 'storage-state.json')
+
+/**
+ * TEMP, TMP and TMPDIR of the test server: a sibling of the data dir, never inside it nor a parent
+ * of it. Nexus refuses a Codex run whose git directories or CODEX_HOME (all under the data dir) lie
+ * in the child's temporary directory (spec #186, §2.2). Idempotent: the workers read the config again.
+ */
+export function childTempPath(): string {
+  const path = `${dataDirPath()}-tmp`
+  mkdirSync(path, { recursive: true })
+  return path
+}
 
 /**
  * Un faux `codex` (e2e/fake-codex.mjs) et un dépôt git jetable, dans la base jetable : le serveur
