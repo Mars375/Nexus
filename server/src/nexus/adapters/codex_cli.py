@@ -153,11 +153,12 @@ def _control(argv_: list[str], worktree: Path, env: dict[str, str], timeout: flo
         out = None
     finally:
         stopped = any(codex_process.kill_tree(process) for _ in range(STOP_ATTEMPTS))
-        if stopped:  # unconfirmed, a pipe may still be held: closing it could block (Windows)
-            for pipe in filter(None, (process.stdout, process.stderr)):
-                pipe.close()
-    if not stopped:
-        raise ControlNotStopped("contrôle d'isolement : arrêt non confirmé")
+        if not stopped:
+            # Raised here, over any error of `communicate`: the launch must keep the worktree.
+            # The pipes stay open: one still held by a child could block its close (Windows).
+            raise ControlNotStopped("contrôle d'isolement : arrêt non confirmé")
+        for pipe in filter(None, (process.stdout, process.stderr)):
+            pipe.close()
     return out if process.returncode == 0 else None
 
 

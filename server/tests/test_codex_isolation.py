@@ -237,6 +237,51 @@ def test_a_control_call_whose_stop_is_not_confirmed_refuses_the_launch(rig, monk
     assert "run" not in r.kinds() and (r.data / "worktrees" / "nx-run-1").exists()
 
 
+
+def unreadable_controls(monkeypatch):
+    """The control calls' processes fail to be read (`communicate` raises); git is untouched."""
+    real = codex_process.spawn
+
+    def spawn(*args, **kwargs):
+        process = real(*args, **kwargs)
+        if kwargs.get("stdin") == subprocess.DEVNULL:  # a control call, not the run
+
+            def broken(*a, **k):
+                raise OSError("lecture impossible")
+
+            process.communicate = broken
+        return process
+
+    monkeypatch.setattr(codex_process, "spawn", spawn)
+
+
+def test_a_failed_read_with_an_unconfirmed_stop_still_keeps_the_worktree(rig, monkeypatch):
+    """`communicate` raising does not hide an unconfirmed stop (#194, CodeRabbit)."""
+    r = rig(lines=OK_LINES)
+    real, tries = codex_process.kill_tree, []
+
+    def unconfirmed(process, *args, **kwargs):
+        tries.append(process)
+        real(process)
+        return False
+
+    monkeypatch.setattr(codex_process, "kill_tree", unconfirmed)
+    unreadable_controls(monkeypatch)
+    with pytest.raises(codex_cli.ControlNotStopped):
+        r.dispatch()
+    assert len(tries) == codex_cli.STOP_ATTEMPTS
+    assert "run" not in r.kinds() and (r.data / "worktrees" / "nx-run-1").exists()
+
+
+def test_a_failed_read_with_a_confirmed_stop_undoes_the_launch(rig, monkeypatch):
+    r = rig(lines=OK_LINES)
+
+    unreadable_controls(monkeypatch)
+    with pytest.raises(OSError, match="lecture"):
+        r.dispatch()
+    assert not (r.data / "worktrees" / "nx-run-1").exists()
+
+
 # --- C8: locations, checked before any worktree exists --------------------------------------------
 
 
