@@ -65,9 +65,20 @@ def read_beat(spec: dict) -> str | None:
         return None
 
 
+def _written_pid(spec: dict) -> int | None:
+    """The pid once fully written; None while absent, still open for writing (Windows refuses
+    the read) or empty."""
+    try:
+        return int(Path(spec["pid"]).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
 def grandchild_pid(spec: dict) -> int:
-    wait_until(lambda: Path(spec["pid"]).exists(), "the grandchild wrote its pid")
-    return int(Path(spec["pid"]).read_text(encoding="utf-8"))
+    wait_until(lambda: _written_pid(spec) is not None, "the grandchild wrote its pid")
+    pid = _written_pid(spec)
+    assert pid is not None
+    return pid
 
 
 def beating(spec: dict) -> None:

@@ -171,6 +171,21 @@ def test_a_sibling_whose_name_starts_like_the_temporary_directory_is_not_under_i
     codex_cli.check_locations({"TEMP": str(tmp_path / "rep")}, **where)
 
 
+@pytest.mark.parametrize("value", ["tmp", "../repo/.git", "."])
+def test_a_relative_temporary_directory_is_refused(tmp_path, value):
+    """Codex would resolve it from the worktree, not from the server's folder (#194)."""
+    with pytest.raises(ValueError, match="relatif"):
+        codex_cli.check_locations({"TMPDIR": value}, **places(tmp_path))
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a .cmd launcher exists under Windows only")
+@pytest.mark.parametrize("char", sorted(codex_cli.CMD_SPECIAL))
+def test_under_windows_a_worktree_path_cmd_would_read_again_is_refused(tmp_path, char):
+    where = places(tmp_path) | {"worktree": tmp_path / f"da{char}ta" / "worktrees" / "nx-run-1"}
+    with pytest.raises(ValueError, match="caractère spécial"):
+        codex_cli.check_locations({}, **where)
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="/tmp is a writable root under POSIX only")
 def test_under_posix_a_repository_under_slash_tmp_is_refused_whatever_tmpdir(tmp_path):
     where = places(tmp_path) | {"common_dir": Path("/tmp/nexus-repo/.git"), "gitdir": None}

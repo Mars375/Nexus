@@ -37,6 +37,8 @@ STOP_ATTEMPTS = 3  # a control call whose stop is unconfirmed is tried again bef
 
 CODEX_ENV_ALLOW = codex_process.ENV_ALLOW - {"CODEX_HOME"}
 TEMP_NAMES = ("TEMP", "TMP", "TMPDIR")
+# What `cmd.exe` may read again in an argument of a `.cmd` launcher, even unquoted by Python.
+CMD_SPECIAL = frozenset('&|<>^%!()"')
 
 # Rule 1 of §5.3: entries of the home of Nexus that would configure Codex (compared without case:
 # Windows finds `agents.md` for `AGENTS.md`). A refusal list: Codex writes working files of its own.
@@ -102,6 +104,13 @@ def check_locations(
 ) -> None:
     """ValueError when a git directory or the home of Nexus is, or lies under, a writable root.
     `gitdir` is None before the worktree exists (checked again once it does)."""
+    if sys.platform == "win32" and CMD_SPECIAL & set(str(worktree)):
+        # `--cd <worktree>` may cross a `.cmd` launcher, whose arguments `cmd.exe` parses again.
+        raise ValueError("emplacement refusé : chemin du worktree avec un caractère spécial")
+    temps = [v for k, v in env.items() if k.upper() in TEMP_NAMES and v.strip()]
+    if any(not Path(v).is_absolute() for v in temps):
+        # Codex resolves it from its own folder, not the server's: refused rather than guessed.
+        raise ValueError("emplacement refusé : dossier temporaire relatif")
     roots = [_key(r) for r in writable_roots(env, worktree)]
     for checked in (common_dir, gitdir, codex_home):
         if checked is None:
