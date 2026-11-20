@@ -20,7 +20,7 @@ from codex_support import (
     run_info,
 )
 
-from nexus.adapters import codex_git, codex_process
+from nexus.adapters import codex_cli, codex_git, codex_process
 from nexus.adapters.codex import CodexAdapter
 
 
@@ -221,10 +221,20 @@ def test_a_hung_control_call_is_stopped_within_its_limit(rig):
 
 
 def test_a_control_call_whose_stop_is_not_confirmed_refuses_the_launch(rig, monkeypatch):
+    """Tried again, then refused; the worktree stays (the call may still run there)."""
     r = rig(lines=OK_LINES)
-    real = codex_process.kill_tree
-    monkeypatch.setattr(codex_process, "kill_tree", lambda p, *a, **k: real(p) and False)
-    r.refused()
+    real, tries = codex_process.kill_tree, []
+
+    def unconfirmed(process, *args, **kwargs):
+        tries.append(process)
+        real(process)
+        return False
+
+    monkeypatch.setattr(codex_process, "kill_tree", unconfirmed)
+    with pytest.raises(codex_cli.ControlNotStopped):
+        r.dispatch()
+    assert len(tries) == codex_cli.STOP_ATTEMPTS
+    assert "run" not in r.kinds() and (r.data / "worktrees" / "nx-run-1").exists()
 
 
 # --- C8: locations, checked before any worktree exists --------------------------------------------

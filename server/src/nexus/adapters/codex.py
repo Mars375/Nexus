@@ -92,6 +92,9 @@ class CodexAdapter:
             process = codex_process.spawn(
                 codex_cli.argv(self.binary, tree.path, windows=windows), str(tree.path), env,
                 contain=True)
+        except codex_cli.ControlNotStopped:
+            log.warning("contrôle de %s non arrêté : worktree laissé en place", run.ref)
+            raise
         except BaseException:
             self._undo_launch(tree)
             raise

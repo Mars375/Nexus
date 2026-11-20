@@ -33,6 +33,7 @@ ISOLATION_FLAGS = (
     *(arg for name in DISABLED for arg in ("--disable", name)),
 )
 CONTROL_TIMEOUT = 30.0
+STOP_ATTEMPTS = 3  # a control call whose stop is unconfirmed is tried again before giving up
 
 CODEX_ENV_ALLOW = codex_process.ENV_ALLOW - {"CODEX_HOME"}
 TEMP_NAMES = ("TEMP", "TMP", "TMPDIR")
@@ -126,6 +127,11 @@ def _check_home(home: Path) -> None:
                 raise ValueError("CODEX_HOME de Nexus configuré : lancement refusé")
 
 
+class ControlNotStopped(ValueError):
+    """A control call whose stop stayed unconfirmed: it may still run in the worktree, so the
+    launch is refused without removing it (its job handle stays open, never closed early)."""
+
+
 def _control(argv_: list[str], worktree: Path, env: dict[str, str], timeout: float) -> str | None:
     """Run one control call contained and bounded; its output, read in memory only, or None when
     it failed or overran. Never logged. The tree is always stopped, confirmed, before returning."""
@@ -137,11 +143,12 @@ def _control(argv_: list[str], worktree: Path, env: dict[str, str], timeout: flo
     except subprocess.TimeoutExpired:
         out = None
     finally:
-        stopped = codex_process.kill_tree(process)
-        for pipe in filter(None, (process.stdout, process.stderr)):
-            pipe.close()
+        stopped = any(codex_process.kill_tree(process) for _ in range(STOP_ATTEMPTS))
+        if stopped:  # unconfirmed, a pipe may still be held: closing it could block (Windows)
+            for pipe in filter(None, (process.stdout, process.stderr)):
+                pipe.close()
     if not stopped:
-        raise ValueError("contrôle d'isolement : arrêt non confirmé")
+        raise ControlNotStopped("contrôle d'isolement : arrêt non confirmé")
     return out if process.returncode == 0 else None
 
 
