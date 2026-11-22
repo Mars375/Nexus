@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm.exc import StaleDataError
 
 from nexus import secrets
-from nexus.adapters.base import Adapter, LaunchUncertain, RunEvent, RunInfo
+from nexus.adapters.base import Adapter, LaunchUncertain, RunAlreadyCommitted, RunEvent, RunInfo
 from nexus.adapters.registry import AdapterRegistry
 from nexus.clock import now
 from nexus.events import service as events
@@ -180,6 +180,13 @@ def _cancel(factory: sessionmaker[Session], adapter: Adapter | None, run: RunInf
     if adapter is not None:
         try:
             adapter.cancel(run)
+        except RunAlreadyCommitted:
+            # Nexus committed the run's work before its end was published: the commit wins, and
+            # the run ends on it (`done`, with its proof), never `cancelled` (spec #186, §1.3).
+            # Same thread and same `tick_lock` as a plain watch: neither `_cancel` nor `_watch`
+            # takes a lock, and `cancel` released the job's locks before it raised.
+            _watch(factory, adapter, run)
+            return
         except Exception as exc:  # the message could carry a secret: type only
             # Still possibly running: the run stays open and the cancel is retried next tick.
             log.warning("annulation de %s : %s", run.ref, type(exc).__name__)

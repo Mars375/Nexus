@@ -47,6 +47,8 @@ class Job:
         self.breach: str | None = None  # the fixed words of a departure from the isolation
         self.unverified = False  # the isolation could not be proved before the agent worked
         self.result: Result | None = None
+        self.commit_attempted = False  # `commit_run` was called once (a cancel then yields to it)
+        self.outcome: run_commit.Outcome | None = None  # of the last `commit_run`
         self.settled = False
         self.settle_lock = threading.Lock()  # one closing attempt at a time
         self.ended_at: float | None = None  # when the process was seen gone, whatever the polling
@@ -115,6 +117,6 @@ class Job:
         for raw in self.process.stdout:
             for fact in translate_line(raw.decode("utf-8", "replace")):
                 self.take(fact)
-        self.process.wait()
+        codex_process.wait_exited(self.process)  # never reaps: `kill_tree` does (POSIX)
         if self.ended_at is None:  # `_settle` may have seen the exit first
             self.ended_at = time.monotonic()

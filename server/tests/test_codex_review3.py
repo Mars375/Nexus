@@ -5,7 +5,7 @@ import threading
 from dataclasses import replace
 
 import pytest
-from codex_support import OK_LINES, THREAD, TURN, make_fake_codex, make_repo, run_info
+from codex_support import OK_LINES, THREAD, TURN, make_fake_codex, make_repo, run_info, write
 from conftest import ActorClient, tailscale_json
 from runs_support import dispatch, events_of, make_task, register, tick
 from sqlalchemy.exc import OperationalError
@@ -76,7 +76,7 @@ def test_a_cancelled_job_is_closed_so_it_can_be_pruned(tmp_path):
 
 def test_repeated_claimed_and_working_lines_are_kept_once(tmp_path):
     lines = [THREAD, TURN] * 500 + OK_LINES[-1:]
-    adapter, _, _ = adapter_for(tmp_path, lines=lines, commit=True)
+    adapter, _, _ = adapter_for(tmp_path, lines=lines, actions=[write()])
     adapter.dispatch(run_info(1))
     adapter.join("nx-run-1", 30)
 

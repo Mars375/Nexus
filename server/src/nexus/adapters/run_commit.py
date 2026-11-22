@@ -10,14 +10,17 @@ Preconditions, to be met by every caller:
 1. The agent could not write in the git directory of the worktree, nor in the shared one. This is
    what lets step 1 trust a commit found on the branch: it can only be Nexus's own, from an earlier
    pass (server stopped, or an exception between the commit and the event). True for `claude-code`
-   (no Bash, `--restricted`); an executor that can commit itself must not use this module as is.
+   (no Bash, `--restricted`). Codex has a shell: its sandbox cannot write the git directory, and
+   the adapter checks before the first call that the branch has not moved and that the `.git` file
+   of the worktree is unchanged (spec #186, §1.3); an executor that can commit itself must not use
+   this module without such guards.
 2. No process of the run can write in the worktree any more while it is checked and added.
    Otherwise a junction made between the walk (step 3) and `git add` (step 4) would make git read
-   outside, and the index would hold an ordinary file that the mode check cannot see. True for
-   `claude-code` (no child process that writes; the commit runs after the process has exited).
-   An executor with a shell needs a confirmed stop of the whole process tree, orphans included,
-   which `codex_process.kill_tree` does not guarantee on Windows. Step 5 is a partial defence only:
-   every added path must be a regular file the walk has seen.
+   outside, and the index would hold an ordinary file that the mode check cannot see. Both callers
+   commit only after a confirmed stop of the whole process tree (`codex_process.kill_tree` of a
+   contained process: a job object on Windows, orphans included; a process group on POSIX, which a
+   descendant can leave, so Codex is not registered there without `NEXUS_RUN_WEAK_CONTAINMENT`).
+   Step 5 is a partial defence only: every added path must be a regular file the walk has seen.
 
 Sequence: 1 proof (a commit already on the branch is the answer); 2 no filter driver in the
 configuration; 3 walk of the worktree; 4 `git add -A`; 5 check of the index; 6 `git commit`;

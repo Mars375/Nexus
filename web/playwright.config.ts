@@ -47,6 +47,9 @@ export default defineConfig({
         NEXUS_CLAUDE_BIN: claude.bin,
         NEXUS_RUN_WORKDIRS: codex.repo,
         NEXUS_RUN_MAX_MINUTES: '5',
+        // Outside Windows, Nexus registers `codex` only with this setting (process stop not guaranteed,
+        // spec #186 §4.3): Linux CI sets it for the fake Codex; on Windows it stays unset (job object).
+        ...(process.platform === 'win32' ? {} : { NEXUS_RUN_WEAK_CONTAINMENT: '1' }),
         // Here, not in global-setup.ts: Playwright starts webServer before globalSetup.
         TEMP: childTemp,
         TMP: childTemp,

@@ -79,6 +79,12 @@ class LaunchUncertain(Exception):
     until a human cancels it, and the launch is never repeated."""
 
 
+class RunAlreadyCommitted(Exception):
+    """`cancel` came after Nexus committed the run's work (its closing event was not published
+    yet): the commit wins, the supervisor publishes that end instead of cancelling (spec #186,
+    §1.3). Raised only once the process tree is stopped."""
+
+
 class Adapter(Protocol):
     name: str  # origin of the events it publishes: matches ADAPTER_NAME (checked at registration)
     # Optional `agents: frozenset[str]` attribute: the agents this deployment serves, a subset of

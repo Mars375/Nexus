@@ -29,12 +29,12 @@ from nexus.adapters import codex_git, codex_process, run_commit
 from nexus.adapters.base import Dispatched, RunInfo, WatchResult
 from nexus.adapters.claude_code_job import Job
 from nexus.adapters.registry import AdapterRegistry
+from nexus.adapters.run_commit_end import closing, commit_wins
 from nexus.config import Settings
 
 log = logging.getLogger("nexus.claude_code")
 
 PROBE_TIMEOUT = 10.0
-SHORT_SHA = 12
 KEEP_FINISHED = 20  # closed jobs kept in memory, for a late re-read
 LABEL = "Claude Code"
 
@@ -197,7 +197,11 @@ class ClaudeCodeAdapter:
                 cause = job.breach or "isolement de la session non vérifié"
                 self._fail(job, "Isolation de la session non respectée", cause)
                 return
-            ended = job.process.poll() is not None
+            if job.commit_attempted:  # an earlier pass called `commit_run`: it wins (spec #186)
+                self._stop_tree(job)
+                self._commit(job)
+                return
+            ended = codex_process.exited(job.process)
             if ended and job.ended_at is None:  # a pipe held open must not age the run
                 job.ended_at = time.monotonic()
             elapsed = (job.ended_at or time.monotonic()) - job.started
@@ -241,29 +245,15 @@ class ClaudeCodeAdapter:
         """Nexus commits what the agent wrote: only here, the process being gone (run_commit,
         precondition 2). The words of the events are the adapter's; the git output is never
         copied."""
+        job.commit_attempted = True
         request = run_commit.CommitRequest(
             tree=job.tree, gitdir=job.gitdir, identity=job.identity, run_ref=job.run_ref,
             adapter=self.name, label=LABEL, model=job.model,
         )
-        outcome = run_commit.commit_run(
+        job.outcome = run_commit.commit_run(
             request, max_file_bytes=self.max_file_bytes, budget=self.commit_budget)
-        branch = [f"branch:{job.tree.branch}"]
-        match outcome:
-            case run_commit.Committed(sha):
-                # Abbreviated: the scanner masks a full 40-hex hash as a secret, and a masked proof
-                # proves nothing.
-                self._close(job, "done", "Claude Code a terminé ; Nexus a commité",
-                            evidence=[f"commit:{sha[:SHORT_SHA]}"])
-            case run_commit.NothingToCommit():
-                self._close(job, "review", "Claude Code a terminé sans changement",
-                            body="aucun fichier modifié : à relire", evidence=branch)
-            case run_commit.Refused(motive):
-                self._fail(job, "Commit refusé par Nexus",
-                           f"commit refusé par Nexus : {motive}", branch)
-            case run_commit.GitFailed(step, timed_out):
-                what = "délai dépassé" if timed_out else step
-                self._fail(job, "Commit de Nexus impossible",
-                           f"commit de Nexus impossible ({what})", branch)
+        kind, subject, fields = closing(job.outcome, LABEL, job.tree.branch)
+        self._close(job, kind, subject, **fields)
 
     # --- supervisor calls ----------------------------------------------------------------
 
@@ -279,7 +269,7 @@ class ClaudeCodeAdapter:
         with job.lock:
             fresh = tuple(e for e in job.events if e.seq > after)
             last = job.events[-1].seq if job.events else after
-        status = "exited" if job.process.poll() is not None else "running"
+        status = "exited" if codex_process.exited(job.process) else "running"
         return WatchResult(events=fresh, cursor=str(last), native_status=status)
 
     def cancel(self, run: RunInfo) -> None:
@@ -293,6 +283,7 @@ class ClaudeCodeAdapter:
             raise RuntimeError("processus inconnu depuis le redémarrage : arrêt non confirmé")
         if not codex_process.kill_tree(job.process):
             raise RuntimeError("arrêt du processus non confirmé")
+        commit_wins(job, self._settle)  # after a commit attempt, the commit wins (spec #186)
         with job.lock:
             job.settled = True  # over for good: it may now be pruned, and nothing follows
         job.settings.unlink(missing_ok=True)

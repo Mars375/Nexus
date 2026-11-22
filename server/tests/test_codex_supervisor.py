@@ -2,10 +2,11 @@
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
-from codex_support import OK_LINES, make_fake_codex, make_repo
+from codex_support import OK_LINES, make_fake_codex, make_repo, write
 from conftest import ActorClient, tailscale_json
 from runs_support import FakeAdapter, code_of, dispatch, events_of, make_task, register, tick
 from sqlalchemy.exc import OperationalError
@@ -19,6 +20,8 @@ from nexus.runs import supervisor
 
 
 def settings_for(tmp_path, binary, repos, **extra) -> Settings:
+    # Outside Windows, Codex is registered only with the weak containment (spec #186, §4.3).
+    extra.setdefault("run_weak_containment", sys.platform != "win32")
     return Settings(data_dir=tmp_path / "data", codex_bin=str(binary),
                     run_workdirs=tuple(repos), **extra)
 
@@ -73,7 +76,7 @@ def test_the_guard_refuses_to_start_the_real_binary():
 
 
 def test_a_whole_run_through_the_supervisor(tmp_path):
-    binary = make_fake_codex(tmp_path / "fake", lines=OK_LINES, commit=True)
+    binary = make_fake_codex(tmp_path / "fake", lines=OK_LINES, actions=[write()])
     repo = make_repo(tmp_path / "repo")
     app = create_app(settings_for(tmp_path, binary, [repo]), nodes_runner=tailscale_json)
     with ActorClient(app) as client:

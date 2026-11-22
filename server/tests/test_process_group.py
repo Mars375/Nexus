@@ -38,7 +38,7 @@ def test_a_grandchild_in_the_group_is_stopped_with_the_tree(tmp_path):
     process = start(tmp_path, detach=spec)
     pid = grandchild_pid(spec)
     beating(spec)
-    process.wait(10)  # the parent is gone; the grandchild is not
+    wait_until(lambda: codex_process.exited(process), "the parent is gone")  # not reaped (6a)
 
     assert codex_process.kill_tree(process) is True
     assert stopped(spec, 2.0)
@@ -68,3 +68,21 @@ def test_a_group_that_does_not_empty_in_time_is_an_unconfirmed_stop(tmp_path, mo
 
     monkeypatch.undo()
     assert codex_process.kill_tree(process) is True
+
+
+def test_a_leader_reaped_without_the_stop_is_never_signalled(tmp_path):
+    """Its id may be taken by another group once its own was empty: once the leader is reaped
+    without the stop, Nexus only reads the group, and an answer is an unconfirmed stop."""
+    import os
+    import signal
+
+    spec = detach_spec(tmp_path / "gc")
+    process = start(tmp_path, detach=spec)
+    pid = grandchild_pid(spec)
+    try:
+        process.wait(10)  # reaped by someone else than `kill_tree`, its group not signalled
+
+        assert codex_process.kill_tree(process, timeout=0.5) is False
+        assert alive(pid)  # never signalled
+    finally:
+        os.kill(pid, signal.SIGKILL)

@@ -141,6 +141,24 @@ def test_a_checked_folder_inside_the_worktree_is_refused(tmp_path, target):
         codex_cli.check_locations({}, **where)
 
 
+@pytest.mark.parametrize("name", ["TEMP", "TMP", "TMPDIR"])
+@pytest.mark.parametrize("target", ["common_dir", "gitdir", "codex_home"])
+def test_a_temporary_directory_inside_a_checked_folder_is_refused(tmp_path, name, target):
+    """The other way round (review of PR C): a writable temporary root inside a git directory or
+    the home of Nexus would open that part of it to the agent."""
+    where = places(tmp_path)
+    for inner in (where[target], where[target] / "tmp"):  # equal, then under
+        with pytest.raises(ValueError, match="emplacement"):
+            codex_cli.check_locations({name: str(inner)}, **where)
+
+
+def test_before_the_worktree_a_temporary_directory_inside_the_repository_git_is_refused(tmp_path):
+    where = places(tmp_path) | {"gitdir": None}  # the first call, before `create_worktree`
+    inside = where["common_dir"] / "worktrees" / "nx-run-1"
+    with pytest.raises(ValueError, match="emplacement"):
+        codex_cli.check_locations({"TEMP": str(inside)}, **where)
+
+
 def test_the_name_of_a_temporary_variable_is_read_whatever_its_case(tmp_path):
     where = places(tmp_path)
     with pytest.raises(ValueError):

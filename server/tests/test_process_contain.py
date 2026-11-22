@@ -141,7 +141,7 @@ def test_codex_closes_a_run_whose_grandchild_holds_the_pipe(tmp_path):
         adapter.dispatch(run_info(1))
         job = adapter._job("nx-run-1")
         grandchild_pid(spec)
-        wait_until(lambda: job.process.poll() is not None, "the fake exited")
+        wait_until(lambda: codex_process.exited(job.process), "the fake exited")  # not reaped
 
         result = adapter.watch(run_info(1, external_ref="x"))
 
@@ -171,7 +171,7 @@ def test_claude_code_closes_a_run_whose_grandchild_holds_the_pipe(tmp_path, monk
         r.adapter.dispatch(claude_info())
         job = r.adapter._job("nx-run-1")
         grandchild_pid(spec)
-        wait_until(lambda: job.process.poll() is not None, "the fake exited")
+        wait_until(lambda: codex_process.exited(job.process), "the fake exited")  # not reaped
 
         last = r.last()
 
@@ -257,6 +257,8 @@ def test_a_failed_contained_codex_launch_leaves_no_worktree(tmp_path, monkeypatc
 class Reaped:
     """A group leader already reaped."""
 
+    returncode = 0
+
     def poll(self):
         return 0
 
@@ -283,6 +285,10 @@ class Running:
 
     def __init__(self):
         self.code = None
+
+    @property
+    def returncode(self):  # what the stop reads: never `poll()`, which would reap the leader
+        return self.code
 
     def poll(self):
         return self.code
@@ -320,3 +326,58 @@ def test_an_unconfirmed_group_stop_may_be_tried_again(monkeypatch):
 
     assert codex_process._stop_group(process, 4242, 0.1) is False  # the group never empties
     assert not getattr(process, "nexus_stopped", False)
+
+
+# --- Review of PR B: the id of a reaped group leader may be reused (rule of `_stop_group`) --------
+
+
+def test_a_reaped_leader_whose_group_still_answers_is_never_signalled(monkeypatch):
+    sent = []
+    monkeypatch.setattr(codex_process.os, "killpg", lambda pgid, sig: sent.append(sig),
+                        raising=False)
+    monkeypatch.setattr(codex_process.signal, "SIGKILL", 9, raising=False)
+
+    # Reaped elsewhere, members left: ours or another group's by now, Nexus cannot tell.
+    assert codex_process._stop_group(Reaped(), 4242, 0.2) is False
+    assert sent and set(sent) == {0}  # probes only, never a signal
+
+
+def test_a_group_probe_refused_by_permission_is_a_group_gone(monkeypatch):
+    def killpg(pgid, sig):
+        raise PermissionError
+
+    monkeypatch.setattr(codex_process.os, "killpg", killpg, raising=False)
+
+    assert codex_process._stop_group(Reaped(), 4242, 0.2) is True
+
+
+class Contained:
+    """A contained POSIX leader as `exited` sees it: never `poll()` (which would reap it)."""
+
+    returncode = None
+    pid = 4242
+    nexus_job = 4242
+
+    def poll(self):
+        raise AssertionError("poll() reaps the leader")
+
+
+@pytest.mark.parametrize(("answer", "expected"), [("zombie", True), (None, False),
+                                                  (ChildProcessError, True)])
+def test_the_end_of_a_contained_posix_leader_is_read_without_reaping_it(monkeypatch, answer,
+                                                                         expected):
+    seen = []
+
+    def waitid(idtype, pid, options):
+        seen.append(options)
+        if answer is ChildProcessError:
+            raise ChildProcessError
+        return answer
+
+    monkeypatch.setattr(codex_process, "_contained_posix", lambda process: True)
+    monkeypatch.setattr(codex_process.os, "waitid", waitid, raising=False)
+    for name, value in (("P_PID", 1), ("WEXITED", 4), ("WNOHANG", 1), ("WNOWAIT", 0x1000000)):
+        monkeypatch.setattr(codex_process.os, name, value, raising=False)
+
+    assert codex_process.exited(Contained()) is expected
+    assert seen and all(options & 0x1000000 for options in seen)  # WNOWAIT: never reaped

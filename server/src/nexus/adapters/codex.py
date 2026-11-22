@@ -5,9 +5,11 @@ How a run goes: a worktree and a branch `nexus/nx-run-<n>` are made in a reposit
 skills, spec #186 §5.3), `codex exec --json --sandbox workspace-write` starts there with the brief
 on its standard input (never in an argument) and a filtered environment; a reader thread turns the
 JSONL it prints into events kept in memory (the raw output is never written anywhere);
-`watch` hands them to the supervisor, which publishes them (masking secrets). The end is judged on
-a commit that descends from the start commit, not on Codex's word (D6). Nexus never pushes or
-merges. Nothing here blocks: every wait has a timeout, and the process runs in threads.
+`watch` hands them to the supervisor, which publishes them (masking secrets). The agent never
+commits (its sandbox cannot write the git directory): when its turn ended well, the whole process
+tree is stopped, the branch and the worktree's `.git` file are checked untouched, and NEXUS
+commits what it wrote (`run_commit`, spec #186 §1.3); the end is judged on that commit (D6).
+Nexus never pushes or merges. Nothing here blocks: every wait has a timeout.
 
 A run is lost if the server stops (its in-memory story goes with it): the supervisor then marks it
 `unknown` and a human cancels or reviews the branch. `recover` knows nothing.
@@ -29,12 +31,12 @@ from nexus.adapters.base import Dispatched, RunInfo, WatchResult
 from nexus.adapters.codex_job import Job as _Job
 from nexus.adapters.codex_translate import BREACH_SUBJECT
 from nexus.adapters.registry import AdapterRegistry
+from nexus.adapters.run_commit_end import closing, commit_wins
 from nexus.config import Settings
 
 log = logging.getLogger("nexus.codex")
 
 PROBE_TIMEOUT = 10.0
-SHORT_SHA = 12
 KEEP_FINISHED = 20  # closed jobs kept in memory, for a late re-read
 
 
@@ -55,6 +57,8 @@ class CodexAdapter:
         self.control_timeout = codex_cli.CONTROL_TIMEOUT  # each control call of the launch
         self.keep_finished = KEEP_FINISHED
         self.max_seconds, self.environ = max_seconds, environ
+        self.max_file_bytes = run_commit.MAX_FILE_BYTES  # smaller in tests
+        self.commit_budget = run_commit.COMMIT_BUDGET
         self._jobs: dict[str, _Job] = {}
         self._lock = threading.Lock()
 
@@ -74,6 +78,8 @@ class CodexAdapter:
             if run.ref in self._jobs:
                 raise ValueError("run déjà lancé")
         repo = codex_git.choose_repo(self.workdirs, run.workdir)
+        identity = run_commit.resolve_identity(repo)  # pinned for the commit (§1.4, 2)
+        run_commit.check_no_filter_driver(repo)  # before `worktree add` runs a smudge (§1.4, 3)
         common = codex_git.common_dir(repo)
         if common is None:
             raise ValueError("dossier git du dépôt illisible")
@@ -85,8 +91,9 @@ class CodexAdapter:
         self.codex_home.mkdir(parents=True, exist_ok=True)
         tree = codex_git.create_worktree(repo, self.worktrees, run.ref)
         try:
-            codex_cli.check_locations(env, gitdir=run_commit.worktree_gitdir(tree),
-                                      worktree=tree.path, **places)
+            gitdir = run_commit.worktree_gitdir(tree)
+            codex_cli.check_locations(env, gitdir=gitdir, worktree=tree.path, **places)
+            dotgit = (tree.path / ".git").read_bytes()  # checked unchanged before the commit
             codex_cli.check_isolation(self.binary, tree.path, env, windows=windows,
                                       timeout=self.control_timeout)
             process = codex_process.spawn(
@@ -98,7 +105,8 @@ class CodexAdapter:
         except BaseException:
             self._undo_launch(tree)
             raise
-        job = _Job(tree, process)
+        job = _Job(tree, process, gitdir=gitdir, identity=identity, run_ref=run.ref,
+                   dotgit=dotgit)
         job.reader = threading.Thread(target=job.read, daemon=True)
         job.reader.start()
         threading.Thread(target=self._feed, args=(process, run.brief), daemon=True).start()
@@ -119,8 +127,9 @@ class CodexAdapter:
 
     @staticmethod
     def _feed(process: subprocess.Popen, brief: str) -> None:
+        text = (brief + codex_cli.INSTRUCTION).encode("utf-8", "replace")  # no newline change
         try:
-            process.stdin.write(brief)
+            process.stdin.buffer.write(text)
             process.stdin.close()
         except OSError:  # the process already ended
             pass
@@ -175,7 +184,11 @@ class CodexAdapter:
                 self._stop_tree(job)
                 self._fail_breach(job)
                 return
-            ended = job.process.poll() is not None
+            if job.commit_attempted:  # step 0: an earlier pass called `commit_run`; it wins
+                self._stop_tree(job)
+                self._commit(job)
+                return
+            ended = codex_process.exited(job.process)
             if ended and job.ended_at is None:  # a pipe held open must not age the run
                 job.ended_at = time.monotonic()
             elapsed = (job.ended_at or time.monotonic()) - job.started
@@ -220,16 +233,25 @@ class CodexAdapter:
                 cause = failure or last_error or f"{stopped} sans terminer son tour"
             job.add("failed", "Codex a échoué", payload={"cause": cause}, final=True)
             return
-        commit = codex_git.proof(job.tree)
-        if commit:
-            # Abbreviated: the scanner masks a full 40-hex hash as a secret, and a masked proof
-            # proves nothing (the run would end in review).
-            job.add("done", "Codex a terminé", evidence=[f"commit:{commit[:SHORT_SHA]}"],
-                    final=True)
-        else:
-            job.add("review", "Codex a terminé sans commit exploitable",
-                    body="aucun commit descendant du départ : à relire",
+        cause = job.tampered()  # skipped after a commit attempt: `_settle` took it first
+        if cause is not None:
+            job.add("failed", BREACH_SUBJECT, payload={"cause": cause},
                     evidence=[f"branch:{job.tree.branch}"], final=True)
+            return
+        self._commit(job)
+
+    def _commit(self, job: _Job) -> None:
+        """Nexus commits what the agent wrote, the tree being stopped (precondition 2 of
+        `run_commit`) and the guards held, or an earlier pass having tried already."""
+        job.commit_attempted = True
+        request = run_commit.CommitRequest(
+            tree=job.tree, gitdir=job.gitdir, identity=job.identity, run_ref=job.run_ref,
+            adapter=self.name, label="Codex", model=None,
+        )
+        job.outcome = run_commit.commit_run(
+            request, max_file_bytes=self.max_file_bytes, budget=self.commit_budget)
+        kind, subject, fields = closing(job.outcome, "Codex", job.tree.branch)
+        job.add(kind, subject, final=True, **fields)
 
     def watch(self, run: RunInfo) -> WatchResult:
         job = self._job(run.ref)
@@ -243,7 +265,7 @@ class CodexAdapter:
         with job.lock:
             fresh = tuple(e for e in job.events if e.seq > after)
             last = job.events[-1].seq if job.events else after
-        status = "exited" if job.process.poll() is not None else "running"
+        status = "exited" if codex_process.exited(job.process) else "running"
         return WatchResult(events=fresh, cursor=str(last), native_status=status)
 
     def cancel(self, run: RunInfo) -> None:
@@ -257,6 +279,7 @@ class CodexAdapter:
             raise RuntimeError("processus inconnu depuis le redémarrage : arrêt non confirmé")
         if not codex_process.kill_tree(job.process):
             raise RuntimeError("arrêt du processus non confirmé")
+        commit_wins(job, self._settle)  # after a commit attempt, the commit wins (§1.3)
         with job.lock:
             job.settled = True  # over for good: it may now be pruned, and nothing follows
         with self._lock:
@@ -274,14 +297,25 @@ class CodexAdapter:
 
     def is_finished(self, ref: str) -> bool:
         job = self._job(ref)
-        return job is not None and job.process.poll() is not None
+        return job is not None and codex_process.exited(job.process)
 
 
-def register_configured(registry: AdapterRegistry, settings: Settings) -> bool:
-    """Register Codex only when it can work: a usable binary and a git repository to work in.
+def register_configured(
+    registry: AdapterRegistry, settings: Settings, *, windows: bool | None = None
+) -> bool:
+    """Register Codex only when it can work: a usable binary, a git repository to work in, and a
+    confirmed stop of its process tree. Outside Windows that stop is not confirmed (a descendant
+    may leave the process group, spec #186 §4.3): Codex is then registered only with
+    `NEXUS_RUN_WEAK_CONTAINMENT=1`, never for a real run.
 
     Otherwise nothing is registered and handing work to Codex stays a 409 `executor_unavailable`.
     """
+    windows = sys.platform == "win32" if windows is None else windows
+    if settings.run_weak_containment:
+        log.warning("NEXUS_RUN_WEAK_CONTAINMENT=1 : arrêt des processus des runs non garanti "
+                    "hors Windows, jamais pour un vrai run")
+    elif not windows:
+        return False
     if not settings.run_workdirs:
         return False
     found = shutil.which(settings.codex_bin or "codex")

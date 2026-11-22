@@ -13,8 +13,10 @@ from codex_support import (
     make_fake_codex,
     make_repo,
     run_info,
+    write,
 )
 
+from nexus.adapters import codex_cli
 from nexus.adapters.codex import CodexAdapter
 
 
@@ -50,14 +52,15 @@ def test_probe_only_asks_for_the_version(rig, tmp_path):
 
 
 def test_dispatch_creates_a_worktree_and_a_branch_and_hands_the_brief_over_stdin(rig):
-    r = rig(lines=OK_LINES, commit=True)
+    r = rig(lines=OK_LINES, actions=[write()])
 
     info, sent = r.run(brief="Le brief de Loïc")
 
     worktree = r.data / "worktrees" / "nx-run-1"
     assert worktree.is_dir()
     assert git(r.repo, "branch", "--list", "nexus/nx-run-1")
-    assert (r.dir / "stdin.txt").read_text(encoding="utf-8") == "Le brief de Loïc"
+    stdin = (r.dir / "stdin.txt").read_bytes()  # then the instruction of Nexus (spec #186, §1.2)
+    assert stdin == ("Le brief de Loïc" + codex_cli.INSTRUCTION).encode("utf-8")
     args = r.seen("args.json")
     assert "Le brief de Loïc" not in " ".join(args)
     assert args[:2] == ["exec", "--json"]
@@ -80,8 +83,8 @@ def test_the_child_environment_is_an_allow_list(rig):
     assert "CODEX_HOME" in names  # imposed: the home of Nexus, never the inherited one (PR C)
 
 
-def test_a_turn_with_a_commit_after_the_start_ends_done_with_the_commit_as_proof(rig):
-    r = rig(lines=OK_LINES, commit=True)
+def test_a_finished_turn_ends_done_with_the_commit_of_nexus_as_proof(rig):
+    r = rig(lines=OK_LINES, actions=[write()])
     info, _ = r.run()
 
     result = r.adapter.watch(run_info(1, external_ref="x"))
@@ -120,14 +123,14 @@ def test_a_crash_ends_failed_with_a_cause(rig):
 
 
 def test_a_clean_exit_without_a_finished_turn_is_not_a_success(rig):
-    r = rig(lines=[THREAD, TURN], exit=0, commit=True)
+    r = rig(lines=[THREAD, TURN], exit=0, actions=[write()])
     r.run()
 
     assert r.adapter.watch(run_info(1, external_ref="x")).events[-1].kind == "failed"
 
 
 def test_watch_resumes_after_the_cursor(rig):
-    r = rig(lines=OK_LINES, commit=True)
+    r = rig(lines=OK_LINES, actions=[write()])
     r.run()
     everything = r.adapter.watch(run_info(1, external_ref="x"))
 
@@ -137,7 +140,7 @@ def test_watch_resumes_after_the_cursor(rig):
 
 
 def test_no_raw_output_is_ever_written(rig):
-    r = rig(lines=OK_LINES, commit=True)
+    r = rig(lines=OK_LINES, actions=[write()])
     r.run()
     r.adapter.watch(run_info(1, external_ref="x"))
 

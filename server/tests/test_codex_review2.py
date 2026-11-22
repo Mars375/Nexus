@@ -48,7 +48,8 @@ def test_the_servers_repository_alone_registers_nothing(tmp_path, monkeypatch):
     binary = make_fake_codex(tmp_path / "fake", lines=[])
     monkeypatch.setattr(codex_git, "server_common_dir", lambda: codex_git.common_dir(server))
     registry = AdapterRegistry()
-    settings = Settings(data_dir=tmp_path / "d", codex_bin=str(binary), run_workdirs=(server,))
+    settings = Settings(data_dir=tmp_path / "d", codex_bin=str(binary), run_workdirs=(server,),
+                        run_weak_containment=True)  # meaningful outside Windows too (§4.3)
 
     assert codex.register_configured(registry, settings) is False
 
@@ -63,7 +64,8 @@ def test_a_missing_git_leaves_codex_unavailable_instead_of_breaking_startup(tmp_
         return subprocess.CompletedProcess(argv, 0, b"", b"")
 
     monkeypatch.setattr(subprocess, "run", no_git)
-    settings = Settings(data_dir=tmp_path / "d", codex_bin=str(binary), run_workdirs=(repo,))
+    settings = Settings(data_dir=tmp_path / "d", codex_bin=str(binary), run_workdirs=(repo,),
+                        run_weak_containment=True)  # meaningful outside Windows too (§4.3)
 
     assert codex.register_configured(AdapterRegistry(), settings) is False
 
@@ -143,7 +145,8 @@ def test_cancelling_after_a_crash_does_not_claim_a_stop_it_cannot_confirm(tmp_pa
 def test_the_server_shutdown_stops_codex_processes(tmp_path):
     binary = make_fake_codex(tmp_path / "fake", lines=[THREAD, TURN], hang=True)
     repo = make_repo(tmp_path / "repo")
-    settings = Settings(data_dir=tmp_path / "data", codex_bin=str(binary), run_workdirs=(repo,))
+    settings = Settings(data_dir=tmp_path / "data", codex_bin=str(binary), run_workdirs=(repo,),
+                        run_weak_containment=True)  # registered outside Windows too (§4.3)
     with ActorClient(create_app(settings, nodes_runner=tailscale_json)) as client:
         dispatch(client, make_task(client), workdir=str(repo))
         tick(client)
