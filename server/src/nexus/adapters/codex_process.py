@@ -9,6 +9,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Mapping
 
@@ -63,6 +64,7 @@ def spawn(
     )
     if contain:
         process.nexus_job = process.pid  # type: ignore[attr-defined]  # the group it leads
+        process.nexus_stop_lock = threading.Lock()  # type: ignore[attr-defined]
     return process
 
 
@@ -103,36 +105,82 @@ def kill_tree(process: subprocess.Popen, timeout: float = 10.0) -> bool:
     return True
 
 
+def _contained_posix(process: subprocess.Popen) -> bool:
+    return sys.platform != "win32" and getattr(process, "nexus_job", None) is not None
+
+
+def exited(process: subprocess.Popen) -> bool:
+    """Whether the process has ended. A contained POSIX leader is never reaped here: only
+    `kill_tree` reaps it, once its group has been signalled (see `_stop_group`)."""
+    if process.returncode is not None or not _contained_posix(process):
+        return process.poll() is not None
+    try:
+        return os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
+    except ChildProcessError:  # reaped meanwhile by `kill_tree`
+        return True
+
+
+def wait_exited(process: subprocess.Popen) -> None:
+    """Block until the process has ended; same rule as `exited` (no reaping of a contained POSIX
+    leader)."""
+    if process.returncode is not None or not _contained_posix(process):
+        process.wait()
+        return
+    try:
+        os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT)
+    except ChildProcessError:
+        pass
+
+
 def _group_alive(pgid: int) -> bool:
+    """Whether a process group of that id exists. A member this process may not signal still
+    exists (`EPERM`): it counts as alive, so the stop stays unconfirmed (fail closed)."""
     try:
         os.killpg(pgid, 0)
     except ProcessLookupError:
         return False
-    except PermissionError:  # a member this process may not signal is still there
+    except PermissionError:
         return True
     return True
 
 
 def _stop_group(process: subprocess.Popen, pgid: int, timeout: float) -> bool:
-    """POSIX: kill the group, reap its leader, then wait (bounded) until the group is empty."""
+    """POSIX: kill the group, reap its leader, then wait (bounded) until the group is empty.
+
+    The group is signalled only while its leader is not reaped: a zombie leader keeps the id, so
+    it still names our group. Once reaped, the id may be freed and taken by an unrelated group:
+    the group is then only read, never signalled. Every exit detection of the adapters goes
+    through `exited`/`wait_exited`, which never reap, so the leader is reaped here, after the
+    signal; a leader reaped elsewhere with members left makes an unconfirmed stop (fail closed).
+    Two stops of the same run (the reader's breach path and the tick) are serialized: otherwise
+    one could reap the leader between the other's `returncode` check and its signal.
+    """
+    lock = getattr(process, "nexus_stop_lock", None)
+    if lock is None:
+        return _stop_group_locked(process, pgid, timeout)
+    if not lock.acquire(timeout=timeout):
+        return False
+    try:
+        return _stop_group_locked(process, pgid, timeout)
+    finally:
+        lock.release()
+
+
+def _stop_group_locked(process: subprocess.Popen, pgid: int, timeout: float) -> bool:
     if getattr(process, "nexus_stopped", False):  # confirmed once: its id may be reused since
         return True
     deadline = time.monotonic() + timeout
-    if process.poll() is not None and not _group_alive(pgid):
-        # Leader reaped and group empty: its id may already belong to another group, so no
-        # signal is sent (a pid is not reused while a group of that id still exists).
-        process.nexus_stopped = True  # type: ignore[attr-defined]
-        return True
-    try:
-        os.killpg(pgid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    except OSError:
-        return False
-    try:
-        process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return False
+    if process.returncode is None:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            return False
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return False
     while _group_alive(pgid):
         if time.monotonic() >= deadline:
             return False

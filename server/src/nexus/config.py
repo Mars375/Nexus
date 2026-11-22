@@ -96,6 +96,10 @@ class Settings:
     codex_bin: str | None = None
     run_workdirs: tuple[Path, ...] = ()
     run_max_minutes: float = 60.0
+    # Outside Windows the stop of a run's process tree is not confirmed (a descendant may leave
+    # its process group): Codex, which has a shell, is registered there only when this is set
+    # (`NEXUS_RUN_WEAK_CONTAINMENT=1`; tests and the e2e with a fake Codex), never for a real run.
+    run_weak_containment: bool = False
     # Hermes adapter (ADR-023, lot G): opt-in, no fallback on PATH (the tests would reach the real
     # one); the Hermes profile that works for the agent `helios` (`default` on this machine).
     hermes_bin: str | None = None
@@ -199,6 +203,7 @@ class Settings:
                 if item.strip()
             ),
             run_max_minutes=float(os.environ.get("NEXUS_RUN_MAX_MINUTES", "60")),
+            run_weak_containment=os.environ.get("NEXUS_RUN_WEAK_CONTAINMENT") == "1",
             hermes_bin=os.environ.get("NEXUS_HERMES_BIN") or None,
             hermes_profile=os.environ.get("NEXUS_HERMES_PROFILE") or "default",
             claude_bin=os.environ.get("NEXUS_CLAUDE_BIN") or None,

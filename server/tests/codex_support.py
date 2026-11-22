@@ -5,6 +5,10 @@ No test ever runs the real `codex` binary: `NEXUS_CODEX_BIN` points to a launche
 calls of the launch (`mcp list --json`, `debug prompt-input`, spec #186 §5.3) from the scenario
 (`mcp_list`, `prompt_input`, and their `_exit` and `_hang`) and notes every call, with its
 environment, in `calls.json`.
+
+The run itself prints `lines`, then plays `actions` in the worktree (file system only, like the
+fake `claude`: Nexus is the one that commits, spec #186 §1); `commit` is the agent that commits
+anyway, which Nexus must refuse (D3).
 """
 
 from __future__ import annotations
@@ -60,11 +64,45 @@ if args[:2] == ["debug", "prompt-input"]:
 record("run")
 (here / "args.json").write_text(json.dumps(args), encoding="utf-8")
 (here / "env.json").write_text(json.dumps(sorted(os.environ)), encoding="utf-8")
-(here / "stdin.txt").write_text(sys.stdin.buffer.read().decode("utf-8"), encoding="utf-8")
+(here / "stdin.txt").write_bytes(sys.stdin.buffer.read())  # bytes: no newline change
 cd = args[args.index("--cd") + 1] if "--cd" in args else "."
+
+
+def act(step):
+    kind, path = step["do"], Path(step.get("path", "a.txt"))
+    if kind == "write":
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(step.get("content", "work\\n"), encoding="utf-8", newline="")
+    elif kind == "big_file":
+        path.write_bytes(b"x" * step["size"])
+    elif kind == "nested_repo":
+        Path("sub/.git").mkdir(parents=True, exist_ok=True)
+        Path("sub/.git/config").write_text("[core]\\n", encoding="utf-8")
+    elif kind == "gitfile":
+        Path("sub").mkdir(exist_ok=True)
+        Path("sub/.git").write_text("gitdir: ../elsewhere\\n", encoding="utf-8")
+    elif kind == "junction":
+        if sys.platform == "win32":
+            import _winapi
+            _winapi.CreateJunction(step["to"], "lien")
+        else:
+            os.symlink(step["to"], "lien", target_is_directory=True)
+    elif kind == "attributes":
+        Path(".gitattributes").write_text("* filter=witness\\n", encoding="utf-8")
+    elif kind == "ignore_all":
+        Path(".gitignore").write_text("*\\n", encoding="utf-8")
+    elif kind == "rewrite_dotgit":
+        Path(".git").unlink()  # hidden on Windows: replaced, not rewritten in place
+        Path(".git").write_text("gitdir: " + step["to"] + "\\n", encoding="utf-8")
+    elif kind == "delete_dotgit":
+        Path(".git").unlink()
+
+
 for line in scenario.get("lines", []):
     print(line, flush=True)
-if scenario.get("commit"):
+for step in scenario.get("actions", []):
+    act(step)
+if scenario.get("commit"):  # the agent commits anyway (D3): Nexus must refuse the run
     subprocess.run(
         ["git", "-c", "user.name=fake", "-c", "user.email=fake@example.invalid",
          "commit", "--allow-empty", "-m", "work"], cwd=cd, check=True, capture_output=True)
@@ -125,9 +163,25 @@ def git(cwd: Path, *args: str) -> str:
     return done.stdout.strip()
 
 
-def make_repo(path: Path) -> Path:
+def write(path: str = "a.txt", content: str = "work\n") -> dict:
+    """The `write` action of the fake: a file of the worktree (accents allowed)."""
+    return {"do": "write", "path": path, "content": content}
+
+
+def wrote(worktree: Path) -> bool:
+    """The fake's own `write()` happened: `a.txt` differs from the one of the starting commit."""
+    path = worktree / "a.txt"
+    return path.exists() and path.read_bytes() != b"a"
+
+
+def make_repo(path: Path, *, identity: bool = True) -> Path:
+    """A repository with one commit. `identity` writes a git identity in the repository itself:
+    a Codex launch resolves one (spec #186, §1.4), and a CI runner has no global one."""
     path.mkdir(parents=True, exist_ok=True)
     git(path, "init", "-q")
+    if identity:
+        git(path, "config", "user.name", "Codex Test")
+        git(path, "config", "user.email", "codex-test@example.invalid")
     (path / "a.txt").write_text("a", encoding="utf-8")
     git(path, "add", "a.txt")
     git(path, "commit", "-q", "-m", "init")
@@ -140,3 +194,17 @@ def run_info(n: int = 1, *, workdir: str | None = None, brief: str = "Fais le tr
         run_id=n, ref=f"nx-run-{n}", task="nx-task-1", executor="codex", agent="codex",
         brief=brief, workdir=workdir, external_ref=external_ref, status="dispatched",
         native_status=None, watch_cursor=cursor, version=1)
+
+
+def fail_closing_once(job):
+    """The closing event cannot be added once (the exception between `commit_run` and the event)."""
+    real, failed = job.add, []
+
+    def add(kind, subject, *args, final=False, **kwargs):
+        if final and not failed:
+            failed.append(kind)
+            raise RuntimeError("événement final perdu")
+        return real(kind, subject, *args, final=final, **kwargs)
+
+    job.add = add
+    return failed

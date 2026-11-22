@@ -1,9 +1,11 @@
 // Faux `codex` des tests de bout en bout : il ne parle à aucun modèle (ADR-023, D8).
 // Il répond aux deux appels de contrôle du lancement (`mcp list --json`, `debug prompt-input`).
-// Il lit le brief sur l'entrée standard, raconte un tour en JSONL, puis commite dans son worktree.
+// It reads the brief on stdin, tells a turn in JSONL, then writes a file in its worktree.
+// It never runs git: Nexus commits at the end of a successful turn (#186).
 // Un brief qui contient « ATTENDRE » le fait rester en vie jusqu'à ce qu'on le tue (annulation).
 // Un brief qui contient « ÉCHOUER » termine son tour par un `turn.failed` et un code non nul (cause affichée).
-import { execFileSync } from 'node:child_process'
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 const args = process.argv.slice(2)
 if (args[0] === '--version') {
@@ -39,11 +41,7 @@ if (brief.includes('ÉCHOUER')) {
   // No process.exit(): it could cut the piped output short; the exit code is set instead.
   process.exitCode = 1
 } else {
-  const cwd = args[args.indexOf('--cd') + 1]
-  execFileSync(
-    'git',
-    ['-c', 'user.name=e2e', '-c', 'user.email=e2e@example.invalid', 'commit', '--no-gpg-sign', '--allow-empty', '-m', 'travail e2e'],
-    { cwd, stdio: 'ignore' },
-  )
+  const worktree = args[args.indexOf('--cd') + 1]
+  writeFileSync(join(worktree, 'TRAVAIL-CODEX.txt'), 'travail e2e\n')
   say({ type: 'turn.completed', usage: {} })
 }

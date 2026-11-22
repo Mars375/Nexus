@@ -76,12 +76,12 @@ test('la chronologie raconte la tâche confiée dans l’ordre, jusqu’à la pr
   await hand(page, pane, 'Raconter le run', 'Écris une ligne dans le journal.')
 
   const story = pane.locator('section').filter({ has: page.getByRole('heading', { name: 'Chronologie' }) })
-  await expect(story.getByText('Codex a terminé', { exact: true })).toBeVisible({ timeout: 30_000 })
+  await expect(story.getByText('Codex a terminé ; Nexus a commité', { exact: true })).toBeVisible({ timeout: 30_000 })
   await expect(story.getByText(/Preuve : commit:[0-9a-f]{12}/)).toBeVisible()
 
   // Newest first: the run ends, then the agent's words, then the run was handed over.
   const text = (await story.getByRole('listitem').allInnerTexts()).join('\n')
-  const order = [/terminé : terminé/, /Codex a terminé/, /Codex travaille dessus/, /Codex a pris la tâche/, /confié à Codex/]
+  const order = [/terminé : terminé/, /Codex a terminé ; Nexus a commité/, /Codex travaille dessus/, /Codex a pris la tâche/, /confié à Codex/]
   const at = order.map((re) => text.search(re))
   expect(at.every((i) => i >= 0)).toBe(true)
   expect(at).toEqual([...at].sort((a, b) => a - b))

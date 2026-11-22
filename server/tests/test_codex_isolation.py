@@ -303,6 +303,13 @@ def test_a_repository_under_the_childs_temporary_directory_is_refused(
     assert r.kinds() == []
 
 
+def test_a_temporary_directory_inside_the_repository_git_is_refused(rig, no_worktree, monkeypatch):
+    r = rig(lines=OK_LINES)
+    monkeypatch.setenv("TMP", str(r.repo / ".git" / "tmp"))
+    r.refused("emplacement")
+    assert r.kinds() == []
+
+
 def test_the_home_of_nexus_under_tmpdir_is_refused(rig, no_worktree, monkeypatch):
     r = rig(lines=OK_LINES)
     monkeypatch.setenv("TMPDIR", str(r.data))

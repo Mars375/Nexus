@@ -6,7 +6,7 @@ Only `turn.failed` (or a bad exit) decides a failure, and its message is the cau
 
 import json
 
-from codex_support import DONE, THREAD, TURN, make_fake_codex, make_repo, run_info
+from codex_support import DONE, THREAD, TURN, make_fake_codex, make_repo, run_info, write
 
 from nexus.adapters.codex import CodexAdapter
 from nexus.adapters.codex_translate import translate_line
@@ -36,7 +36,7 @@ def test_an_error_line_is_a_signal_not_a_failure():
 
 
 def test_a_turn_that_recovers_after_a_reconnect_succeeds(tmp_path):
-    last = _last(tmp_path, [THREAD, TURN, RECONNECT, DONE], exit=0, commit=True)
+    last = _last(tmp_path, [THREAD, TURN, RECONNECT, DONE], exit=0, actions=[write()])
 
     assert last.kind == "done" and last.evidence[0].startswith("commit:")
 
@@ -57,6 +57,6 @@ def test_a_crash_after_an_error_line_names_the_last_error(tmp_path):
 
 
 def test_a_finished_turn_with_a_bad_exit_still_fails(tmp_path):
-    last = _last(tmp_path, [THREAD, TURN, RECONNECT, DONE], exit=1, commit=True)
+    last = _last(tmp_path, [THREAD, TURN, RECONNECT, DONE], exit=1, actions=[write()])
 
     assert last.kind == "failed" and "code 1" in last.payload["cause"]

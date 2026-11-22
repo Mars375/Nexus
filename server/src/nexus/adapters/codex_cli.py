@@ -46,6 +46,21 @@ HOME_FILES = frozenset({"config.toml", "agents.md", "agents.override.md", "hooks
 HOME_FOLDERS = ("rules", "plugins", "memories")
 SKILL_MARKERS = ("<skills_instructions>", "### Skill roots")
 
+# After the brief, on stdin (§1.2): Nexus commits, never the agent. No run reference, no path.
+INSTRUCTION = """
+
+---
+Consigne de Nexus : tu travailles dans un dossier à part, créé pour ce run.
+Ne lance ni `git commit`, ni `git add`, ni aucune commande qui écrit dans git : Nexus enregistre
+lui-même tes changements dans un commit, que Loïc relira, quand ton tour se termine sans erreur.
+Tu peux lire l'état du dépôt (`git status`, `git diff`, `git log`).
+Ne touche pas au fichier .git de ce dossier et ne crée ni dépôt git, ni lien (lien symbolique,
+point de jonction, lien physique), ni fichier de plus de 20 Mo : Nexus refuserait alors
+d'enregistrer le travail.
+Ne laisse aucun processus tourner en arrière-plan : Nexus les arrête avant d'enregistrer.
+Si rien n'est à changer, dis pourquoi dans ta réponse finale.
+"""
+
 
 def overrides(*, windows: bool) -> list[str]:
     return [*(WINDOWS_SANDBOX if windows else ()), *ISOLATION_FLAGS]
@@ -116,9 +131,11 @@ def check_locations(
         if checked is None:
             continue
         place = _key(checked)
-        if any(place.is_relative_to(root) for root in roots):
-            raise ValueError("emplacement refusé : dossier git ou CODEX_HOME dans une racine "
-                             "inscriptible (worktree ou dossier temporaire)")
+        # Both ways: a temporary root (not the worktree) inside one would open part of it too.
+        if any(place.is_relative_to(r) for r in roots) or any(
+                r.is_relative_to(place) for r in roots[1:]):
+            raise ValueError("emplacement refusé : dossier git ou CODEX_HOME et racine "
+                             "inscriptible (worktree ou dossier temporaire) imbriqués")
 
 
 def _check_home(home: Path) -> None:

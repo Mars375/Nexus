@@ -80,7 +80,7 @@ export function codexFixture(): { bin: string; repo: string } {
     const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')))
     const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, env, stdio: 'ignore' })
     git('init', '-q')
-    // Une identité propre au dépôt : Nexus fait lui-même le commit d'un run Claude Code et l'exige.
+    // A repository-local identity: Nexus makes the commit of a Codex or Claude Code run itself and requires it.
     git('config', 'user.name', 'e2e')
     git('config', 'user.email', 'e2e@example.invalid')
     writeFileSync(join(repo, 'LISEZMOI.txt'), 'dépôt de test\n')

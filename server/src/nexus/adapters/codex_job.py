@@ -3,6 +3,10 @@
 Moved out of `codex.py` (spec #186, §8, sizes). A `breach` (an MCP tool called during the run,
 §5.4) stops the whole tree at once from the reader thread, like `claude_code_job.Job.take`, and
 nothing more is recorded; the adapter closes the run `failed` once the stop is confirmed.
+
+What Nexus needs to commit the run (§1.3) lives here too: the git directory and identity fixed at
+the launch, the bytes of the worktree's `.git` file read just after it was made, and whether a
+commit was already tried (`commit_attempted`, with its last `outcome`).
 """
 
 from __future__ import annotations
@@ -10,20 +14,29 @@ from __future__ import annotations
 import subprocess
 import threading
 import time
+from pathlib import Path
 
-from nexus.adapters import codex_git, codex_process
+from nexus.adapters import codex_git, codex_process, run_commit
 from nexus.adapters.base import RunEvent
 from nexus.adapters.codex_translate import Fact, translate_line
 from nexus.clock import now
 
 MAX_PROGRESS = 300  # progress facts kept per run; the end is always kept
+BRANCH_MOVED = "isolation non respectée : la branche du run a changé pendant le run"
+DOTGIT_CHANGED = "isolation non respectée : fichier .git du worktree modifié"
 
 
 class Job:
     """One running `codex exec`: its process, its worktree and the story told so far."""
 
-    def __init__(self, tree: codex_git.Worktree, process: subprocess.Popen) -> None:
-        self.tree, self.process = tree, process
+    def __init__(
+        self, tree: codex_git.Worktree, process: subprocess.Popen, *, gitdir: Path,
+        identity: run_commit.Identity, run_ref: str, dotgit: bytes,
+    ) -> None:
+        self.tree, self.process, self.gitdir = tree, process, gitdir
+        self.identity, self.run_ref, self.dotgit = identity, run_ref, dotgit
+        self.commit_attempted = False  # `commit_run` was called once: guards skipped from then on
+        self.outcome: run_commit.Outcome | None = None  # of the last `commit_run`
         self.started = time.monotonic()
         self.lock = threading.Lock()
         self.events: list[RunEvent] = []
@@ -98,6 +111,22 @@ class Job:
             fact = translate_line(line)
             if fact is not None:
                 self.take(fact)
-        self.process.wait()
+        codex_process.wait_exited(self.process)  # never reaps: `kill_tree` does (POSIX)
         if self.ended_at is None:  # `_settle` may have seen the exit first
             self.ended_at = time.monotonic()
+
+    def tampered(self) -> str | None:
+        """The guards of precondition 1 (§1.3, step 5), or None when both hold: the branch still
+        at the start commit (read from the repository), the `.git` file of the worktree with the
+        bytes read at the launch. Any doubt (git that fails, unreadable file) is a refusal."""
+        head = codex_git.git(self.tree.repo, "rev-parse", "--verify", "--quiet",
+                             f"refs/heads/{self.tree.branch}")
+        if head.returncode != 0 or head.stdout.strip() != self.tree.start:
+            return BRANCH_MOVED
+        dotgit = self.tree.path / ".git"
+        try:
+            same = not dotgit.is_symlink() and dotgit.is_file() and (
+                dotgit.read_bytes() == self.dotgit)
+        except OSError:
+            same = False
+        return None if same else DOTGIT_CHANGED

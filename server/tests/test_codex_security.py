@@ -16,6 +16,7 @@ from codex_support import (
     make_fake_codex,
     make_repo,
     run_info,
+    write,
 )
 
 from nexus.adapters import codex_git, codex_process
@@ -155,7 +156,7 @@ def test_no_event_follows_the_closing_one(tmp_path):
 
 
 def test_a_turn_that_overran_the_limit_is_failed_even_if_it_ended_before_the_poll(tmp_path):
-    binary = make_fake_codex(tmp_path / "fake", lines=OK_LINES, commit=True)
+    binary = make_fake_codex(tmp_path / "fake", lines=OK_LINES, actions=[write()])
     repo = make_repo(tmp_path / "repo")
     adapter = CodexAdapter(str(binary), [repo], tmp_path / "data", max_seconds=5)
     adapter.dispatch(run_info(1))

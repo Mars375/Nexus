@@ -71,7 +71,7 @@ class Job:
 
 def make_job(tmp_path: Path, files: dict[str, str | bytes] | None = None) -> Job:
     """A repository (one commit, plus `files`) with a worktree `nx-run-1`, ready to commit."""
-    repo = make_repo(tmp_path / "repo")
+    repo = make_repo(tmp_path / "repo", identity=False)  # the identity tests (62) need none
     if files:
         for name, content in files.items():
             target = repo / name
