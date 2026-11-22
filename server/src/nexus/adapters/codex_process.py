@@ -9,6 +9,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Mapping
 
@@ -63,6 +64,7 @@ def spawn(
     )
     if contain:
         process.nexus_job = process.pid  # type: ignore[attr-defined]  # the group it leads
+        process.nexus_stop_lock = threading.Lock()  # type: ignore[attr-defined]
     return process
 
 
@@ -131,12 +133,14 @@ def wait_exited(process: subprocess.Popen) -> None:
 
 
 def _group_alive(pgid: int) -> bool:
-    """Whether a process group of that id exists. A member this process may not signal is not
-    one of ours (they all run as the server's user): gone, as far as the run is concerned."""
+    """Whether a process group of that id exists. A member this process may not signal still
+    exists (`EPERM`): it counts as alive, so the stop stays unconfirmed (fail closed)."""
     try:
         os.killpg(pgid, 0)
-    except (ProcessLookupError, PermissionError):
+    except ProcessLookupError:
         return False
+    except PermissionError:
+        return True
     return True
 
 
@@ -148,7 +152,21 @@ def _stop_group(process: subprocess.Popen, pgid: int, timeout: float) -> bool:
     the group is then only read, never signalled. Every exit detection of the adapters goes
     through `exited`/`wait_exited`, which never reap, so the leader is reaped here, after the
     signal; a leader reaped elsewhere with members left makes an unconfirmed stop (fail closed).
+    Two stops of the same run (the reader's breach path and the tick) are serialized: otherwise
+    one could reap the leader between the other's `returncode` check and its signal.
     """
+    lock = getattr(process, "nexus_stop_lock", None)
+    if lock is None:
+        return _stop_group_locked(process, pgid, timeout)
+    if not lock.acquire(timeout=timeout):
+        return False
+    try:
+        return _stop_group_locked(process, pgid, timeout)
+    finally:
+        lock.release()
+
+
+def _stop_group_locked(process: subprocess.Popen, pgid: int, timeout: float) -> bool:
     if getattr(process, "nexus_stopped", False):  # confirmed once: its id may be reused since
         return True
     deadline = time.monotonic() + timeout

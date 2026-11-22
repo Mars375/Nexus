@@ -342,13 +342,28 @@ def test_a_reaped_leader_whose_group_still_answers_is_never_signalled(monkeypatc
     assert sent and set(sent) == {0}  # probes only, never a signal
 
 
-def test_a_group_probe_refused_by_permission_is_a_group_gone(monkeypatch):
+def test_a_group_probe_refused_by_permission_is_an_unconfirmed_stop(monkeypatch):
     def killpg(pgid, sig):
         raise PermissionError
 
     monkeypatch.setattr(codex_process.os, "killpg", killpg, raising=False)
 
-    assert codex_process._stop_group(Reaped(), 4242, 0.2) is True
+    # EPERM: a member still exists that Nexus may not signal: never a confirmed stop.
+    assert codex_process._stop_group(Reaped(), 4242, 0.2) is False
+
+
+def test_two_stops_of_one_run_are_serialized(monkeypatch):
+    import threading
+
+    order = []
+    process = Running()
+    process.nexus_stop_lock = threading.Lock()
+    process.nexus_stop_lock.acquire()  # another stop of the same run is in progress
+    monkeypatch.setattr(codex_process.os, "killpg", lambda pgid, sig: order.append(sig),
+                        raising=False)
+
+    assert codex_process._stop_group(process, 4242, 0.1) is False  # waited, never signalled
+    assert order == []
 
 
 class Contained:
