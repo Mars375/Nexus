@@ -250,8 +250,10 @@ class ClaudeCodeAdapter:
             tree=job.tree, gitdir=job.gitdir, identity=job.identity, run_ref=job.run_ref,
             adapter=self.name, label=LABEL, model=job.model,
         )
-        job.outcome = run_commit.commit_run(
-            request, max_file_bytes=self.max_file_bytes, budget=self.commit_budget)
+        if not isinstance(job.outcome, run_commit.Committed):  # a commit made is kept: a
+            # second pass whose proof read fails must not turn it into a failure
+            job.outcome = run_commit.commit_run(
+                request, max_file_bytes=self.max_file_bytes, budget=self.commit_budget)
         kind, subject, fields = closing(job.outcome, LABEL, job.tree.branch)
         self._close(job, kind, subject, **fields)
 

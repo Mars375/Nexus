@@ -168,6 +168,12 @@ def write(path: str = "a.txt", content: str = "work\n") -> dict:
     return {"do": "write", "path": path, "content": content}
 
 
+def wrote(worktree: Path) -> bool:
+    """The fake's own `write()` happened: `a.txt` differs from the one of the starting commit."""
+    path = worktree / "a.txt"
+    return path.exists() and path.read_bytes() != b"a"
+
+
 def make_repo(path: Path, *, identity: bool = True) -> Path:
     """A repository with one commit. `identity` writes a git identity in the repository itself:
     a Codex launch resolves one (spec #186, §1.4), and a CI runner has no global one."""

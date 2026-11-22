@@ -20,6 +20,7 @@ from codex_support import (
     make_repo,
     run_info,
     write,
+    wrote,
 )
 from process_support import detach_spec, grandchild_pid, read_beat
 from run_commit_support import isolate_home
@@ -180,7 +181,9 @@ def test_a_closing_event_lost_after_the_commit_is_recovered_with_the_same_commit
 
     assert last.kind == "done" and last.evidence == [f"commit:{head[:12]}"]
     assert r.head() == head and git(r.repo, "rev-list", "--count", f"{r.start()}..{head}") == "1"
-    assert [type(o) for o in r.commits] == [run_commit.Committed] * 2  # step 1: the same sha
+    # The commit made is kept, never run again: a second proof read that failed would turn it
+    # into a failure (review of #195).
+    assert [type(o) for o in r.commits] == [run_commit.Committed]
 
 
 def test_the_maximum_duration_after_a_commit_still_ends_done(rig):
@@ -303,7 +306,8 @@ def test_the_maximum_duration_commits_nothing(rig):
     r = rig(lines=[THREAD, TURN], actions=[write()], hang=True)
     r.adapter.dispatch(run_info(1))
     deadline = time.monotonic() + 20
-    while not (r.worktree / "a.txt").exists() and time.monotonic() < deadline:
+    while not wrote(r.worktree) and time.monotonic() < deadline:  # the fake's write, not a.txt
+        # of the starting commit
         time.sleep(0.02)
     r.adapter.max_seconds = 0
 

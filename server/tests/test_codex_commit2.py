@@ -21,6 +21,7 @@ from codex_support import (
     make_repo,
     run_info,
     write,
+    wrote,
 )
 from conftest import ActorClient, tailscale_json
 from process_support import wait_until
@@ -161,13 +162,13 @@ def test_a_cancel_during_the_turn_commits_nothing(tmp_path, monkeypatch):
         worktree = tmp_path / "data" / "worktrees" / "nx-run-1"
         adapter = client.app.state.adapters.get("codex")
         job = adapter._job("nx-run-1")
-        wait_until((worktree / "a.txt").exists, "the fake wrote a.txt")
+        wait_until(lambda: wrote(worktree), "the fake wrote a.txt")
         assert client.post("/api/runs/nx-run-1/cancel").status_code == 200
 
         tick(client)
 
         assert client.get("/api/runs/nx-run-1").json()["status"] == "cancelled"
-        assert s.head() == s.start() and (worktree / "a.txt").exists()
+        assert s.head() == s.start() and wrote(worktree)
         assert not job.commit_attempted
 
 
