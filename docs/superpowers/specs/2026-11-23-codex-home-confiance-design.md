@@ -98,5 +98,5 @@ Clé construite par le test comme le fait le contrôle : `os.path.normcase(str(r
 
 1. Infirmer le choix s'il le veut. Variante plus stricte : refuser tout `config.toml` et accepter qu'un seul run Codex soit possible par nettoyage manuel. Cette variante est inutilisable en pratique.
 2. Le nouveau refus d'un `.codex` **non suivi** à la racine d'un dépôt configuré : si Loïc garde une configuration Codex locale dans l'un de ses dépôts, ce dépôt ne peut plus être confié à Codex par Nexus.
-3. Si Loïc retire, déplace ou renomme un dépôt après un run Codex, il doit retirer la table `[projects.…]` correspondante de `<NEXUS_DATA_DIR>\codex-home\config.toml` (N6). Sinon, tous les runs Codex sont refusés.
+3. Si Loïc retire, déplace ou renomme un dépôt après un run Codex, il doit retirer la table `[projects.…]` correspondante de `<NEXUS_DATA_DIR>\codex-home\config.toml` (N6), et supprimer le fichier s'il ne reste aucune entrée (un `config.toml` sans entrée est refusé, règle 3 du §4). Sinon, tous les runs Codex sont refusés.
 4. Au premier run connecté (étape 0a) : noter les **noms** des clés de `config.toml` après `codex login` puis après un tour réussi (N1). Si une clé autre que `projects.*.trust_level` apparaît, les runs reprennent leur arrêt et une PR ajuste la règle.

@@ -392,7 +392,8 @@ il peut l'infirmer :
 - **Conséquences :** les runs Codex s'enchaînent. Un dépôt où Loïc garde une configuration Codex
   locale (`.codex` non suivi) ne peut plus être confié à Codex. Un dépôt retiré, déplacé ou
   renommé après un run laisse une clé étrangère : tous les runs Codex sont refusés jusqu'à ce que
-  Loïc retire la table de `<NEXUS_DATA_DIR>\codex-home\config.toml`. Ce que `codex login` et un tour
+  Loïc retire la table de `<NEXUS_DATA_DIR>\codex-home\config.toml` (et supprime le fichier s'il ne
+  reste aucune entrée : un fichier sans entrée est refusé aussi). Ce que `codex login` et un tour
   authentifié écrivent dans ce fichier est à relever au premier run connecté (noms de clés
   seulement) ; une autre clé y ferait de nouveau refuser les runs, et la règle s'ajusterait par une
   PR.
