@@ -80,6 +80,7 @@ class CodexAdapter:
         repo = codex_git.choose_repo(self.workdirs, run.workdir)
         identity = run_commit.resolve_identity(repo)  # pinned for the commit (§1.4, 2)
         run_commit.check_no_filter_driver(repo)  # before `worktree add` runs a smudge (§1.4, 3)
+        codex_cli.check_no_project_config(repo)  # its hooks file is read (spec 2026-11-23, M7)
         common = codex_git.common_dir(repo)
         if common is None:
             raise ValueError("dossier git du dépôt illisible")
@@ -95,7 +96,7 @@ class CodexAdapter:
             codex_cli.check_locations(env, gitdir=gitdir, worktree=tree.path, **places)
             dotgit = (tree.path / ".git").read_bytes()  # checked unchanged before the commit
             codex_cli.check_isolation(self.binary, tree.path, env, windows=windows,
-                                      timeout=self.control_timeout)
+                                      repo_roots=self.workdirs, timeout=self.control_timeout)
             process = codex_process.spawn(
                 codex_cli.argv(self.binary, tree.path, windows=windows), str(tree.path), env,
                 contain=True)

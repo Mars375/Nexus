@@ -366,6 +366,37 @@ il peut l'infirmer :
   par Nexus. La règle se revoit quand un run réel aura montré ce qu'une configuration de projet
   peut déclarer en non interactif (§10 du cadrage).
 
+### Addendum (2026-11-23) — Codex : l'entrée de confiance de `codex exec` est acceptée, le `.codex` du dépôt principal est refusé
+
+Cadrage : `docs/superpowers/specs/2026-11-23-codex-home-confiance-design.md` (issue #186), qui
+répond à §11, Q12 du cadrage du 2026-11-13.
+
+**Choisi par l'agent sous la délégation de Loïc du 2026-11-13** — ce n'est pas Loïc qui a choisi ;
+il peut l'infirmer :
+
+- **Contexte :** chaque `codex exec` (0.167.1) écrit dans son `CODEX_HOME` un `config.toml` qui ne
+  contient que `[projects.'<dépôt principal>']` / `trust_level = "trusted"`, et aucune option ne
+  l'en empêche. La règle 1 du §5.3 refusait tout `config.toml` : après un premier run, tous les
+  suivants étaient refusés (condition d'arrêt de Q12). L'entrée ne change pas le démarrage du run (lancé
+  avec `--ignore-user-config` ; plus tard dans le tour, non vérifié : les refus du `.codex` le
+  couvrent), mais les contrôles chargent alors la configuration de projet `.codex`
+  du worktree et lisent celle du dépôt principal pour les hooks.
+- **Décision :** un `config.toml` est accepté seulement s'il ne contient que des entrées de
+  confiance : fichier ordinaire d'au plus 64 Kio, UTF-8 strict, TOML lisible, exactement
+  `{"projects": P}` avec `P` non vide, chaque valeur exactement `trust_level = "trusted"` ou
+  `"untrusted"`, chaque clé égale (sans casse sous Windows) à la racine d'un dépôt de
+  `NEXUS_RUN_WORKDIRS`. Tout le reste est refusé comme avant, avec le même message fixe ; un
+  `*.config.toml` reste toujours refusé. Une entrée `.codex` à la racine du **dépôt principal**
+  (suivie par git ou non) est refusée avant la création du worktree ; celle du worktree le reste.
+  Nexus n'écrit ni ne nettoie rien dans ce dossier.
+- **Conséquences :** les runs Codex s'enchaînent. Un dépôt où Loïc garde une configuration Codex
+  locale (`.codex` non suivi) ne peut plus être confié à Codex. Un dépôt retiré, déplacé ou
+  renommé après un run laisse une clé étrangère : tous les runs Codex sont refusés jusqu'à ce que
+  Loïc retire la table de `<NEXUS_DATA_DIR>\codex-home\config.toml`. Ce que `codex login` et un tour
+  authentifié écrivent dans ce fichier est à relever au premier run connecté (noms de clés
+  seulement) ; une autre clé y ferait de nouveau refuser les runs, et la règle s'ajusterait par une
+  PR.
+
 ---
 
 ## Décisions ouvertes
