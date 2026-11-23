@@ -8,19 +8,23 @@ environment, in `calls.json`.
 
 The run itself prints `lines`, then plays `actions` in the worktree (file system only, like the
 fake `claude`: Nexus is the one that commits, spec #186 §1); `commit` is the agent that commits
-anyway, which Nexus must refuse (D3).
+anyway, which Nexus must refuse (D3); `trust_home` writes the trust entry a real `codex exec`
+writes in its `CODEX_HOME` (measured M1, spec 2026-11-23).
 """
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from process_support import LAUNCH
 
 from nexus.adapters.base import RunInfo
+from nexus.adapters.codex import CodexAdapter
 from nexus.adapters.codex_git import clean_env
 
 FAKE_SCRIPT = LAUNCH + '''
@@ -96,6 +100,10 @@ def act(step):
         Path(".git").write_text("gitdir: " + step["to"] + "\\n", encoding="utf-8")
     elif kind == "delete_dotgit":
         Path(".git").unlink()
+    elif kind == "trust_home":  # what `codex exec` 0.167.1 writes, out of its sandbox (M1)
+        key = os.path.normcase(str(Path(step["repo"]).resolve()))
+        entry = "[projects." + json.dumps(key) + "]\\ntrust_level = \\"trusted\\"\\n"
+        (Path(os.environ["CODEX_HOME"]) / "config.toml").write_bytes(entry.encode("utf-8"))
 
 
 for line in scenario.get("lines", []):
@@ -208,3 +216,45 @@ def fail_closing_once(job):
 
     job.add = add
     return failed
+
+
+def trust_home(repo: Path) -> dict:
+    """The `trust_home` action of the fake: the trust entry of `repo` in `$CODEX_HOME`."""
+    return {"do": "trust_home", "repo": str(repo)}
+
+
+def trust_key(path: Path) -> str:
+    """A key of `[projects]` as the control compares it, quoted as a TOML basic string."""
+    return json.dumps(os.path.normcase(str(path.resolve())))
+
+
+class Rig:
+    def __init__(self, tmp_path: Path, monkeypatch, *, max_seconds=600.0, **scenario):
+        self.dir = tmp_path / "fake"
+        self.bin = make_fake_codex(self.dir, **scenario)
+        self.repo = make_repo(tmp_path / "repo")
+        self.data = tmp_path / "data"
+        self.home = self.data / "codex-home"
+        self.adapter = CodexAdapter(str(self.bin), [self.repo], self.data, max_seconds=max_seconds)
+        self.adapter.control_timeout = 1.0
+        self.monkeypatch = monkeypatch
+
+    def dispatch(self, n=1):
+        return self.adapter.dispatch(run_info(n))
+
+    def run(self, n=1):
+        self.dispatch(n)
+        self.adapter.join(f"nx-run-{n}", 20)
+        return self.adapter.watch(run_info(n, external_ref="x"))
+
+    def kinds(self):
+        return [c["kind"] for c in calls(self.dir)]
+
+    def refused(self, match=None):
+        """The launch fails, the run was never started, and nothing is left behind."""
+        with pytest.raises(ValueError, match=match):
+            self.dispatch()
+        assert "run" not in self.kinds() and not (self.dir / "args.json").exists()
+        assert not (self.data / "worktrees" / "nx-run-1").exists()
+        assert git(self.repo, "branch", "--list", "nexus/*") == ""
+        assert "nx-run-1" not in git(self.repo, "worktree", "list")

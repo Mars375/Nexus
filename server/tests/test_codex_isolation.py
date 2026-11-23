@@ -5,55 +5,20 @@ import json
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 import pytest
 from codex_support import (
     OK_LINES,
     THREAD,
     TURN,
+    Rig,
     calls,
     git,
-    make_fake_codex,
-    make_repo,
     mcp_call,
     run_info,
 )
 
 from nexus.adapters import codex_cli, codex_git, codex_process
-from nexus.adapters.codex import CodexAdapter
-
-
-class Rig:
-    def __init__(self, tmp_path: Path, monkeypatch, *, max_seconds=600.0, **scenario):
-        self.dir = tmp_path / "fake"
-        self.bin = make_fake_codex(self.dir, **scenario)
-        self.repo = make_repo(tmp_path / "repo")
-        self.data = tmp_path / "data"
-        self.home = self.data / "codex-home"
-        self.adapter = CodexAdapter(str(self.bin), [self.repo], self.data, max_seconds=max_seconds)
-        self.adapter.control_timeout = 1.0
-        self.monkeypatch = monkeypatch
-
-    def dispatch(self, n=1):
-        return self.adapter.dispatch(run_info(n))
-
-    def run(self, n=1):
-        self.dispatch(n)
-        self.adapter.join(f"nx-run-{n}", 20)
-        return self.adapter.watch(run_info(n, external_ref="x"))
-
-    def kinds(self):
-        return [c["kind"] for c in calls(self.dir)]
-
-    def refused(self, match=None):
-        """The launch fails, the run was never started, and nothing is left behind."""
-        with pytest.raises(ValueError, match=match):
-            self.dispatch()
-        assert "run" not in self.kinds() and not (self.dir / "args.json").exists()
-        assert not (self.data / "worktrees" / "nx-run-1").exists()
-        assert git(self.repo, "branch", "--list", "nexus/*") == ""
-        assert "nx-run-1" not in git(self.repo, "worktree", "list")
 
 
 @pytest.fixture

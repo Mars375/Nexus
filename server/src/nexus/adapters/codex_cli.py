@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import subprocess
 import sys
-from collections.abc import Mapping
+import tomllib
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from nexus.adapters import codex_process
@@ -44,6 +46,9 @@ CMD_SPECIAL = frozenset('&|<>^%!()"')
 # Windows finds `agents.md` for `AGENTS.md`). A refusal list: Codex writes working files of its own.
 HOME_FILES = frozenset({"config.toml", "agents.md", "agents.override.md", "hooks.json"})
 HOME_FOLDERS = ("rules", "plugins", "memories")
+# The one exception (spec 2026-11-23, §4): the trust entries `codex exec` writes in `config.toml`.
+TRUST_MAX_BYTES = 64 * 1024
+TRUST_VALUES = ({"trust_level": "trusted"}, {"trust_level": "untrusted"})
 SKILL_MARKERS = ("<skills_instructions>", "### Skill roots")
 
 # After the brief, on stdin (§1.2): Nexus commits, never the agent. No run reference, no path.
@@ -138,11 +143,38 @@ def check_locations(
                              "inscriptible (worktree ou dossier temporaire) imbriqués")
 
 
-def _check_home(home: Path) -> None:
+def _trust_only(path: Path, roots: Sequence[Path]) -> bool:
+    """True when `path` holds only the trust entries `codex exec` writes itself (spec 2026-11-23,
+    §4): a regular file of at most 64 KiB, strict UTF-8 TOML, `{"projects": P}` with P not empty,
+    each value exactly one `trust_level`, each key the root of a configured repository (never
+    resolved on the disk). Any doubt is False; nothing read is ever kept or told."""
+    try:
+        if path.is_symlink() or not stat.S_ISREG(path.lstat().st_mode):
+            return False
+        with path.open("rb") as file:
+            data = file.read(TRUST_MAX_BYTES + 1)
+        if len(data) > TRUST_MAX_BYTES:
+            return False
+        document = tomllib.loads(data.decode("utf-8"))  # no BOM: strict `utf-8`, never `-sig`
+    except (OSError, ValueError, RecursionError):  # TOMLDecodeError, UnicodeDecodeError: values
+        return False
+    projects = document.get("projects")
+    if document.keys() != {"projects"} or not isinstance(projects, dict) or not projects:
+        return False
+    allowed = {os.path.normcase(str(w.resolve())) for w in roots}
+    return all(
+        value in TRUST_VALUES and os.path.normcase(key) in allowed
+        for key, value in projects.items()
+    )
+
+
+def _check_home(home: Path, roots: Sequence[Path]) -> None:
     if not home.is_dir():
         raise ValueError("CODEX_HOME de Nexus absent")
     for entry in home.iterdir():
         name = entry.name.casefold()
+        if name == "config.toml" and _trust_only(entry, roots):
+            continue  # a refusal is raised below, out of any `except`: no parser message as context
         if name in HOME_FILES or name.endswith(".config.toml"):
             raise ValueError("CODEX_HOME de Nexus configuré : lancement refusé")
         if name in HOME_FOLDERS or name == "skills":
@@ -191,15 +223,22 @@ def _decoded(text: str | None) -> object:
         return _UNREADABLE
 
 
+def check_no_project_config(path: Path) -> None:
+    """A `.codex` entry (folder, file or link) at the root of the main repository or of the
+    worktree is refused (§11, Q5; spec 2026-11-23: the controls read the main one's hooks)."""
+    if os.path.lexists(path / ".codex"):
+        raise ValueError("configuration de projet .codex dans le dépôt : lancement refusé")
+
+
 def check_isolation(
     binary: str, worktree: Path, env: dict[str, str], *, windows: bool,
-    timeout: float = CONTROL_TIMEOUT,
+    repo_roots: Sequence[Path], timeout: float = CONTROL_TIMEOUT,
 ) -> None:
     """The three checks of §5.3 (and a project configuration of Codex, refused: §11, Q5), in the
-    worktree, with the run's environment and overrides. ValueError on any doubt."""
-    _check_home(Path(env["CODEX_HOME"]))
-    if os.path.lexists(worktree / ".codex"):
-        raise ValueError("configuration de projet .codex dans le dépôt : lancement refusé")
+    worktree, with the run's environment and overrides. `repo_roots` are all the configured
+    repositories: the home of Nexus is shared by them. ValueError on any doubt."""
+    _check_home(Path(env["CODEX_HOME"]), repo_roots)
+    check_no_project_config(worktree)
     listed = _control(mcp_list_argv(binary, windows=windows), worktree, env, timeout)
     if listed is None or _decoded(listed) != []:
         raise ValueError("contrôle d'isolement : mcp list n'est pas vide")
