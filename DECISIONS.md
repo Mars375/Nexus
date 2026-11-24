@@ -400,6 +400,29 @@ il peut l'infirmer :
 
 ---
 
+## ADR-024 — Délégation totale à l'agent (2026-11-25)
+
+- **Contexte :** Loïc a demandé le 2026-11-25 que l'agent mène le projet jusqu'au bout sans avoir
+  besoin de lui (« Délégation totale gère tout entièrement »). Jusque-là, il clôturait chaque phase
+  (ROADMAP, règle 1), tranchait les choix produit ouverts et levait les blocages de fusion.
+- **Décision :** l'agent (le fil principal de Claude Code, jamais un subagent ni un thread enfant)
+  clôt les phases sur leur critère de sortie, preuves jointes dans la PR de clôture ; il tranche les
+  décisions ouvertes et les choix produit, notés « choisi par l'agent sous la délégation totale de
+  Loïc du 2026-11-25 », en prenant l'option la plus restreinte et la plus réversible quand le choix
+  touche aux données de Loïc (lecture seule d'abord, périmètre minimal) ; il lève lui-même les cas où
+  `AGENTS.md` lui faisait demander à Loïc (remarque non corrigée, relectures contradictoires, doute
+  de périmètre, CodeRabbit muet après 30 minutes), en notant sa raison dans la PR.
+- **Ce qui reste à Loïc :** ses connexions et accès (`codex login`, OAuth Gmail, appairage WhatsApp,
+  tout jeton), tout achat ou abonnement, l'usage d'un de ses vrais dépôts par un run réel (les runs
+  restent sinon sur un dépôt jetable), la fusion d'une PR que l'agent n'a pas ouverte dans sa
+  conversation (règle de provenance inchangée). Le circuit de relecture et les conditions de
+  fusion restent les mêmes. Aucune règle de sécurité n'est assouplie.
+- **Conséquences :** Loïc reçoit un court résumé à chaque fin de phase, qu'il peut contester ; il
+  découvre les choix après coup et peut les renverser. Il retire la délégation quand il veut, d'un
+  message.
+
+---
+
 ## Décisions ouvertes
 
 - **Accès WhatsApp** : API officielle (numéro dédié) vs non officielle (numéro perso, risque de ban) ; exposition du webhook entrant (ex. tunnel limité à cet endpoint) — Phase 3 (ADR-018).
