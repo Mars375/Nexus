@@ -144,7 +144,7 @@ Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un 
 
 ## Prochaine action immédiate
 
-**Phase 1 :** close le 2026-11-01. **Suite :** ouvrir la Phase 2 (Exécution) au moment choisi par Loïc.
+**Phase 1 :** close le 2026-11-01. **Phase 2 (Exécution) :** en cours ; sa clôture et l'ouverture de la suivante reviennent à l'agent (règle 1, ADR-024).
 
 ---
 

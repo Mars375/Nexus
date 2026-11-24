@@ -411,11 +411,12 @@ il peut l'infirmer :
   Loïc du 2026-11-25 », en prenant l'option la plus restreinte et la plus réversible quand le choix
   touche aux données de Loïc (lecture seule d'abord, périmètre minimal) ; il lève lui-même les cas où
   `AGENTS.md` lui faisait demander à Loïc (remarque non corrigée, relectures contradictoires, doute
-  de périmètre, CodeRabbit muet après 30 minutes), en notant sa raison dans la PR.
+  de périmètre), en notant sa raison dans la PR. Un CodeRabbit muet n'est plus un motif de demander à
+  Loïc : l'agent relance la commande, et la PR attend sa relecture ou une limite explicite.
 - **Ce qui reste à Loïc :** ses connexions et accès (`codex login`, OAuth Gmail, appairage WhatsApp,
   tout jeton), tout achat ou abonnement, l'usage d'un de ses vrais dépôts par un run réel (les runs
-  restent sinon sur un dépôt jetable), la fusion d'une PR que l'agent n'a pas ouverte dans sa
-  conversation (règle de provenance inchangée). Le circuit de relecture et les conditions de
+  restent sinon sur un dépôt jetable), la fusion d'une PR que ni l'agent ni un subagent ou
+  thread enfant qu'il a lancé n'a ouverte dans sa conversation (règle de provenance inchangée). Le circuit de relecture et les conditions de
   fusion restent les mêmes. Aucune règle de sécurité n'est assouplie.
 - **Conséquences :** Loïc reçoit un court résumé à chaque fin de phase, qu'il peut contester ; il
   découvre les choix après coup et peut les renverser. Il retire la délégation quand il veut, d'un
