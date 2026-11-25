@@ -48,7 +48,7 @@ def test_the_entry_the_run_writes_does_not_refuse_the_next_run(rig, tmp_path):
     assert written == entry(r.repo)  # the bytes of M1, written by the fake `exec`
 
     r.run(2)
-    assert r.kinds() == ["mcp_list", "prompt_input", "run"] * 2
+    assert r.kinds() == ["version", "mcp_list", "prompt_input", "run"] * 2
 
 
 # --- T2: the entries of configured repositories are accepted --------------------------------------
@@ -59,7 +59,7 @@ def test_a_trust_entry_of_the_configured_repository_is_accepted(rig, level):
     r = rig(lines=OK_LINES)
     write_home(r, entry(r.repo, level))
     r.run()
-    assert r.kinds() == ["mcp_list", "prompt_input", "run"]
+    assert r.kinds() == ["version", "mcp_list", "prompt_input", "run"]
 
 
 def test_entries_of_two_configured_repositories_are_accepted(rig, tmp_path):
@@ -68,7 +68,7 @@ def test_entries_of_two_configured_repositories_are_accepted(rig, tmp_path):
     r.adapter.workdirs = [r.repo, other]
     write_home(r, entry(r.repo) + entry(other, '"untrusted"'))
     launched(r, workdir=str(r.repo))
-    assert r.kinds() == ["mcp_list", "prompt_input", "run"]
+    assert r.kinds() == ["version", "mcp_list", "prompt_input", "run"]
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="case-insensitive paths: Windows only")
@@ -76,7 +76,7 @@ def test_a_key_in_another_case_names_the_same_repository_under_windows(rig):
     r = rig(lines=OK_LINES)
     write_home(r, f"[projects.{trust_key(r.repo).upper()}]\ntrust_level = \"trusted\"\n")
     r.run()
-    assert r.kinds() == ["mcp_list", "prompt_input", "run"]
+    assert r.kinds() == ["version", "mcp_list", "prompt_input", "run"]
 
 
 # --- T3: anything else in `config.toml` refuses the launch before any control call ----------------
@@ -113,14 +113,14 @@ def test_anything_but_trust_entries_refuses_the_launch(rig, case):
     r = rig(lines=OK_LINES)
     write_home(r, CASES[case](r))
     r.refused(REFUSED)
-    assert r.kinds() == []
+    assert r.kinds() == ["version"]
 
 
 def test_a_config_folder_is_refused(rig):
     r = rig(lines=OK_LINES)
     (r.home / "config.toml").mkdir(parents=True)
     r.refused(REFUSED)
-    assert r.kinds() == []
+    assert r.kinds() == ["version"]
 
 
 def test_a_config_link_is_refused(rig, tmp_path):
@@ -133,7 +133,7 @@ def test_a_config_link_is_refused(rig, tmp_path):
     except OSError:
         pytest.skip("this system creates no symbolic link here")
     r.refused(REFUSED)
-    assert r.kinds() == []
+    assert r.kinds() == ["version"]
 
 
 # --- T4: a profile stays refused, whatever it holds -----------------------------------------------
@@ -144,7 +144,7 @@ def test_a_profile_holding_a_valid_entry_is_still_refused(rig):
     write_home(r, entry(r.repo))
     write_home(r, entry(r.repo), name="x.config.toml")
     r.refused(REFUSED)
-    assert r.kinds() == []
+    assert r.kinds() == ["version"]
 
 
 # --- T5, T5 bis: a `.codex` at the root of the main repository, or of the worktree ----------------
@@ -201,7 +201,7 @@ def test_a_codex_folder_gone_from_the_main_tree_is_still_refused_in_the_worktree
 
     r.refused(".codex")
     assert made == [1]  # the repository check passed: the worktree's refused it
-    assert r.kinds() == []
+    assert r.kinds() == ["version"]
 
 
 # --- T6: the command lines do not change ----------------------------------------------------------
@@ -214,8 +214,8 @@ def test_the_command_lines_are_the_same_with_and_without_a_trust_entry(rig):
     r.run(2)
 
     seen = calls(r.dir)
-    assert [c["kind"] for c in seen] == ["mcp_list", "prompt_input", "run"] * 2
-    for first, second in zip(seen[:3], seen[3:], strict=True):
+    assert [c["kind"] for c in seen] == ["version", "mcp_list", "prompt_input", "run"] * 2
+    for first, second in zip(seen[:4], seen[4:], strict=True):
         assert [a.replace("nx-run-1", "nx-run-2") for a in first["args"]] == second["args"]
 
 

@@ -2,9 +2,9 @@
 
 No test ever runs the real `codex` binary: `NEXUS_CODEX_BIN` points to a launcher around
 `fake_codex.py`, which replays a scenario and never talks to any model. It answers the control
-calls of the launch (`mcp list --json`, `debug prompt-input`, spec #186 §5.3) from the scenario
-(`mcp_list`, `prompt_input`, and their `_exit` and `_hang`) and notes every call, with its
-environment, in `calls.json`.
+calls of the launch (`--version`, spec 2026-11-25; `mcp list --json`, `debug prompt-input`, spec
+#186 §5.3) from the scenario (`version`, `mcp_list`, `prompt_input`, and their `_exit` and
+`_hang`) and notes every call, with its environment, in `calls.json`.
 
 The run itself prints `lines`, then plays `actions` in the worktree (file system only, like the
 fake `claude`: Nexus is the one that commits, spec #186 §1); `commit` is the agent that commits
@@ -34,9 +34,6 @@ from pathlib import Path
 here = Path(__file__).parent
 scenario = json.loads((here / "scenario.json").read_text(encoding="utf-8"))
 args = sys.argv[1:]
-if args == ["--version"]:
-    print("codex-cli 0.0.0-fake")
-    sys.exit(0)
 
 
 def record(kind):
@@ -60,6 +57,8 @@ def control(name, default):
     sys.exit(scenario.get(name + "_exit", 0))
 
 
+if args == ["--version"]:  # the version Nexus accepts by default (spec 2026-11-25, B)
+    control("version", "codex-cli 0.167.1\\n")
 if args[:3] == ["mcp", "list", "--json"]:
     control("mcp_list", "[]")
 if args[:2] == ["debug", "prompt-input"]:
@@ -158,8 +157,8 @@ def make_fake_codex(folder: Path, **scenario) -> Path:
 
 
 def calls(folder: Path) -> list[dict]:
-    """The calls the fake received, in order: `kind` (`mcp_list`, `prompt_input`, `run`), `args`,
-    `env`."""
+    """The calls the fake received, in order: `kind` (`version`, `mcp_list`, `prompt_input`,
+    `run`), `args`, `env`."""
     path = folder / "calls.json"
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
 

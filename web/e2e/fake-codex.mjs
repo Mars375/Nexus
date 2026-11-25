@@ -1,5 +1,5 @@
 // Faux `codex` des tests de bout en bout : il ne parle à aucun modèle (ADR-023, D8).
-// Il répond aux deux appels de contrôle du lancement (`mcp list --json`, `debug prompt-input`).
+// Il répond aux appels de contrôle du lancement (`--version`, `mcp list --json`, `debug prompt-input`).
 // It reads the brief on stdin, tells a turn in JSONL, then writes a file in its worktree.
 // It never runs git: Nexus commits at the end of a successful turn (#186).
 // Un brief qui contient « ATTENDRE » le fait rester en vie jusqu'à ce qu'on le tue (annulation).
@@ -8,14 +8,12 @@ import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const args = process.argv.slice(2)
-if (args[0] === '--version') {
-  console.log('codex-cli 0.0.0-e2e')
-  process.exit(0)
-}
-// The two control calls Nexus makes before a run (spec #186, §5.3), answered before stdin is read:
-// no MCP server, and a model input without any skills block.
+// The control calls Nexus makes before a run (spec #186, §5.3; spec 2026-11-25, B), answered before
+// stdin is read: a measured version, no MCP server, and a model input without any skills block.
 // The exit waits for the write to be flushed: a bare process.exit() could cut a piped output short.
 const answer = (text) => new Promise(() => process.stdout.write(text + '\n', () => process.exit(0)))
+// Nexus refuses a version it has not measured: this one must stay in MEASURED_VERSIONS (codex_cli.py).
+if (args[0] === '--version') await answer('codex-cli 0.167.1')
 if (args[0] === 'mcp' && args[1] === 'list' && args[2] === '--json') await answer('[]')
 if (args[0] === 'debug' && args[1] === 'prompt-input') {
   const input = [{ type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'Instructions de base.' }] }]
