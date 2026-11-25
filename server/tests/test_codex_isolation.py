@@ -61,7 +61,9 @@ def test_the_controls_and_the_run_get_the_very_same_environment(rig, monkeypatch
     monkeypatch.setattr(codex_process, "spawn", spy)
     r.run()
 
-    envs = [c["env"] for c in calls(r.dir)]
+    # `PWD` is set by the fake's `/bin/sh` launcher to its own folder: the version call runs from
+    # the home of Nexus, the others from the worktree. Nexus never passes it (spawned envs below).
+    envs = [{k: v for k, v in c["env"].items() if k != "PWD"} for c in calls(r.dir)]
     assert len(envs) == 4 and envs[0] == envs[1] == envs[2] == envs[3]
     assert len(spawned) == 4 and all(env == spawned[0][1] for _, env, _ in spawned)
     assert spawned[0][0] == str(r.data.resolve() / "codex-home")  # the version: no worktree yet
