@@ -310,6 +310,13 @@ sans migration) :
 - **Identité git exigée par dépôt** (locale ou globale), lue avant le lancement ; sans elle, le run
   est `failed` « lancement impossible » et rien n'est créé.
 
+**Confirmés le 2026-11-25** (choisi par l'agent sous la délégation totale de Loïc du 2026-11-25,
+ADR-024) : les cinq choix ci-dessus restent tels quels ; douze runs réels (#190) n'en ont mis aucun
+en défaut. « Confier à » garde son comportement actuel, sans code nouveau : il présélectionne le
+premier exécutant de `GET /api/executors`, qui les trie par nom ; quand `NEXUS_CLAUDE_BIN` est réglé,
+c'est donc `claude-code`, avec Sonnet comme modèle. Loïc change d'exécutant ou de modèle dans le
+dialogue avant de confier ; un autre ordre se décidera s'il gêne à l'usage.
+
 ### Addendum (2026-11-13) — Codex : bac à sable `unelevated`, commit fait par Nexus, configuration de Loïc tenue à l'écart
 
 Cadrage : `docs/superpowers/specs/2026-11-13-codex-commit-par-nexus-design.md` (issue #186).
