@@ -8,7 +8,7 @@
 
 ## Règles de progression
 
-1. **Go explicite de Loïc** à la fin de chaque phase — rien n'avance par inertie.
+1. **Go explicite à la fin de chaque phase** — rien n'avance par inertie. Depuis le 2026-11-25, l'agent le donne sous la délégation totale de Loïc (ADR-024), sur le critère de sortie et ses preuves.
 2. **Chaque phase est utilisable seule** : elle apporte quelque chose qui sert au quotidien, même si la suivante n'arrive jamais.
 3. **Une seule opération principale** à la fois ; les tâches auxiliaires sont marquées.
 4. **Chaque phase se termine par une preuve** (fichier, log, capture, test), pas une déclaration.
@@ -144,7 +144,7 @@ Le noyau est déjà utilisé au quotidien ; les dernières fusions dessinent un 
 
 ## Prochaine action immédiate
 
-**Phase 1 :** close le 2026-11-01. **Suite :** ouvrir la Phase 2 (Exécution) au moment choisi par Loïc.
+**Phase 1 :** close le 2026-11-01. **Phase 2 (Exécution) :** en cours ; sa clôture et l'ouverture de la suivante reviennent à l'agent (règle 1, ADR-024).
 
 ---
 
