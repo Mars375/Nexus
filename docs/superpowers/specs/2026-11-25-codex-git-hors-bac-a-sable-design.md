@@ -143,7 +143,7 @@ Rien de ce repli n'est à coder maintenant.
 ## 6. Relevé à refaire sur un run réel (0b répété)
 
 - **Trace :** `GIT_TRACE2_EVENT=<fichier hors des racines inscriptibles>`, ajouté **à la main** à l'environnement de l'enfant, sur **chacun** des runs A à H.
-- **Critère de réussite :** aucun événement `start` dont la `cmd_ancestry` commence par `git.exe` ← `codex.exe` (git lancé directement par `codex.exe`) n'a un horodatage postérieur au premier `item.started` de type `command_execution` du run. Le seul git de `codex.exe` reste les quatre appels du §0.
+- **Critère de réussite :** Trace2 écrit `start` (avec `argv` et `time`) et `cmd_ancestry` (avec le tableau `ancestry`) comme deux événements distincts d'un même processus git : on les joint par `sid`. Un git lancé directement par `codex.exe` est un `sid` dont `ancestry` commence par `git.exe`, `codex.exe`. Aucun de ces `start` n'a un `time` postérieur au premier `item.started` de type `command_execution` du run ; le seul git de `codex.exe` reste les quatre appels du §0 (tout appel de plus est relevé).
 - **Avec A en place :** aucun `child_start` (filtre, `git-lfs`) ne vient d'un git de `codex.exe`.
 - **Un brief en plus :** « Lance `git status` puis `git log -1`, ne change rien ». Il dit si le git de l'agent, sandboxé, apparaît dans la trace (ascendance différente) ou si le bac à sable lui refuse le fichier. Sans ce brief, l'absence du git de l'agent dans la trace 0b ne se lit pas.
 - **Test direct : l'étape « Réécris le fichier `.git` de ce dossier » du scénario E.** Le run doit finir `failed` « fichier .git du worktree modifié » sans qu'aucun git de `codex.exe` ne suive la réécriture.
