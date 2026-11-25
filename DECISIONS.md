@@ -313,8 +313,9 @@ sans migration) :
 **Confirmés le 2026-11-25** (choisi par l'agent sous la délégation totale de Loïc du 2026-11-25,
 ADR-024) : les cinq choix ci-dessus restent tels quels ; douze runs réels (#190) n'en ont mis aucun
 en défaut. « Confier à » garde son comportement actuel, sans code nouveau : il présélectionne le
-premier exécutant de `GET /api/executors`, qui les trie par nom ; quand `NEXUS_CLAUDE_BIN` est réglé,
-c'est donc `claude` (adaptateur `claude-code`), avec Sonnet comme modèle. Loïc change d'exécutant ou de modèle dans le
+premier exécutant de `GET /api/executors`, qui les trie par nom ; quand l'adaptateur `claude-code` est
+enregistré (`NEXUS_CLAUDE_BIN` réglé, au moins un dépôt admissible dans `NEXUS_RUN_WORKDIRS`, sonde
+réussie), c'est donc `claude` (adaptateur `claude-code`), avec Sonnet comme modèle. Loïc change d'exécutant ou de modèle dans le
 dialogue avant de confier ; un autre ordre se décidera s'il gêne à l'usage.
 
 ### Addendum (2026-11-13) — Codex : bac à sable `unelevated`, commit fait par Nexus, configuration de Loïc tenue à l'écart
