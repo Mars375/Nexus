@@ -10,6 +10,7 @@ import pytest
 from codex_support import COMMAND, DONE, FAILED, MESSAGE, THREAD, TURN
 
 from nexus.adapters.codex_translate import translate_line
+from nexus.events import rules as event_rules
 
 
 def test_the_session_and_the_turn_open_the_story():
@@ -51,3 +52,23 @@ def test_long_texts_are_cut():
     line = json.dumps({"type": "item.completed", "item": {
         "type": "agent_message", "text": "x" * 5000}})
     assert len(translate_line(line).body) <= 500
+
+
+def test_a_web_search_is_progress_with_its_query_cut_and_masked():
+    secret = "ghp_" + "A" * 36
+    line = json.dumps({"type": "item.completed", "item": {
+        "id": "i3", "type": "web_search", "query": f"skills.sh {secret} " + "x" * 5000}})
+    fact = translate_line(line)
+    assert (fact.kind, fact.subject) == ("progress", "Recherche web")
+    assert fact.body.startswith("skills.sh") and secret not in fact.body
+    assert len(fact.body) <= 500
+
+
+@pytest.mark.parametrize("query", [None, "", "   ", 7, "ghp_" + "A" * 36])
+def test_a_web_search_without_a_readable_query_is_still_shown(query):
+    item = {"type": "web_search"} if query is None else {"type": "web_search", "query": query}
+    fact = translate_line(json.dumps({"type": "item.completed", "item": item}))
+    assert (fact.kind, fact.subject) == ("progress", "Recherche web")
+    assert fact.body == "requête sans détail"
+    # The event protocol refuses a progress fact without a usable body (`progress_empty`).
+    assert event_rules._text(fact.body)

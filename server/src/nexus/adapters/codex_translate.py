@@ -46,6 +46,11 @@ def _item(item: dict) -> Fact | None:
             # The command only: its output may hold anything and is never kept.
             body = cut(item.get("command"))
             return Fact("progress", "Commande exécutée", body) if body else None
+        case "web_search":
+            # Turned off in the argv (#202): shown if one still happens, with the query only.
+            # A progress fact needs a body (events.rules, `progress_empty`): fixed words otherwise.
+            body = cut(item.get("query")) or "requête sans détail"
+            return Fact("progress", "Recherche web", body)
         case "file_change":
             changes = item.get("changes")
             paths = [c.get("path") for c in changes if isinstance(c, dict)] if isinstance(
