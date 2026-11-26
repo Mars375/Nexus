@@ -17,7 +17,7 @@ BIN, TREE = "C:/x/codex.cmd", "D:/data/worktrees/nx-run-1"
 
 FLAGS = [
     "-c", "skills.include_instructions=false", "-c", "skills.bundled.enabled=false",
-    "-c", "web_search=disabled",
+    "-c", "web_search=disabled", "-c", "approval_policy=never",
     "--disable", "hooks", "--disable", "plugins", "--disable", "remote_plugin",
     "--disable", "apps", "--disable", "memories", "--disable", "browser_use",
     "--disable", "computer_use", "--disable", "in_app_browser", "--disable", "tool_suggest",
@@ -31,7 +31,8 @@ FLAGS = [
 def test_the_run_argv_under_windows_is_exactly_the_framed_one():
     assert codex_cli.argv(BIN, TREE, windows=True) == [
         BIN, "exec", "--json", "--sandbox", "workspace-write", "--ephemeral",
-        "--ignore-user-config", "--ignore-rules", "-c", "windows.sandbox=unelevated", *FLAGS,
+        "--ignore-user-config", "--ignore-rules", "-c", "windows.sandbox=mxc",
+        "-c", "sandbox_workspace_write.network_access=false", *FLAGS,
         "--cd", TREE, "-",
     ]
 

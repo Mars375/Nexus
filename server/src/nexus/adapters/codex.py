@@ -2,8 +2,9 @@
 
 How a run goes: a worktree and a branch `nexus/nx-run-<n>` are made in a repository of
 `NEXUS_RUN_WORKDIRS`; after the checks of `codex_cli` (locations, home of Nexus, MCP servers and
-skills, spec #186 §5.3), `codex exec --json --sandbox workspace-write` starts there with the brief
-on its standard input (never in an argument) and a filtered environment; a reader thread turns the
+skills, spec #186 §5.3; under Windows, the network probe of `codex_network`, #207), `codex exec
+--json --sandbox workspace-write` starts there with the brief on its standard input (never in an
+argument) and a filtered environment; a reader thread turns the
 JSONL it prints into events kept in memory (the raw output is never written anywhere);
 `watch` hands them to the supervisor, which publishes them (masking secrets). The agent never
 commits (its sandbox cannot write the git directory): when its turn ended well, the whole process
@@ -26,7 +27,7 @@ import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from nexus.adapters import codex_cli, codex_git, codex_process, run_commit
+from nexus.adapters import codex_cli, codex_git, codex_network, codex_process, run_commit
 from nexus.adapters.base import Dispatched, RunInfo, WatchResult
 from nexus.adapters.codex_job import Job as _Job
 from nexus.adapters.codex_translate import BREACH_SUBJECT
@@ -99,6 +100,9 @@ class CodexAdapter:
             dotgit = (tree.path / ".git").read_bytes()  # checked unchanged before the commit
             codex_cli.check_isolation(self.binary, tree.path, env, windows=windows,
                                       repo_roots=self.workdirs, timeout=self.control_timeout)
+            if windows:  # after the home and `.codex` checks: the network cut is probed (#207)
+                codex_network.check_network_cut(self.binary, tree.path, env,
+                                                timeout=self.control_timeout)
             process = codex_process.spawn(
                 codex_cli.argv(self.binary, tree.path, windows=windows), str(tree.path), env,
                 contain=True)

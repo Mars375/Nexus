@@ -9,6 +9,7 @@ import time
 
 import pytest
 from codex_support import (
+    LAUNCH_KINDS,
     OK_LINES,
     THREAD,
     TURN,
@@ -35,11 +36,11 @@ def test_a_launch_asks_the_version_then_both_controls_in_the_worktree_then_runs(
     r.run()
 
     seen = calls(r.dir)
-    assert [c["kind"] for c in seen] == ["version", "mcp_list", "prompt_input", "run"]
+    assert [c["kind"] for c in seen] == LAUNCH_KINDS
     assert seen[0]["args"] == ["--version"]
     assert seen[1]["args"][:3] == ["mcp", "list", "--json"]
     assert seen[2]["args"][:2] == ["debug", "prompt-input"] and seen[2]["args"][-1] == ""
-    assert seen[3]["args"][:2] == ["exec", "--json"]
+    assert seen[-1]["args"][:2] == ["exec", "--json"]
     assert r.home.is_dir()  # created by Nexus when missing
 
 
@@ -64,13 +65,14 @@ def test_the_controls_and_the_run_get_the_very_same_environment(rig, monkeypatch
     # `PWD` is set by the fake's `/bin/sh` launcher to its own folder: the version call runs from
     # the home of Nexus, the others from the worktree. Nexus never passes it (spawned envs below).
     envs = [{k: v for k, v in c["env"].items() if k != "PWD"} for c in calls(r.dir)]
-    assert len(envs) == 4 and envs[0] == envs[1] == envs[2] == envs[3]
-    assert len(spawned) == 4 and all(env == spawned[0][1] for _, env, _ in spawned)
+    assert len(envs) == len(LAUNCH_KINDS) and all(env == envs[0] for env in envs)
+    assert len(spawned) == len(LAUNCH_KINDS)
+    assert all(env == spawned[0][1] for _, env, _ in spawned)
     assert spawned[0][0] == str(r.data.resolve() / "codex-home")  # the version: no worktree yet
     assert {cwd for cwd, _, _ in spawned[1:]} == {
         str(r.data.resolve() / "worktrees" / "nx-run-1")}
     assert all(kw.get("contain") is True for _, _, kw in spawned)
-    env = {k.upper(): v for k, v in envs[3].items()}
+    env = {k.upper(): v for k, v in envs[-1].items()}
     assert not {n for n in env if n.startswith(("NEXUS_", "OPENAI_"))}
     assert env["CODEX_HOME"] == str(r.data.resolve() / "codex-home")
     assert env["GIT_CONFIG_COUNT"] == "2" and env["GIT_TERMINAL_PROMPT"] == "0"
@@ -85,10 +87,10 @@ def test_through_a_cmd_launcher_the_arguments_arrive_intact(rig):
     r.run()
 
     seen = calls(r.dir)
-    args = seen[3]["args"]
-    at = args.index("windows.sandbox=unelevated")
+    args = seen[-1]["args"]
+    at = args.index("windows.sandbox=mxc")
     assert args[at - 1] == "-c"
-    assert "-c" in seen[1]["args"] and "windows.sandbox=unelevated" in seen[1]["args"]
+    assert "-c" in seen[1]["args"] and "windows.sandbox=mxc" in seen[1]["args"]
     assert seen[2]["args"][-1] == ""  # the empty prompt survives the launcher
 
 
@@ -125,7 +127,7 @@ def test_the_skills_codex_installs_itself_and_empty_folders_are_fine(rig):
     (r.home / "auth.json").write_text("{}", encoding="utf-8")  # never read by Nexus
 
     r.run()
-    assert r.kinds() == ["version", "mcp_list", "prompt_input", "run"]
+    assert r.kinds() == LAUNCH_KINDS
 
 
 def test_a_home_of_nexus_that_is_a_file_is_refused(rig):
@@ -339,7 +341,7 @@ def test_an_empty_or_absent_temporary_variable_is_ignored(rig, monkeypatch):
     monkeypatch.setenv("TEMP", "")
     monkeypatch.delenv("TMP")
     r.run()
-    assert r.kinds() == ["version", "mcp_list", "prompt_input", "run"]
+    assert r.kinds() == LAUNCH_KINDS
 
 
 # --- C10: an MCP tool call during the run stops it at once ----------------------------------------
@@ -398,5 +400,5 @@ def test_every_spawn_of_a_launch_is_contained_and_the_controls_read_no_stdin(rig
     monkeypatch.setattr(codex_process, "spawn",
                         lambda *a, **k: seen.append(k) or real(*a, **k))
     r.run()
-    assert len(seen) == 4 and all(k.get("contain") is True for k in seen)
-    assert all(k.get("stdin") == subprocess.DEVNULL for k in seen[:3])
+    assert len(seen) == len(LAUNCH_KINDS) and all(k.get("contain") is True for k in seen)
+    assert all(k.get("stdin") == subprocess.DEVNULL for k in seen[:-1])

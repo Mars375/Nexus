@@ -437,6 +437,39 @@ Loïc qui a choisi ; il peut l'infirmer :
   chaque nouvelle version refait le relevé 0b avant d'être acceptée. Monter Codex de version sans ce
   relevé fait refuser tous les runs Codex.
 
+### Addendum (2026-11-26) — Codex : bac à sable MXC strict, réseau sondé avant chaque run (#207)
+
+Cadrage : `docs/superpowers/specs/2026-11-26-codex-reseau-design.md` (issue #207).
+
+**Choisi par l'agent sous la délégation totale de Loïc du 2026-11-25** (ADR-024) — ce n'est pas
+Loïc qui a choisi ; il peut l'infirmer. Ce choix amende celui de Loïc du 2026-11-12
+(`windows.sandbox=unelevated`, addendum du 2026-11-13) :
+
+- **Contexte :** sous `unelevated`, le « blocage réseau » de Codex se réduit à des variables de
+  proxy vers `127.0.0.1:9` ; une commande de l'agent qui les ignore obtient une vraie réponse d'un
+  hôte public (TCP brut, HTTP, HTTPS par OpenSSL, DNS), constaté le 2026-11-26 sous `codex sandbox`
+  dans le job de Nexus, puis sous `exec` par un run réel. Aucun réglage `unelevated` essayé ne le
+  change.
+- **Décision :** sous Windows, Nexus passe `-c windows.sandbox=mxc` (MXC strict, jamais
+  `prefer_mxc`, qui retombe sur l'ancien bac à sable quand MXC manque) et épingle
+  `-c sandbox_workspace_write.network_access=false`, la même paire pour les contrôles et pour
+  `exec`. `-c approval_policy=never` est épinglé partout : une commande escaladée tournerait hors
+  du bac à sable. Avant chaque run, après les contrôles d'isolement, une sonde lancée dans le même
+  bac à sable tente une connexion à `192.0.2.1:443` (TEST-NET-1) ; seule la sortie exacte
+  `ERR 10013` avec le code 0 laisse partir le run, sinon « lancement impossible » en mots fixes,
+  sans modèle et sans repli vers `unelevated`. La sortie n'est ni journalisée ni stockée.
+- **Conséquences :** sous `codex sandbox`, MXC coupe le TCP sortant, le DNS et la boucle locale,
+  sans droits d'administrateur, dans le job de Nexus, avec les mêmes refus d'écriture que
+  `unelevated` (mesuré). Sous `exec`, la coupure est constatée par le run réel nx-run-19 du
+  2026-11-27 (`codex-cli 0.167.1`, argv de Nexus) : la commande `TcpClient` de l'agent vers un hôte
+  public sur le port 443 échoue avec le code 10013, une écriture hors du worktree et une écriture
+  dans le dossier git commun sont refusées, et le run finit `done` avec un commit de Nexus. La
+  sonde est passée avant ce run, et les contrôles d'isolement passent encore après lui. La règle
+  « aucun run Codex sur un vrai dépôt ni sur un contenu que Loïc ne maîtrise pas » tient ; sa
+  levée revient à Loïc. Une tâche qui a besoin de `localhost` (serveur local,
+  Playwright) échouera sous MXC. Une mise à jour de Windows peut retirer MXC : la sonde refuse alors
+  tous les runs Codex. Revenir en arrière tient en une valeur de `WINDOWS_SANDBOX`.
+
 ---
 
 ## ADR-024 — Délégation totale à l'agent (2026-11-25)
