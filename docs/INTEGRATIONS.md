@@ -193,8 +193,10 @@ Deux familles :
 | Intégration | Famille | Sens | Phase | État |
 |---|---|---|---|---|
 | Nœuds | source | R | 1 | à brancher |
-| Hermes | exécutant | dispatch + R | 2 | audit fait ; enums relevés ; v0.23.0 relevée (2026-11-11) |
-| Claude / Codex / Orca | exécutant | dispatch + R | 2 | contrats à écrire |
+| Hermes | exécutant | dispatch + R | 2 | livré pour Helios seul (#179), runs réels du 2026-11-11 ; Mnēma et Aether reportés (ADR-026) |
+| Claude Code | exécutant | dispatch + R | 2 | livré (lot H), douze runs réels (#190) |
+| Codex | exécutant | dispatch + R | 2 | livré (#186), runs réels du 2026-11-26 ; réserves #200, #201, #207 (réseau non coupé) |
+| Orca | exécutant | dispatch + R | 2 | reporté, à cadrer (ADR-026) |
 | Chats et messagerie | source | R + envoi (gated vers un tiers) | 3 | tous les canaux (ADR-018) ; accès WhatsApp à trancher |
 | Cron | source | R | 4 | sources connues |
 | Mail | source | R (+ envoi gated) | 4 | scope Gmail à cadrer |
