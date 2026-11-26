@@ -3,12 +3,9 @@
 import sqlite3
 
 from alembic import command
-from alembic.autogenerate import compare_metadata
-from alembic.runtime.migration import MigrationContext
-from sqlalchemy import create_engine
+from migration_support import schema_diff
 
 from nexus import migrate
-from nexus.db import Base
 
 TS = "2026-11-11T09:00:00+00:00"
 
@@ -42,11 +39,8 @@ def test_0009_adds_a_nullable_model_and_drops_it_again(settings):
     assert col[2].upper().startswith("VARCHAR") and col[3] == 0 and col[4] is None
     with sqlite3.connect(settings.db_path) as conn:
         assert conn.execute("SELECT status, model FROM runs").fetchall() == [("running", None)]
-    engine = create_engine(settings.db_url)
-    with engine.connect() as connection:
-        diff = compare_metadata(MigrationContext.configure(connection), Base.metadata)
-    engine.dispose()
-    assert diff == []
+    command.upgrade(cfg, "head")  # the models describe the head schema
+    assert schema_diff(settings.db_url) == []
 
     command.downgrade(cfg, "0008")
 

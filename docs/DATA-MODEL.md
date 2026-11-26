@@ -118,6 +118,19 @@ Fait structuré publié par un acteur (voir [EVENT-PROTOCOL.md](EVENT-PROTOCOL.m
 | `task` | ref optionnelle |
 | `last_message_at`, `measured_at` | |
 
+**Conversation externe indexée** (ADR-025, table `conversations`, migration `0010`). Une session de Claude Code, de Codex ou de Hermes, lue en liste blanche, est copiée **masquée** dans un index reconstructible de `nexus.db`. Sa référence `nx-conv-<n>` est une **poignée de la ligne d'index**, pas l'identité de la session : celle-ci reste `claude-session:<id>`, `codex-session:<id>` ou `hermes-session:<id>`, renvoyée dans `external_ref`. Une purge suivie d'une relecture donne à la même session une nouvelle poignée ; les ids sont `AUTOINCREMENT`, donc une poignée purgée n'est jamais réattribuée.
+
+| Champ | Notes |
+|---|---|
+| `source` | `claude-code`, `codex` ou `hermes` (CHECK) |
+| `external_id` | id de session à la source, unique avec `source` |
+| `channel` | Hermes : la `source` de la session (`cli`) ; sinon nul |
+| `title`, `workspace`, `git_branch` | texte **déjà masqué**, puis coupé (200, 500 et 200 caractères au plus) ; nul si absent |
+| `started_at`, `last_message_at` | instants, nuls si inconnus |
+| `message_count` | tenu à jour par l'ingestion |
+| `missing_since` | nul tant que la session existe à la source |
+| `measured_at` | dernière lecture réussie |
+
 ### 2.8 Message — native ou externe
 
 | Champ | Notes |
@@ -126,6 +139,21 @@ Fait structuré publié par un acteur (voir [EVENT-PROTOCOL.md](EVENT-PROTOCOL.m
 | `kind` | `chat`, `question`, `answer`, `handoff`, `note`, `decision` |
 | `body` | contenu (secrets → `[REDACTED]`) |
 | `task` | ref optionnelle (tâche née du message, ou liée) |
+
+`from`, `to[]` et `kind` restent ceux des messages natifs. **Message externe indexé** (ADR-025, table `conversation_messages`) : référence `nx-msg-<n>`, poignée d'index comme `nx-conv-<n>` (`AUTOINCREMENT`).
+
+| Champ | Notes |
+|---|---|
+| `external_id` | Claude `uuid`, Codex `ordinal`, Hermes `messages.id`, unique dans sa conversation |
+| `role` | `user` ou `assistant` (CHECK) |
+| `author` | `loic`, `claude`, `codex`, `helios`, `hermes` ou `unknown` : `loic` seulement si la source le prouve (ADR-005) |
+| `at` | instant |
+| `body` | texte **masqué**, de 1 à 16 000 caractères, sans caractère nul (CHECK) ; indexé par la FTS5 `conversation_fts` |
+| `truncated` | le texte masqué a été coupé à 16 000 caractères |
+| `redacted` | le scanner a masqué au moins une valeur |
+| `model` | Claude `message.model`, sinon nul |
+
+L'avancement de la lecture de chaque fichier source vit dans `conversation_cursors`, jamais exposée par l'API.
 
 ### 2.9 Artifact / Evidence — native (référence)
 
@@ -243,6 +271,7 @@ Decision *─* Task
 | Conversations nées dans Nexus | **Nexus** | propriétaire |
 | Travail confié à Hermes / Claude / Codex / Orca | l'exécutant | suit via `Run.external_ref` |
 | Chats Telegram, sessions Hermes/Claude/Codex | leur système | lit, indexe ; envoie via adaptateur (gated) |
+| Index des sessions Claude, Codex et Hermes (ADR-025) | reconstructible depuis leur système | copie **masquée** dans `nexus.db`, gardée 31 jours par défaut (`NEXUS_CONV_RETENTION_DAYS`), absente des sauvegardes ; aucune source lue sans réglage explicite |
 | Mails | Gmail | lit, indexe ; brouillons ; envoi gated |
 | Calendrier | Google Calendar | lit ; création gated |
 | Code, commits, PR | Git / GitHub | lit, référence |

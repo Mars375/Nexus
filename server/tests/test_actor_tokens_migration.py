@@ -4,16 +4,13 @@ import sqlite3
 
 import pytest
 from alembic import command
-from alembic.autogenerate import compare_metadata
-from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from conftest import ActorClient
-from sqlalchemy import create_engine
+from migration_support import schema_diff
 
 from nexus import migrate
 from nexus.actors import ACTORS
 from nexus.app import create_app
-from nexus.db import Base
 
 HASH = "a" * 64
 
@@ -64,11 +61,7 @@ def test_upgrading_a_0004_database_keeps_its_data_and_adds_no_token(settings):
 def test_the_migrated_schema_matches_the_models(settings):
     at_0004(settings)
     migrate.upgrade(settings.db_url)
-    engine = create_engine(settings.db_url)
-    with engine.connect() as conn:
-        diff = compare_metadata(MigrationContext.configure(conn), Base.metadata)
-    engine.dispose()
-    assert diff == []
+    assert schema_diff(settings.db_url) == []
 
 
 def test_the_constraints_hold_in_the_database(settings):

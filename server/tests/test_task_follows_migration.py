@@ -4,14 +4,11 @@ import sqlite3
 
 import pytest
 from alembic import command
-from alembic.autogenerate import compare_metadata
-from alembic.runtime.migration import MigrationContext
 from conftest import ActorClient
-from sqlalchemy import create_engine
+from migration_support import schema_diff
 
 from nexus import migrate
 from nexus.app import create_app
-from nexus.db import Base
 
 TS = "2026-10-13T07:00:00+00:00"
 TABLES = ("tasks", "task_dependencies", "task_comments", "task_history", "events")
@@ -124,11 +121,7 @@ def test_the_foreign_key_is_real_and_sets_null_on_delete(at_0005):
 
 def test_the_migrated_schema_matches_the_models(at_0005):
     migrate.upgrade(at_0005.db_url)
-    engine = create_engine(at_0005.db_url)
-    with engine.connect() as conn:
-        diff = compare_metadata(MigrationContext.configure(conn), Base.metadata)
-    engine.dispose()
-    assert diff == []
+    assert schema_diff(at_0005.db_url) == []
 
 
 def test_an_empty_database_migrates_to_head(settings):

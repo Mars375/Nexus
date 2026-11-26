@@ -4,16 +4,13 @@ import sqlite3
 
 import pytest
 from alembic import command
-from alembic.autogenerate import compare_metadata
-from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from conftest import ActorClient
-from sqlalchemy import create_engine
+from migration_support import schema_diff
 
 from nexus import backup, migrate
 from nexus.app import create_app
 from nexus.config import Settings
-from nexus.db import Base
 
 
 def populated_0003(settings: Settings) -> None:
@@ -93,12 +90,7 @@ def test_the_migrated_schema_matches_the_models(settings):
     populated_0003(settings)
     migrate.upgrade(settings.db_url)
 
-    engine = create_engine(settings.db_url)
-    with engine.connect() as conn:
-        diff = compare_metadata(MigrationContext.configure(conn), Base.metadata)
-    engine.dispose()
-
-    assert diff == []
+    assert schema_diff(settings.db_url) == []
 
 
 def test_the_constraints_hold_in_the_database(settings):

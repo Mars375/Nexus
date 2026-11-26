@@ -249,6 +249,16 @@ def no_claude_from_the_shell(monkeypatch):
     monkeypatch.delenv("NEXUS_CLAUDE_BIN", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def no_conversation_sources_from_the_shell(monkeypatch):
+    """A root exported for a real run must never make the suite read Loïc's sessions (ADR-025)."""
+    for name in (
+        "NEXUS_CONV_CLAUDE_ROOT", "NEXUS_CONV_CODEX_ROOT", "NEXUS_CONV_HERMES_DB",
+        "NEXUS_CONV_POLL_SECONDS", "NEXUS_CONV_SINCE_DAYS", "NEXUS_CONV_RETENTION_DAYS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture(scope="session")
 def child_temp(tmp_path_factory) -> str:
     """One folder for the whole session: `<basetemp>/child-temp0`, a sibling of every `tmp_path`."""

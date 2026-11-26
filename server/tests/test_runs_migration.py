@@ -3,12 +3,9 @@
 import sqlite3
 
 from alembic import command
-from alembic.autogenerate import compare_metadata
-from alembic.runtime.migration import MigrationContext
-from sqlalchemy import create_engine
+from migration_support import schema_diff
 
 from nexus import migrate
-from nexus.db import Base
 
 
 def tables(path) -> set[str]:
@@ -34,11 +31,7 @@ def test_0008_creates_runs_matching_the_models_and_drops_it_again(settings):
     command.upgrade(cfg, "head")  # 0009 adds runs.model: the models describe the head schema
 
     assert "runs" in tables(settings.db_path)
-    engine = create_engine(settings.db_url)
-    with engine.connect() as connection:
-        diff = compare_metadata(MigrationContext.configure(connection), Base.metadata)
-    engine.dispose()
-    assert diff == []
+    assert schema_diff(settings.db_url) == []
     conn = sqlite3.connect(settings.db_path)
     indexes = {r[1] for r in conn.execute("PRAGMA index_list('runs')")}
     conn.close()
