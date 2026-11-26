@@ -17,10 +17,12 @@ BIN, TREE = "C:/x/codex.cmd", "D:/data/worktrees/nx-run-1"
 
 FLAGS = [
     "-c", "skills.include_instructions=false", "-c", "skills.bundled.enabled=false",
+    "-c", "web_search=disabled",
     "--disable", "hooks", "--disable", "plugins", "--disable", "remote_plugin",
     "--disable", "apps", "--disable", "memories", "--disable", "browser_use",
     "--disable", "computer_use", "--disable", "in_app_browser", "--disable", "tool_suggest",
     "--disable", "skill_mcp_dependency_install", "--disable", "skill_search",
+    "--disable", "standalone_web_search",
 ]
 
 # --- C1, C2: the command line ---------------------------------------------------------------------
@@ -288,5 +290,5 @@ def test_an_mcp_tool_call_is_a_breach_in_fixed_words(event):
 def test_other_started_items_and_unknown_types_still_say_nothing():
     for item in ({"type": "agent_message", "text": "x"}, {"type": "something_new"}):
         assert translate_line(json.dumps({"type": "item.started", "item": item})) is None
-    assert translate_line(json.dumps({"type": "item.completed", "item": {"type": "web_search"}}
+    assert translate_line(json.dumps({"type": "item.completed", "item": {"type": "something_new"}}
                                      )) is None

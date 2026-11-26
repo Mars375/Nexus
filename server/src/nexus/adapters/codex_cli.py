@@ -27,11 +27,15 @@ WINDOWS_SANDBOX = ("-c", "windows.sandbox=unelevated")
 DISABLED = (
     "hooks", "plugins", "remote_plugin", "apps", "memories", "browser_use", "computer_use",
     "in_app_browser", "tool_suggest", "skill_mcp_dependency_install", "skill_search",
+    "standalone_web_search",
 )
 # The overrides shared by the run and its control calls (§5.2). An unknown feature name makes
 # Codex fail: the control calls then refuse the launch before any model runs.
 ISOLATION_FLAGS = (
     "-c", "skills.include_instructions=false", "-c", "skills.bundled.enabled=false",
+    # No web search (#202): a query leaves the machine and may carry text of the brief or the
+    # repository. `web_search` is a top-level key (unset means `cached`), not a feature.
+    "-c", "web_search=disabled",
     *(arg for name in DISABLED for arg in ("--disable", name)),
 )
 CONTROL_TIMEOUT = 30.0
