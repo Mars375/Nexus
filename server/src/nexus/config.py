@@ -70,6 +70,47 @@ _HERMES_PROFILE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 _ORIGIN = re.compile(r"[a-z][a-z0-9+.-]*://(\[[0-9a-f:.]+\]|[a-z0-9._-]+)(:[0-9]{1,5})?")
 
 
+# Conversation sources (spec §6.1): field -> (variable, min, max, fixed message). The message
+# names the variable and its bounds, never the received value (ADR-006).
+_CONV_BOUNDS = {
+    field: (name, low, high, f"{name} : un entier de {low} à {high} est attendu")
+    for field, name, low, high in (
+        ("conv_poll_seconds", "NEXUS_CONV_POLL_SECONDS", 10, 3600),
+        ("conv_since_days", "NEXUS_CONV_SINCE_DAYS", 1, 3650),
+        ("conv_retention_days", "NEXUS_CONV_RETENTION_DAYS", 1, 3650),
+    )
+}
+_CONV_WINDOW_MESSAGE = (
+    "NEXUS_CONV_SINCE_DAYS : la fenêtre ne peut pas dépasser NEXUS_CONV_RETENTION_DAYS"
+)
+_ASCII_INT = re.compile(r"[0-9]{1,9}")
+
+
+def _env_int(field: str, default: int) -> int:
+    """A strict integer from the environment: ASCII digits only; empty or absent is the default.
+
+    `int()` alone would admit `1_000`, `+31` or non-ASCII digits. A refusal gives the same fixed
+    message as the bound check.
+    """
+    name, _low, _high, message = _CONV_BOUNDS[field]
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    if not _ASCII_INT.fullmatch(raw):
+        raise ValueError(message)
+    return int(raw)
+
+
+def _env_root(name: str) -> Path | None:
+    """A configured root, or None (the source is disabled): never a fallback on the home folder.
+
+    The path itself is checked by `conversations.paths.check_root` when the source starts, so
+    that no message ever repeats it.
+    """
+    raw = os.environ.get(name) or ""
+    return Path(raw) if raw.strip() else None
+
+
 def _is_plain_origin(origin: str) -> bool:
     """Une origine sûre : schéma://hôte[:port] exactement (jamais `null`, chemin, identifiants)."""
     return _ORIGIN.fullmatch(origin) is not None
@@ -107,6 +148,13 @@ class Settings:
     # Claude Code adapter (ADR-023, lot H): opt-in too, never looked up on PATH (the real `claude`
     # is installed on this machine and no test may reach it).
     claude_bin: str | None = None
+    # Conversation sources (ADR-025 D1, D6): none is read unless its root is set, never `~`.
+    conv_claude_root: Path | None = None
+    conv_codex_root: Path | None = None
+    conv_hermes_db: Path | None = None
+    conv_poll_seconds: int = 60
+    conv_since_days: int = 31
+    conv_retention_days: int = 31
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "hosts", _normalize_hosts(self.hosts))
@@ -148,6 +196,14 @@ class Settings:
                     "NEXUS_ALLOWED_ORIGINS : chaque origine doit avoir la forme "
                     "schéma://hôte[:port], sans chemin, sans identifiants et sans requête"
                 )
+
+        for field, (_name, low, high, message) in _CONV_BOUNDS.items():
+            value = getattr(self, field)
+            # `type(...) is int` refuses bool, float and str; never the received value (ADR-006).
+            if type(value) is not int or not low <= value <= high:
+                raise ValueError(message)
+        if self.conv_since_days > self.conv_retention_days:
+            raise ValueError(_CONV_WINDOW_MESSAGE)
 
     @property
     def loopback_host(self) -> str:
@@ -207,4 +263,10 @@ class Settings:
             hermes_bin=os.environ.get("NEXUS_HERMES_BIN") or None,
             hermes_profile=os.environ.get("NEXUS_HERMES_PROFILE") or "default",
             claude_bin=os.environ.get("NEXUS_CLAUDE_BIN") or None,
+            conv_claude_root=_env_root("NEXUS_CONV_CLAUDE_ROOT"),
+            conv_codex_root=_env_root("NEXUS_CONV_CODEX_ROOT"),
+            conv_hermes_db=_env_root("NEXUS_CONV_HERMES_DB"),
+            conv_poll_seconds=_env_int("conv_poll_seconds", 60),
+            conv_since_days=_env_int("conv_since_days", 31),
+            conv_retention_days=_env_int("conv_retention_days", 31),
         )

@@ -18,6 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.actors import ACTORS
+from nexus.conversations import models as _conversation_models  # noqa: F401 — on Base.metadata
 from nexus.db import AwareDateTime, Base
 from nexus.runs.states import ACTIVE, STATUSES
 

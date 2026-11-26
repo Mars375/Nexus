@@ -28,6 +28,7 @@ from nexus.auth.deps import Authenticated
 from nexus.auth.tickets import TicketStore
 from nexus.clock import now
 from nexus.config import Settings
+from nexus.conversations import models as conv_models
 from nexus.db import make_engine
 from nexus.events import api as events_api
 from nexus.events.service import EventNotFound
@@ -97,7 +98,12 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # FTS5 is required (ADR-025): fail closed before anything touches the disk.
+        conv_models.require_fts5()
         settings.data_dir.mkdir(parents=True, exist_ok=True)
+        # A crash during a backup may have left a partial copy that still holds the conversation
+        # index: removed before any new copy (ADR-025, D10).
+        backup.remove_partials(settings.backup_dir)
         # Réversibilité (ROADMAP, règle 5) : copie de la base existante avant toute migration.
         # Elle tient lieu de sauvegarde de démarrage : une seconde copie ferait tourner la
         # rotation et pourrait effacer ce point de retour (ex. NEXUS_BACKUP_KEEP=1).
