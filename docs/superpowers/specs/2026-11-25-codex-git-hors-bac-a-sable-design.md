@@ -100,7 +100,7 @@ Les runs réels s'arrêtent. On ajoute alors, dans cet ordre de preuve :
 
 1. `GIT_DIR` et `GIT_WORK_TREE` (le dossier git du worktree et le worktree) dans l'environnement de `codex.exe` ;
 2. `-c shell_environment_policy.exclude=['GIT_DIR','GIT_WORK_TREE']`, des apostrophes et non des guillemets, à cause de `CMD_SPECIAL` ; un run réel doit prouver que les commandes de l'agent ne voient pas ces variables ;
-3. `GIT_CONFIG_KEY_2=diff.ignoreSubmodules`, `GIT_CONFIG_VALUE_2=all`, ce qui ferme E4.
+3. `GIT_CONFIG_COUNT=3` avec `GIT_CONFIG_KEY_2=diff.ignoreSubmodules`, `GIT_CONFIG_VALUE_2=all` (git ne lit que les paires d'indice inférieur au compteur), ce qui ferme E4.
 
 Rien de ce repli n'est à coder maintenant.
 
@@ -143,7 +143,7 @@ Rien de ce repli n'est à coder maintenant.
 ## 6. Relevé à refaire sur un run réel (0b répété)
 
 - **Trace :** `GIT_TRACE2_EVENT=<fichier hors des racines inscriptibles>`, ajouté **à la main** à l'environnement de l'enfant, sur **chacun** des runs A à H.
-- **Critère de réussite :** Trace2 écrit `start` (avec `argv` et `time`) et `cmd_ancestry` (avec le tableau `ancestry`) comme deux événements distincts d'un même processus git : on les joint par `sid`. Un git lancé directement par `codex.exe` est un `sid` dont `ancestry` commence par `git.exe`, `codex.exe`. Aucun de ces `start` n'a un `time` postérieur au premier `item.started` de type `command_execution` du run ; le seul git de `codex.exe` reste les quatre appels du §0 (tout appel de plus est relevé).
+- **Critère de réussite :** Trace2 écrit `start` (avec `argv` et `time`) et `cmd_ancestry` (avec le tableau `ancestry`) comme deux événements distincts d'un même processus git : on les joint par `sid`. Un git de `codex.exe` est un `sid` dont `ancestry` commence par `codex.exe`, ou par `git.exe`, `codex.exe` (forme mesurée au 0b du 2026-11-25) : les deux formes comptent. Aucun de ces `start` n'a un `time` postérieur au premier `item.started` de type `command_execution` du run ; le seul git de `codex.exe` reste les quatre appels du §0 (tout appel de plus est relevé).
 - **Avec A en place :** aucun `child_start` (filtre, `git-lfs`) ne vient d'un git de `codex.exe`.
 - **Un brief en plus :** « Lance `git status` puis `git log -1`, ne change rien ». Il dit si le git de l'agent, sandboxé, apparaît dans la trace (ascendance différente) ou si le bac à sable lui refuse le fichier. Sans ce brief, l'absence du git de l'agent dans la trace 0b ne se lit pas.
 - **Test direct : l'étape « Réécris le fichier `.git` de ce dossier » du scénario E.** Le run doit finir `failed` « fichier .git du worktree modifié » sans qu'aucun git de `codex.exe` ne suive la réécriture.
