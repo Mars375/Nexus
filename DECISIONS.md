@@ -406,6 +406,37 @@ il peut l'infirmer :
   seulement) ; une autre clé y ferait de nouveau refuser les runs, et la règle s'ajusterait par une
   PR.
 
+### Addendum (2026-11-25) — Codex : git de `codex.exe` hors du bac à sable
+
+Cadrage : `docs/superpowers/specs/2026-11-25-codex-git-hors-bac-a-sable-design.md` (issue #186), qui
+répond à §11, Q3 et à la condition d'arrêt de l'étape 0b du cadrage du 2026-11-13.
+
+**Choisi par l'agent sous la délégation totale de Loïc du 2026-11-25** (ADR-024) — ce n'est pas
+Loïc qui a choisi ; il peut l'infirmer :
+
+- **Contexte :** au relevé 0b (run réel, codex-cli 0.167.1), `codex.exe` lance lui-même quatre git
+  dans le worktree, hors du bac à sable, au début du tour et avant toute commande de l'agent
+  (`rev-parse HEAD`, `remote -v`, `config --get core.fsmonitor`, `status --porcelain`), aucun à la
+  fin. `git status` lance les pilotes de filtre `clean` et `process` : un `.gitattributes` suivi qui
+  nomme un pilote défini dans la configuration système ou globale de Loïc (Git LFS, par exemple) le
+  faisait lancer hors du bac à sable, sans aucune action de l'agent, alors que le contrôle de
+  lancement ne lit que la configuration du dépôt.
+- **Décision :** (A) l'enfant reçoit en plus `GIT_CONFIG_NOSYSTEM=1` et `GIT_CONFIG_GLOBAL` vers le
+  périphérique nul : le git de `codex.exe` lit la même portée que `check_no_filter_driver` ; l'argv
+  du run ne change pas. (B) Avant la création du worktree, `codex --version`, lancé contenu et borné
+  avec l'environnement du run, doit écrire exactement une version de `MEASURED_VERSIONS`
+  (`codex-cli 0.167.1`) ; sinon « lancement impossible », sans branche ni worktree. Une version
+  s'ajoute seulement dans la PR qui joint un nouveau relevé 0b. Pas de `GIT_DIR` imposé : il
+  casserait le git de l'agent dans tout autre dépôt et laisserait les sous-modules ouverts ; il reste
+  un repli documenté (cadrage, §4.3) si un relevé montre du git de `codex.exe` après la première
+  commande de l'agent.
+- **Conséquences :** le git de l'agent, dans le bac à sable, n'a plus d'identité globale, de
+  `credential.helper`, de `filter.lfs`, de `core.autocrlf` ni de `http.sslbackend` venus du système
+  (HTTPS depuis git non vérifié). Un git de `codex.exe` lancé après la première commande de l'agent
+  (fichier `.git` réécrit, sous-module) n'est pas couvert : il n'a pas été observé sur la 0.167.1, et
+  chaque nouvelle version refait le relevé 0b avant d'être acceptée. Monter Codex de version sans ce
+  relevé fait refuser tous les runs Codex.
+
 ---
 
 ## ADR-024 — Délégation totale à l'agent (2026-11-25)

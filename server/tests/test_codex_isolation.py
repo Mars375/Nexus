@@ -1,5 +1,6 @@
 """The launch of a Codex run checks the isolation first, and an MCP call during the run stops it
-(spec #186, §2.2, §3, §5.3, §5.4; tests C3 to C8 and C10, and Q5). The real binary never runs."""
+(spec #186, §2.2, §3, §5.3, §5.4; tests C3 to C8 and C10, and Q5), after the version of Codex
+(spec 2026-11-25, B). The real binary never runs."""
 
 import json
 import subprocess
@@ -26,18 +27,19 @@ def rig(tmp_path, monkeypatch):
     return lambda **scenario: Rig(tmp_path, monkeypatch, **scenario)
 
 
-# --- The nominal launch: two control calls, then the run ------------------------------------------
+# --- The nominal launch: the version, two control calls, then the run -----------------------------
 
 
-def test_a_launch_asks_both_controls_in_the_worktree_then_runs(rig):
+def test_a_launch_asks_the_version_then_both_controls_in_the_worktree_then_runs(rig):
     r = rig(lines=OK_LINES)
     r.run()
 
     seen = calls(r.dir)
-    assert [c["kind"] for c in seen] == ["mcp_list", "prompt_input", "run"]
-    assert seen[0]["args"][:3] == ["mcp", "list", "--json"]
-    assert seen[1]["args"][:2] == ["debug", "prompt-input"] and seen[1]["args"][-1] == ""
-    assert seen[2]["args"][:2] == ["exec", "--json"]
+    assert [c["kind"] for c in seen] == ["version", "mcp_list", "prompt_input", "run"]
+    assert seen[0]["args"] == ["--version"]
+    assert seen[1]["args"][:3] == ["mcp", "list", "--json"]
+    assert seen[2]["args"][:2] == ["debug", "prompt-input"] and seen[2]["args"][-1] == ""
+    assert seen[3]["args"][:2] == ["exec", "--json"]
     assert r.home.is_dir()  # created by Nexus when missing
 
 
@@ -59,12 +61,16 @@ def test_the_controls_and_the_run_get_the_very_same_environment(rig, monkeypatch
     monkeypatch.setattr(codex_process, "spawn", spy)
     r.run()
 
-    envs = [c["env"] for c in calls(r.dir)]
-    assert len(envs) == 3 and envs[0] == envs[1] == envs[2]
-    assert len(spawned) == 3 and spawned[0][1] == spawned[1][1] == spawned[2][1]
-    assert {cwd for cwd, _, _ in spawned} == {str(r.data.resolve() / "worktrees" / "nx-run-1")}
+    # `PWD` is set by the fake's `/bin/sh` launcher to its own folder: the version call runs from
+    # the home of Nexus, the others from the worktree. Nexus never passes it (spawned envs below).
+    envs = [{k: v for k, v in c["env"].items() if k != "PWD"} for c in calls(r.dir)]
+    assert len(envs) == 4 and envs[0] == envs[1] == envs[2] == envs[3]
+    assert len(spawned) == 4 and all(env == spawned[0][1] for _, env, _ in spawned)
+    assert spawned[0][0] == str(r.data.resolve() / "codex-home")  # the version: no worktree yet
+    assert {cwd for cwd, _, _ in spawned[1:]} == {
+        str(r.data.resolve() / "worktrees" / "nx-run-1")}
     assert all(kw.get("contain") is True for _, _, kw in spawned)
-    env = {k.upper(): v for k, v in envs[2].items()}
+    env = {k.upper(): v for k, v in envs[3].items()}
     assert not {n for n in env if n.startswith(("NEXUS_", "OPENAI_"))}
     assert env["CODEX_HOME"] == str(r.data.resolve() / "codex-home")
     assert env["GIT_CONFIG_COUNT"] == "2" and env["GIT_TERMINAL_PROMPT"] == "0"
@@ -79,11 +85,11 @@ def test_through_a_cmd_launcher_the_arguments_arrive_intact(rig):
     r.run()
 
     seen = calls(r.dir)
-    args = seen[2]["args"]
+    args = seen[3]["args"]
     at = args.index("windows.sandbox=unelevated")
     assert args[at - 1] == "-c"
-    assert "-c" in seen[0]["args"] and "windows.sandbox=unelevated" in seen[0]["args"]
-    assert seen[1]["args"][-1] == ""  # the empty prompt survives the launcher
+    assert "-c" in seen[1]["args"] and "windows.sandbox=unelevated" in seen[1]["args"]
+    assert seen[2]["args"][-1] == ""  # the empty prompt survives the launcher
 
 
 # --- C5: the home of Nexus holds nothing that would configure Codex -------------------------------
@@ -100,7 +106,7 @@ def test_a_configured_home_of_nexus_refuses_the_launch(rig, entry):
     path.write_text("x", encoding="utf-8")
 
     r.refused("CODEX_HOME")
-    assert r.kinds() == []  # refused before any control call
+    assert r.kinds() == ["version"]  # refused before any control call in the worktree
 
 
 @pytest.mark.parametrize("entry", ["rules", "skills"])
@@ -119,7 +125,7 @@ def test_the_skills_codex_installs_itself_and_empty_folders_are_fine(rig):
     (r.home / "auth.json").write_text("{}", encoding="utf-8")  # never read by Nexus
 
     r.run()
-    assert r.kinds() == ["mcp_list", "prompt_input", "run"]
+    assert r.kinds() == ["version", "mcp_list", "prompt_input", "run"]
 
 
 def test_a_home_of_nexus_that_is_a_file_is_refused(rig):
@@ -144,6 +150,29 @@ def test_a_repository_with_a_codex_folder_at_its_root_is_refused(rig):
     r.refused(".codex")
 
 
+# --- B: a version of Codex that was not measured (spec 2026-11-25) --------------------------------
+
+
+@pytest.mark.parametrize("scenario", [
+    {"version": "codex-cli 0.168.0\n"}, {"version": "codex-cli 0.167.1\nx\n"},
+    {"version": ""}, {"version_exit": 1}, {"version_hang": True},
+])
+def test_a_version_that_was_not_measured_refuses_the_launch_before_the_worktree(rig, scenario):
+    r = rig(lines=OK_LINES, **scenario)
+    r.refused("version de Codex non relevée")  # no `nexus/` branch, no worktree folder
+    assert r.kinds() == ["version"]  # neither `mcp list` nor `exec`
+
+
+def test_a_version_call_whose_stop_is_not_confirmed_leaves_nothing_behind(rig, monkeypatch):
+    r = rig(lines=OK_LINES)
+    tries = never_stopped(monkeypatch, version=True)
+    with pytest.raises(codex_cli.ControlNotStopped):
+        r.dispatch()
+    assert len(tries) == codex_cli.STOP_ATTEMPTS and r.kinds() == ["version"]
+    assert not (r.data / "worktrees" / "nx-run-1").exists()
+    assert git(r.repo, "branch", "--list", "nexus/*") == ""
+
+
 # --- C6, C7: the answers of the control calls -----------------------------------------------------
 
 
@@ -154,7 +183,7 @@ def test_a_repository_with_a_codex_folder_at_its_root_is_refused(rig):
 def test_an_mcp_list_that_is_not_exactly_empty_refuses_the_launch(rig, scenario):
     r = rig(lines=OK_LINES, **scenario)
     r.refused("mcp")
-    assert r.kinds() == ["mcp_list"]
+    assert r.kinds() == ["version", "mcp_list"]
 
 
 @pytest.mark.parametrize("scenario", [
@@ -168,7 +197,7 @@ def test_an_mcp_list_that_is_not_exactly_empty_refuses_the_launch(rig, scenario)
 def test_a_prompt_input_with_skills_or_unreadable_refuses_the_launch(rig, scenario):
     r = rig(lines=OK_LINES, **scenario)
     r.refused("prompt-input")
-    assert r.kinds() == ["mcp_list", "prompt_input"]
+    assert r.kinds() == ["version", "mcp_list", "prompt_input"]
 
 
 def test_a_marker_hidden_behind_a_json_escape_is_still_found(rig):
@@ -185,17 +214,33 @@ def test_a_hung_control_call_is_stopped_within_its_limit(rig):
     assert time.monotonic() - start < 15
 
 
+def never_stopped(monkeypatch, *, version: bool = False):
+    """The stop of the control calls in the worktree (or, with `version`, of the version call
+    only) stays unconfirmed; the processes are still killed. The attempts, returned."""
+    real_spawn, real_kill, targets, tries = codex_process.spawn, codex_process.kill_tree, [], []
+
+    def spawn(argv, *args, **kwargs):
+        process = real_spawn(argv, *args, **kwargs)
+        if kwargs.get("stdin") == subprocess.DEVNULL and (argv[-1] == "--version") == version:
+            targets.append(process)
+        return process
+
+    def kill_tree(process, *args, **kwargs):
+        done = real_kill(process)
+        if any(process is target for target in targets):
+            tries.append(process)
+            return False
+        return done
+
+    monkeypatch.setattr(codex_process, "spawn", spawn)
+    monkeypatch.setattr(codex_process, "kill_tree", kill_tree)
+    return tries
+
+
 def test_a_control_call_whose_stop_is_not_confirmed_refuses_the_launch(rig, monkeypatch):
     """Tried again, then refused; the worktree stays (the call may still run there)."""
     r = rig(lines=OK_LINES)
-    real, tries = codex_process.kill_tree, []
-
-    def unconfirmed(process, *args, **kwargs):
-        tries.append(process)
-        real(process)
-        return False
-
-    monkeypatch.setattr(codex_process, "kill_tree", unconfirmed)
+    tries = never_stopped(monkeypatch)
     with pytest.raises(codex_cli.ControlNotStopped):
         r.dispatch()
     assert len(tries) == codex_cli.STOP_ATTEMPTS
@@ -204,12 +249,13 @@ def test_a_control_call_whose_stop_is_not_confirmed_refuses_the_launch(rig, monk
 
 
 def unreadable_controls(monkeypatch):
-    """The control calls' processes fail to be read (`communicate` raises); git is untouched."""
+    """The control calls in the worktree fail to be read (`communicate` raises); the version call
+    and git are untouched."""
     real = codex_process.spawn
 
-    def spawn(*args, **kwargs):
-        process = real(*args, **kwargs)
-        if kwargs.get("stdin") == subprocess.DEVNULL:  # a control call, not the run
+    def spawn(argv, *args, **kwargs):
+        process = real(argv, *args, **kwargs)
+        if kwargs.get("stdin") == subprocess.DEVNULL and argv[-1] != "--version":
 
             def broken(*a, **k):
                 raise OSError("lecture impossible")
@@ -223,15 +269,8 @@ def unreadable_controls(monkeypatch):
 def test_a_failed_read_with_an_unconfirmed_stop_still_keeps_the_worktree(rig, monkeypatch):
     """`communicate` raising does not hide an unconfirmed stop (#194, CodeRabbit)."""
     r = rig(lines=OK_LINES)
-    real, tries = codex_process.kill_tree, []
-
-    def unconfirmed(process, *args, **kwargs):
-        tries.append(process)
-        real(process)
-        return False
-
-    monkeypatch.setattr(codex_process, "kill_tree", unconfirmed)
     unreadable_controls(monkeypatch)
+    tries = never_stopped(monkeypatch)
     with pytest.raises(codex_cli.ControlNotStopped):
         r.dispatch()
     assert len(tries) == codex_cli.STOP_ATTEMPTS
@@ -241,10 +280,15 @@ def test_a_failed_read_with_an_unconfirmed_stop_still_keeps_the_worktree(rig, mo
 def test_a_failed_read_with_a_confirmed_stop_undoes_the_launch(rig, monkeypatch):
     r = rig(lines=OK_LINES)
 
+    made, real = [], codex_git.create_worktree
+    monkeypatch.setattr(codex_git, "create_worktree",
+                        lambda *a, **k: made.append(1) or real(*a, **k))
     unreadable_controls(monkeypatch)
     with pytest.raises(OSError, match="lecture"):
         r.dispatch()
+    assert made == [1]  # past the version: the worktree existed, then was undone
     assert not (r.data / "worktrees" / "nx-run-1").exists()
+    assert git(r.repo, "branch", "--list", "nexus/*") == ""
 
 
 # --- C8: locations, checked before any worktree exists --------------------------------------------
@@ -295,7 +339,7 @@ def test_an_empty_or_absent_temporary_variable_is_ignored(rig, monkeypatch):
     monkeypatch.setenv("TEMP", "")
     monkeypatch.delenv("TMP")
     r.run()
-    assert r.kinds() == ["mcp_list", "prompt_input", "run"]
+    assert r.kinds() == ["version", "mcp_list", "prompt_input", "run"]
 
 
 # --- C10: an MCP tool call during the run stops it at once ----------------------------------------
@@ -354,5 +398,5 @@ def test_every_spawn_of_a_launch_is_contained_and_the_controls_read_no_stdin(rig
     monkeypatch.setattr(codex_process, "spawn",
                         lambda *a, **k: seen.append(k) or real(*a, **k))
     r.run()
-    assert len(seen) == 3 and all(k.get("contain") is True for k in seen)
-    assert all(k.get("stdin") == subprocess.DEVNULL for k in seen[:2])
+    assert len(seen) == 4 and all(k.get("contain") is True for k in seen)
+    assert all(k.get("stdin") == subprocess.DEVNULL for k in seen[:3])

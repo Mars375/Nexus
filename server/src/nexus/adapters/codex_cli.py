@@ -35,6 +35,10 @@ ISOLATION_FLAGS = (
     *(arg for name in DISABLED for arg in ("--disable", name)),
 )
 CONTROL_TIMEOUT = 30.0
+# The versions whose own git calls were measured (step 0b of spec 2026-11-13, measured 2026-11-25
+# on a real run: four git at the start of the turn, none after the agent's first command). A new
+# version is added only in the PR that joins a new 0b measure (spec 2026-11-25, §4.2, §6).
+MEASURED_VERSIONS = frozenset({"codex-cli 0.167.1"})
 STOP_ATTEMPTS = 3  # a control call whose stop is unconfirmed is tried again before giving up
 
 CODEX_ENV_ALLOW = codex_process.ENV_ALLOW - {"CODEX_HOME"}
@@ -90,7 +94,9 @@ def prompt_input_argv(binary: str, *, windows: bool) -> list[str]:
 
 def child_env(environ: Mapping[str, str] | None, codex_home: Path) -> dict[str, str]:
     """The allow-list, no inherited `GIT_*`, then what Nexus imposes (§2.4, §5.5). The control
-    calls and the run get this same dictionary."""
+    calls and the run get this same dictionary. The git `codex.exe` runs itself, out of its
+    sandbox, reads neither the system nor the global configuration: the scope
+    `check_no_filter_driver` reads (spec 2026-11-25, A)."""
     env = codex_process.child_env(environ, allow=CODEX_ENV_ALLOW)
     for name in [n for n in env if n.upper().startswith("GIT_")]:
         del env[name]
@@ -99,6 +105,7 @@ def child_env(environ: Mapping[str, str] | None, codex_home: Path) -> dict[str, 
         "GIT_CONFIG_COUNT": "2",
         "GIT_CONFIG_KEY_0": "core.hooksPath", "GIT_CONFIG_VALUE_0": os.devnull,
         "GIT_CONFIG_KEY_1": "core.fsmonitor", "GIT_CONFIG_VALUE_1": "false",
+        "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_TERMINAL_PROMPT": "0",
     })
     return env
@@ -221,6 +228,16 @@ def _decoded(text: str | None) -> object:
         return json.loads(text)
     except ValueError:
         return _UNREADABLE
+
+
+def check_version(
+    binary: str, cwd: Path, env: dict[str, str], *, timeout: float = CONTROL_TIMEOUT,
+) -> None:
+    """ValueError unless `codex --version` prints exactly one measured version and a newline, with
+    code 0 and in time (spec 2026-11-25, B). Run contained, with the run's environment."""
+    out = _control([binary, "--version"], cwd, env, timeout)
+    if out not in {version + "\n" for version in MEASURED_VERSIONS}:
+        raise ValueError("contrôle d'isolement : version de Codex non relevée")
 
 
 def check_no_project_config(path: Path) -> None:

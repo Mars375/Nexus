@@ -97,9 +97,61 @@ def test_the_child_environment_drops_every_secret_and_inherited_git_variable(tmp
         "GIT_CONFIG_COUNT": "2",
         "GIT_CONFIG_KEY_0": "core.hooksPath", "GIT_CONFIG_VALUE_0": os.devnull,
         "GIT_CONFIG_KEY_1": "core.fsmonitor", "GIT_CONFIG_VALUE_1": "false",
+        "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_TERMINAL_PROMPT": "0",
     }
     assert env["PATH"] == "/bin" and env["TEMP"] == str(tmp_path / "t")
+
+
+def test_an_inherited_git_config_scope_is_replaced(tmp_path):
+    """The git of `codex.exe` reads what `check_no_filter_driver` reads (spec 2026-11-25, A)."""
+    shell = {"PATH": "/bin", "GIT_CONFIG_NOSYSTEM": "0", "git_config_global": "x",
+             "GIT_CONFIG_GLOBAL": str(tmp_path / "loic.gitconfig")}
+    env = codex_cli.child_env(shell, tmp_path / "home")
+    scope = {k: v for k, v in env.items() if k.upper() in ("GIT_CONFIG_NOSYSTEM",
+                                                           "GIT_CONFIG_GLOBAL")}
+    assert scope == {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
+
+
+# --- B: only a measured version of Codex is launched (spec 2026-11-25) ----------------------------
+
+
+def answer_version(monkeypatch, output):
+    """`_control` replaced: `output` is what it returns (None: a non-zero code or an overrun)."""
+    seen = []
+
+    def control(argv_, cwd, env, timeout):
+        seen.append((argv_, cwd, env, timeout))
+        return output
+
+    monkeypatch.setattr(codex_cli, "_control", control)
+    return seen
+
+
+def test_the_measured_version_is_accepted_through_one_bounded_control_call(monkeypatch, tmp_path):
+    seen = answer_version(monkeypatch, "codex-cli 0.167.1\n")
+    env = {"CODEX_HOME": str(tmp_path)}
+    codex_cli.check_version(BIN, tmp_path, env, timeout=7.0)
+    assert seen == [([BIN, "--version"], tmp_path, env, 7.0)]
+    assert codex_cli.MEASURED_VERSIONS == frozenset({"codex-cli 0.167.1"})
+
+
+@pytest.mark.parametrize("output", [
+    "codex-cli 0.168.0\n", "codex-cli 0.167.1\nx\n", " codex-cli 0.167.1\n", "codex-cli 0.167.1",
+    "codex-cli 0.167.1 \n", "", None,
+])
+def test_any_other_version_answer_is_refused_in_fixed_words(monkeypatch, tmp_path, output):
+    answer_version(monkeypatch, output)
+    with pytest.raises(ValueError) as refused:
+        codex_cli.check_version(BIN, tmp_path, {})
+    assert str(refused.value) == "contrôle d'isolement : version de Codex non relevée"
+
+
+def test_the_fake_codex_of_the_e2e_prints_a_measured_version():
+    """A version change must not break the e2e silently: its fake answers one that is accepted."""
+    fake = Path(__file__).parents[2] / "web" / "e2e" / "fake-codex.mjs"
+    printed = re.findall(r"answer\('(codex-cli [^']*)'\)", fake.read_text(encoding="utf-8"))
+    assert len(printed) == 1 and printed[0] in codex_cli.MEASURED_VERSIONS
 
 
 def test_the_allow_list_is_the_shared_one_without_codex_home():

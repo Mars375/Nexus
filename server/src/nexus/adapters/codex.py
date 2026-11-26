@@ -90,6 +90,8 @@ class CodexAdapter:
         # Before the worktree exists: a refusal leaves neither branch nor worktree (§1.4, 4).
         codex_cli.check_locations(env, gitdir=None, worktree=self.worktrees / run.ref, **places)
         self.codex_home.mkdir(parents=True, exist_ok=True)
+        # Only a measured version, whose own git calls are known (spec 2026-11-25, B).
+        codex_cli.check_version(self.binary, self.codex_home, env, timeout=self.control_timeout)
         tree = codex_git.create_worktree(repo, self.worktrees, run.ref)
         try:
             gitdir = run_commit.worktree_gitdir(tree)
