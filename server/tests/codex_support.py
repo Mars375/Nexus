@@ -3,8 +3,9 @@
 No test ever runs the real `codex` binary: `NEXUS_CODEX_BIN` points to a launcher around
 `fake_codex.py`, which replays a scenario and never talks to any model. It answers the control
 calls of the launch (`--version`, spec 2026-11-25; `mcp list --json`, `debug prompt-input`, spec
-#186 §5.3) from the scenario (`version`, `mcp_list`, `prompt_input`, and their `_exit` and
-`_hang`) and notes every call, with its environment, in `calls.json`.
+#186 §5.3; the network probe `sandbox`, spec 2026-11-26, whose command is never run) from the
+scenario (`version`, `mcp_list`, `prompt_input`, `sandbox`, and their `_exit` and `_hang`) and
+notes every call, with its environment, in `calls.json`.
 
 The run itself prints `lines`, then plays `actions` in the worktree (file system only, like the
 fake `claude`: Nexus is the one that commits, spec #186 §1); `commit` is the agent that commits
@@ -64,6 +65,8 @@ if args[:3] == ["mcp", "list", "--json"]:
 if args[:2] == ["debug", "prompt-input"]:
     control("prompt_input", json.dumps([{"type": "message", "role": "developer", "content": [
         {"type": "input_text", "text": "Instructions de base."}]}]))
+if args[:1] == ["sandbox"]:  # the network probe: its command is never run, the answer is replayed
+    control("sandbox", "ERR 10013\\n")
 record("run")
 (here / "args.json").write_text(json.dumps(args), encoding="utf-8")
 (here / "env.json").write_text(json.dumps(sorted(os.environ)), encoding="utf-8")
@@ -132,6 +135,9 @@ COMMAND = json.dumps({"type": "item.completed", "item": {
 DONE = json.dumps({"type": "turn.completed", "usage": {"input_tokens": 1}})
 FAILED = json.dumps({"type": "turn.failed", "error": {"message": "le modèle a échoué"}})
 OK_LINES = [THREAD, TURN, MESSAGE, COMMAND, DONE]
+# The calls of a launch that runs: the network probe exists under Windows only (spec 2026-11-26).
+PROBED = ["sandbox"] if sys.platform == "win32" else []
+LAUNCH_KINDS = ["version", "mcp_list", "prompt_input", *PROBED, "run"]
 
 
 def mcp_call(event: str = "item.completed", server: str = "srv", tool: str = "tool") -> str:
@@ -158,7 +164,7 @@ def make_fake_codex(folder: Path, **scenario) -> Path:
 
 def calls(folder: Path) -> list[dict]:
     """The calls the fake received, in order: `kind` (`version`, `mcp_list`, `prompt_input`,
-    `run`), `args`, `env`."""
+    `sandbox`, `run`), `args`, `env`."""
     path = folder / "calls.json"
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
 

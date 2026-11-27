@@ -22,8 +22,13 @@ from pathlib import Path
 
 from nexus.adapters import codex_process
 
-# The sandbox of Codex under Windows (decided by Loïc, 2026-11-12): unquoted, read as the variant.
-WINDOWS_SANDBOX = ("-c", "windows.sandbox=unelevated")
+# The sandbox of Codex under Windows: MXC strict (#207, amending `unelevated` of 2026-11-12, which
+# leaves the network open), never `prefer_mxc` (it falls back to the old sandbox). The network is
+# pinned off so that no later configuration layer reopens it; `codex_network` probes the cut
+# before each run. Unquoted values, read as the variant.
+WINDOWS_SANDBOX = (
+    "-c", "windows.sandbox=mxc", "-c", "sandbox_workspace_write.network_access=false",
+)
 DISABLED = (
     "hooks", "plugins", "remote_plugin", "apps", "memories", "browser_use", "computer_use",
     "in_app_browser", "tool_suggest", "skill_mcp_dependency_install", "skill_search",
@@ -36,6 +41,9 @@ ISOLATION_FLAGS = (
     # No web search (#202): a query leaves the machine and may carry text of the brief or the
     # repository. `web_search` is a top-level key (unset means `cached`), not a feature.
     "-c", "web_search=disabled",
+    # Never an escalated command, which would run out of the sandbox (#207). `exec` sets it by
+    # default; pinned so the controls judge the text the model gets under `exec`.
+    "-c", "approval_policy=never",
     *(arg for name in DISABLED for arg in ("--disable", name)),
 )
 CONTROL_TIMEOUT = 30.0

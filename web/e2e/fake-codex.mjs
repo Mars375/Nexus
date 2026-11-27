@@ -1,5 +1,6 @@
 // Faux `codex` des tests de bout en bout : il ne parle à aucun modèle (ADR-023, D8).
-// Il répond aux appels de contrôle du lancement (`--version`, `mcp list --json`, `debug prompt-input`).
+// Il répond aux appels de contrôle du lancement (`--version`, `mcp list --json`, `debug prompt-input`,
+// et la sonde réseau `sandbox` sous Windows).
 // It reads the brief on stdin, tells a turn in JSONL, then writes a file in its worktree.
 // It never runs git: Nexus commits at the end of a successful turn (#186).
 // Un brief qui contient « ATTENDRE » le fait rester en vie jusqu'à ce qu'on le tue (annulation).
@@ -15,6 +16,8 @@ const answer = (text) => new Promise(() => process.stdout.write(text + '\n', () 
 // Nexus refuses a version it has not measured: this one must stay in MEASURED_VERSIONS (codex_cli.py).
 if (args[0] === '--version') await answer('codex-cli 0.167.1')
 if (args[0] === 'mcp' && args[1] === 'list' && args[2] === '--json') await answer('[]')
+// The network probe under Windows (#207): its command is never run; MXC's refusal is answered.
+if (args[0] === 'sandbox') await answer('ERR 10013')
 if (args[0] === 'debug' && args[1] === 'prompt-input') {
   const input = [{ type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'Instructions de base.' }] }]
   await answer(JSON.stringify(input))
