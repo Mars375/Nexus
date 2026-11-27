@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
+from nexus.clock import TZ
 from nexus.conversations import masking
 from nexus.conversations.masking import ParsedMessage
 
@@ -54,9 +55,13 @@ def _instant(value: object) -> datetime | None:
         return None
     try:
         at = datetime.fromisoformat(value)
-    except ValueError:
+        if at.tzinfo is None:
+            return None
+        utc = at.astimezone(UTC)
+        utc.astimezone(TZ)  # read back in Paris time: year 1 or 9999 would overflow there
+    except (ValueError, OverflowError):
         return None
-    return at if at.tzinfo is not None else None
+    return utc
 
 
 def _texts(blocks: list) -> str:

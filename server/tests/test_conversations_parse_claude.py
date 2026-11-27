@@ -220,3 +220,12 @@ def test_a_secret_split_between_two_text_blocks_is_masked():
     assert got.kind == "message" and got.message.redacted
     flat = got.message.body.replace("\n", "")
     assert secret not in flat and secret[8:] not in flat
+
+
+@pytest.mark.parametrize("instant", [
+    "0001-01-01T00:00:00+02:00", "9999-12-31T23:59:59-02:00", "9999-12-31T23:59:59Z",
+])
+def test_an_instant_at_the_edge_of_the_calendar_is_a_bad_field(instant):
+    got = parse(user("bonjour", timestamp=instant))
+
+    assert (got.kind, got.reason) == ("bad", "field")
