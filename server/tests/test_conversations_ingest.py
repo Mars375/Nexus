@@ -308,3 +308,38 @@ def test_text_blocks_and_titles_reach_the_conversation(db, root):
 
     assert db.rows("SELECT title, workspace, git_branch FROM conversations") == [
         ("Mon titre", "F:\\Projet\\Ex", "master")]
+
+
+def test_a_busy_database_while_loading_the_cursors_interrupts_only_the_pass(db, root,
+                                                                            monkeypatch):
+    from sqlalchemy.exc import OperationalError
+    write_session(root, conversation(10))
+
+    def locked(*_args, **_kwargs):
+        raise OperationalError("SELECT", {}, sqlite3.OperationalError("database is locked"))
+
+    monkeypatch.setattr(store, "load_cursors", locked)
+
+    status = run(db, root)
+
+    assert (status.state, status.code) == ("interrupted", "db_busy")
+    assert db.scalar("SELECT count(*) FROM conversation_messages") == 0
+
+
+def test_a_stop_seen_at_the_line_check_of_the_last_file_interrupts_the_pass(db, root,
+                                                                            monkeypatch):
+    write_session(root, conversation(2 * ingest.STOP_CHECK_LINES))
+    stopping, real_parse, marked = threading.Event(), ingest.parse_line, []
+
+    def parse_then_stop(*args, **kwargs):
+        stopping.set()
+        return real_parse(*args, **kwargs)
+
+    monkeypatch.setattr(ingest, "parse_line", parse_then_stop)
+    monkeypatch.setattr(store, "mark_old", lambda *a, **k: marked.append(1))
+
+    status = run(db, root, stopping=stopping)
+
+    assert (status.state, status.code) == ("interrupted", "stopping")
+    assert marked == []
+    assert db.scalar("SELECT state FROM conversation_cursors") == "partial"

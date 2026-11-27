@@ -52,9 +52,14 @@ def purge_due(state: ProcessState, now: datetime) -> bool:
 
 
 def index_not_empty(factory: sessionmaker[Session]) -> bool:
+    """Messages left, or FTS segments left: a purge cut short after its last delete leaves an
+    empty table but its terms in the FTS blocks (an empty or rebuilt index only holds the rows
+    with ids 1 and 10)."""
     with factory() as session:
-        return session.execute(text("SELECT 1 FROM conversation_messages LIMIT 1")).first() \
-            is not None
+        return any(session.execute(text(sql)).first() is not None for sql in (
+            "SELECT 1 FROM conversation_messages LIMIT 1",
+            "SELECT 1 FROM conversation_fts_data WHERE id > 10 LIMIT 1",
+        ))
 
 
 def _delete_messages(factory: sessionmaker[Session], where: str, params: dict,

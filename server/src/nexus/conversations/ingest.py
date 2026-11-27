@@ -145,6 +145,8 @@ def _file(run: _Pass, candidate: paths.Candidate, cursor: ConversationCursor | N
             if run.stopping.is_set():
                 raise _Stop("stopping")
     run.write(stem, meta, pending, cursor_at(final[1], final[0]))
+    if run.stopping.is_set():
+        raise _Stop("stopping")
     if final[0] == "partial":
         status.state = "partial"
 
@@ -163,9 +165,9 @@ def claude_pass(factory: sessionmaker[Session], configured_root: Path, policy: P
         return run.status
     run.status.codes.update(listing.codes)
     complete = not any(listing.codes[code] for code in INCOMPLETE)
-    cursors = store.load_cursors(factory, SOURCE)
     old: list[paths.Candidate] = []
     try:
+        cursors = store.load_cursors(factory, SOURCE)
         for candidate in sorted(listing.candidates, key=lambda c: (-c.mtime_ns, c.path_key)):
             if stopping.is_set():
                 raise _Stop("stopping")

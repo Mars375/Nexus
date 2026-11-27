@@ -291,3 +291,28 @@ def test_without_source_and_with_an_empty_index_a_tick_writes_nothing(db):
 
     assert statements and set(statements) <= {"SELECT", "PRAGMA"}
     assert not conv.state.rebuild_pending and not conv.state.checkpoint_pending
+
+
+def test_a_purge_that_emptied_the_index_and_stopped_rebuilds_after_a_restart(db, root):
+    markers = [f"zqvide{i:05d}" for i in range(100)]
+    lines = [user(f"réunion {m} fin", at=NOW - timedelta(days=40, seconds=-i),
+                  line_id=f"00000000-0000-4000-8000-{i:012d}") for i, m in enumerate(markers)]
+    write_session(root, lines, mtime=NOW - timedelta(days=1))
+    first = conversations(db, conv_claude_root=root)
+    first.tick(EARLY)
+    first.state.last_purge_at = None
+
+    @event.listens_for(db.factory, "after_commit")
+    def after(_session):
+        first.stopping.set()
+
+    first.tick(NOW)
+    event.remove(db.factory, "after_commit", after)
+    assert count(db) == 0 and first.state.rebuild_pending
+
+    restarted = conversations(db)  # a new process: no state kept, no source read
+    restarted.tick(NOW + timedelta(minutes=1))
+
+    data = raw_bytes(db.path)
+    assert not [m for m in markers if m[-9:].encode() in data]
+    assert not restarted.state.rebuild_pending
