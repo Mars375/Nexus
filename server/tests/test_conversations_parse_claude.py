@@ -270,3 +270,22 @@ def test_a_secret_spread_over_three_or_more_blocks_is_masked(pieces):
         assert got.kind == "message" and got.message.redacted
         flat = got.message.body.replace("\n", "")
         assert whole not in flat and whole[4:] not in flat and whole[4:22] not in flat
+
+
+def test_a_value_split_far_from_its_label_is_masked():
+    blocks = [{"type": "text", "text": "password=" + "a" * 520},
+              {"type": "text", "text": "zqmotdepasse fin"}]
+
+    got = parse(user(blocks))
+
+    assert "zqmotdepasse" not in got.message.body
+
+
+def test_thousands_of_tiny_blocks_cost_one_scan():
+    import time
+    blocks = [{"type": "text", "text": "a"} for _ in range(5000)]
+
+    started = time.perf_counter()
+    parse(user(blocks))
+
+    assert time.perf_counter() - started < 1.0

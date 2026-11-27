@@ -173,3 +173,24 @@ def test_titles_rewritten_by_every_batch_leave_nothing_once_purged(db, root):
 
     assert db.scalar("SELECT count(*) FROM conversations") == 0
     assert not found(raw_bytes(db.path), titles)
+
+
+def test_a_checkpoint_deferred_before_a_restart_runs_at_the_first_tick(db, root):
+    markers = [f"zqwal{i:05d}" for i in range(50)]
+    write_session(root, [user(f"vieux {m}", at=NOW - timedelta(days=40, seconds=i))
+                         for i, m in enumerate(markers)], mtime=NOW - timedelta(days=1))
+    settings = db.with_settings(conv_claude_root=root)
+    Conversations(db.factory, settings).tick(EARLY)
+    reader = sqlite3.connect(db.path)
+    reader.execute("BEGIN")
+    reader.execute("SELECT count(*) FROM conversation_messages").fetchone()
+    first = Conversations(db.factory, settings)
+    first.tick(NOW)
+    assert first.state.checkpoint_pending
+    reader.close()
+
+    restarted = Conversations(db.factory, db.with_settings())  # no state kept, no source
+    restarted.tick(NOW + timedelta(minutes=1))
+
+    assert db.path.with_name("nexus.db-wal").stat().st_size == 0
+    assert not found(raw_bytes(db.path), markers)

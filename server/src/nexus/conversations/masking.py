@@ -8,7 +8,6 @@ path can hand a raw text to the index.
 
 from __future__ import annotations
 
-import itertools
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -19,7 +18,6 @@ from nexus.secrets import REDACTED, redact
 BODY_MAX = models.BODY_MAX
 TITLE_MAX, WORKSPACE_MAX, BRANCH_MAX, MODEL_MAX = 200, 500, 200, 64
 AUTHOR_MAX = 32
-JOIN_WINDOW = 512  # characters kept on each side of a join between two text blocks
 
 # NUL breaks the body CHECK of 0010; \x02 and \x03 are the marks of `snippet()`.
 _DROP = str.maketrans("", "", "\x00\x02\x03")
@@ -67,17 +65,18 @@ def _mask(text: str) -> tuple[str, bool]:
 def join_blocks(parts: list[str]) -> str:
     """Text blocks joined by a blank line, unless a secret only shows once they touch: a
     secret split between blocks would escape `redact` behind the separators."""
+    spaced = "\n\n".join(parts)
+    if len(parts) < 2:
+        return spaced
+    # One scan of the whole tight join (a label far from the join, a secret over many
+    # blocks); the blocks are scanned one by one only when it found something. The masked
+    # texts are compared, not the kinds found: a split token next to another one of the same
+    # kind, or half a token caught by another rule, would not change the kinds.
     tight = "".join(parts)
-    # Only the text around each join is scanned, but taken from the tight join, not from the
-    # two blocks: a secret spread over three blocks or more spans every window it crosses.
-    for join in itertools.accumulate(len(part) for part in parts[:-1]):
-        left = _clean(tight[max(0, join - JOIN_WINDOW):join])
-        right = _clean(tight[join:join + JOIN_WINDOW])
-        # The masked texts, not the kinds found: a split token next to another one of the
-        # same kind, or half a token caught by another rule, would not change the kinds.
-        if redact(left + right)[0] != redact(left)[0] + redact(right)[0]:
-            return tight
-    return "\n\n".join(parts)
+    masked, found = redact(_clean(tight))
+    if found and masked != "".join(redact(_clean(part))[0] for part in parts):
+        return tight
+    return spaced
 
 
 def mask_field(text: object, limit: int) -> str | None:

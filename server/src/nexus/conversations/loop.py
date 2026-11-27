@@ -49,6 +49,9 @@ class Conversations:
         settings, state = self.settings, self.state
         if state.rebuild_pending is None:  # a crash may have cut a purge short
             state.rebuild_pending = retention.index_not_empty(self.factory)
+            # A checkpoint deferred before a restart leaves purged pages in the WAL.
+            wal = settings.db_path.with_name(settings.db_path.name + "-wal")
+            state.checkpoint_pending |= wal.exists() and wal.stat().st_size > 0
         if settings.conv_claude_root is not None:
             policy = Policy.at(now, since_days=settings.conv_since_days,
                                retention_days=settings.conv_retention_days)
