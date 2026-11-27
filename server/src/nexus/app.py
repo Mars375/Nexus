@@ -164,6 +164,8 @@ def create_app(
             if conversations is not None and not await asyncio.to_thread(
                     conversations.stop, CONVERSATIONS_STOP_SECONDS):
                 log.warning("passe des conversations encore en cours à l'arrêt")
+                # The pass checks the flag at every batch: wait for its end, without a timeout.
+                await asyncio.to_thread(conversations.stop, None)
             app.state.engine.dispose()
             app.state.touch_engine.dispose()
 

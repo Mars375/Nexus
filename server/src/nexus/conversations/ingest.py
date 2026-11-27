@@ -8,6 +8,7 @@ and counts only: never a path, a slug, a session id, a content, `str(exc)` nor a
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
 from collections import Counter
@@ -20,7 +21,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.conversations import jsonl_tail, paths, store
 from nexus.conversations.cursor_rules import Plan, Policy, plan, unchanged
-from nexus.conversations.jsonl_tail import HEAD_BYTES, Tail, head_digest, read_tail
+from nexus.conversations.jsonl_tail import HEAD_BYTES, Tail, head_bytes, read_tail
 from nexus.conversations.masking import ParsedMessage
 from nexus.conversations.models import ConversationCursor
 from nexus.conversations.parse_claude import parse_line
@@ -83,14 +84,19 @@ def _read(candidate: paths.Candidate, cursor: ConversationCursor | None, decided
           policy: Policy, budget: int) -> tuple[Tail, str, datetime, bool]:
     """Open, read and close; parsing and masking happen after the descriptor is closed."""
     start, skipping, covered = decided.start, decided.skipping, decided.covered_since
+    kept_size = min(HEAD_BYTES, (cursor.size or 0) if cursor is not None else 0)
+    head_size = min(HEAD_BYTES, candidate.size)
     with paths.opened(candidate) as fd:
+        # One snapshot of the head, taken before the tail: the digest compared and the digest
+        # kept describe the same bytes, so a rewrite in place during the read is caught by the
+        # next pass instead of being kept as the reference.
+        data = head_bytes(fd, max(kept_size, head_size))
         if decided.check_head and cursor is not None:
-            kept = head_digest(fd, min(HEAD_BYTES, cursor.size or 0))
+            kept = hashlib.sha256(data[:kept_size]).hexdigest()
             if kept != cursor.head_sha256:  # replaced in place: read again from 0
                 start, skipping, covered = 0, False, policy.retention_start
         tail = read_tail(fd, start=start, end=candidate.size, budget=budget, skipping=skipping)
-        head = head_digest(fd, min(HEAD_BYTES, candidate.size))
-    return tail, head, covered, start == 0
+    return tail, hashlib.sha256(data[:head_size]).hexdigest(), covered, start == 0
 
 
 def _file(run: _Pass, candidate: paths.Candidate, cursor: ConversationCursor | None,

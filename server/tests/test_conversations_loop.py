@@ -12,6 +12,7 @@ from claude_sessions_support import NOW, conversation, migrated, user, write_ses
 from conftest import ActorClient, tailscale_json
 from conversations_support import recording, under
 
+from nexus import app as app_module
 from nexus.app import create_app
 from nexus.conversations import loop, store
 from nexus.conversations.loop import Conversations
@@ -93,11 +94,13 @@ def test_a_failing_tick_is_logged_by_its_class_and_the_loop_goes_on(monkeypatch,
                for r in records)
 
 
-def blocking_batches(monkeypatch, gate: threading.Event, order: list):
-    real = store.write_batch
+def blocking_batches(monkeypatch, gate: threading.Event, order: list) -> threading.Event:
+    """Batches wait for `gate`; the returned event is set once the first batch is entered."""
+    real, entered = store.write_batch, threading.Event()
 
     def blocked(*args, **kwargs):
         order.append("batch")
+        entered.set()
         gate.wait(10)
         time.sleep(0.1)
         result = real(*args, **kwargs)
@@ -105,6 +108,7 @@ def blocking_batches(monkeypatch, gate: threading.Event, order: list):
         return result
 
     monkeypatch.setattr(store, "write_batch", blocked)
+    return entered
 
 
 def test_stop_raises_the_flag_and_waits_for_the_pass(db, root, monkeypatch):
@@ -112,14 +116,15 @@ def test_stop_raises_the_flag_and_waits_for_the_pass(db, root, monkeypatch):
         write_session(root, conversation(3), session=f"0000000{n}-0000-4000-8000-000000000000")
     conv = Conversations(db.factory, db.with_settings(conv_claude_root=root))
     order: list = []
-    blocking_batches(monkeypatch, conv.stopping, order)
+    entered = blocking_batches(monkeypatch, conv.stopping, order)
     thread = threading.Thread(target=conv.tick, args=(NOW,))
     thread.start()
-    while not order:
-        time.sleep(0.01)
-
-    assert conv.stop(5) is True
-    thread.join(5)
+    try:
+        assert entered.wait(5)
+        assert conv.stop(5) is True
+    finally:
+        conv.stopping.set()
+        thread.join(5)
 
     assert order == ["batch", "batch done"]  # the second file was never read
     conv.tick(NOW)  # after stop: nothing
@@ -130,36 +135,74 @@ def test_stop_gives_up_after_its_timeout(db, root, monkeypatch):
     write_session(root, conversation(3))
     conv = Conversations(db.factory, db.with_settings(conv_claude_root=root))
     release, order = threading.Event(), []
-    blocking_batches(monkeypatch, release, order)
+    entered = blocking_batches(monkeypatch, release, order)
     thread = threading.Thread(target=conv.tick, args=(NOW,))
     thread.start()
-    while not order:
-        time.sleep(0.01)
-
     try:
+        assert entered.wait(5)
         assert conv.stop(0.2) is False
     finally:
         release.set()
         thread.join(5)
 
 
+def lifespan_pass(app, monkeypatch, gate_of) -> tuple[list, threading.Event, threading.Thread]:
+    """A pass started inside the lifespan, its batches held by `gate_of(conv)`; the engine's
+    `dispose` is recorded in the same `order`."""
+    conv, order = app.state.conversations, []
+    entered = blocking_batches(monkeypatch, gate_of(conv), order)
+    real_dispose = app.state.engine.dispose
+    monkeypatch.setattr(app.state.engine, "dispose",
+                        lambda: (order.append("dispose"), real_dispose())[1])
+    thread = threading.Thread(target=conv.tick, args=(NOW,))
+    thread.start()
+    return order, entered, thread
+
+
 def test_the_lifespan_disposes_the_engine_only_after_the_pass(settings, root, monkeypatch):
     write_session(root, conversation(3))
     app = create_app(replace(settings, conv_claude_root=root), nodes_runner=tailscale_json)
-    order: list = []
-    with ActorClient(app):
-        conv = app.state.conversations
-        blocking_batches(monkeypatch, conv.stopping, order)
-        real_dispose = app.state.engine.dispose
-        monkeypatch.setattr(app.state.engine, "dispose",
-                            lambda: (order.append("dispose"), real_dispose())[1])
-        thread = threading.Thread(target=conv.tick, args=(NOW,))
-        thread.start()
-        while not order:
-            time.sleep(0.01)
-    thread.join(5)
+    thread = None
+    try:
+        with ActorClient(app):
+            order, entered, thread = lifespan_pass(app, monkeypatch, lambda c: c.stopping)
+            assert entered.wait(5)
+    finally:
+        app.state.conversations.stopping.set()
+        if thread is not None:
+            thread.join(5)
 
     assert order == ["batch", "batch done", "dispose"]
+
+
+def test_the_lifespan_waits_past_its_stop_timeout_before_disposing(settings, root, monkeypatch,
+                                                                    caplog):
+    monkeypatch.setattr(app_module, "CONVERSATIONS_STOP_SECONDS", 0.2)
+    write_session(root, conversation(3))
+    app = create_app(replace(settings, conv_claude_root=root), nodes_runner=tailscale_json)
+    release, threads = threading.Event(), []
+
+    def outlast(conv):  # the pass ends 0.6 s after the flag: past the 0.2 s timeout
+        def run():
+            conv.stopping.wait(10)
+            time.sleep(0.6)
+            release.set()
+        threads.append(threading.Thread(target=run))
+        threads[-1].start()
+        return release
+
+    try:
+        with ActorClient(app):
+            order, entered, thread = lifespan_pass(app, monkeypatch, outlast)
+            threads.append(thread)
+            assert entered.wait(5)
+    finally:
+        release.set()
+        for started in threads:
+            started.join(5)
+
+    assert order == ["batch", "batch done", "dispose"]
+    assert any("encore en cours" in r.getMessage() for r in caplog.records)
 
 
 def test_two_ticks_from_two_threads_run_one_after_the_other(db, root, monkeypatch):

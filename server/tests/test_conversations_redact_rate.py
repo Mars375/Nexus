@@ -25,13 +25,15 @@ def test_over_masking_without_full_hashes_stays_under_one_in_twenty():
 
 
 def test_every_full_hash_is_masked_the_accepted_false_positive():
-    messages = [m for m in corpus.build(MIB // 2, seed=205, hash_weight=50)
+    hashes: list[str] = []
+    messages = [m for m in corpus.build(MIB // 2, seed=205, hash_weight=50, hashes=hashes)
                 if m[0] in corpus.HASH_KINDS]
-    assert len(messages) > 20
+    assert len(messages) == len(hashes) > 20
 
-    for _, text in messages:
+    for (_, text), digest in zip(messages, hashes, strict=True):
+        assert digest in text
         out, found = redact(text)
-        assert REDACTED in out and found
+        assert REDACTED in out and found and digest not in out
 
 
 def test_short_shas_stay_searchable():
@@ -47,6 +49,16 @@ def test_seeded_secrets_are_never_left_visible():
         out, found = redact(text)
         assert not corpus.visible(secret, out)
         assert found
+
+
+def test_a_value_left_behind_its_label_counts_as_visible():
+    rng = random.Random(206)
+    for _ in range(50):
+        secret = corpus.seeded_secret(rng)
+        prefix, _, rest = secret.whole.partition(secret.value)
+        assert corpus.visible(secret, f"{REDACTED} {secret.value}")
+        assert corpus.visible(secret, f"{prefix}{secret.value}{REDACTED}")
+        assert not corpus.visible(secret, f"{prefix}{REDACTED}{rest}")
 
 
 def test_a_claude_provenance_reference_is_left_intact():

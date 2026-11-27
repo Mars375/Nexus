@@ -30,6 +30,9 @@ PURGE_EVERY = timedelta(hours=24)
 BATCH = 500
 CHECKPOINT_TIMEOUT = 0.25  # seconds: a reader must not hold the checkpoint (and writers) for 5 s
 CODES = frozenset({"db_busy", "db_error", "stopping"})
+# The sources with a reader: only their rows go by absence and by retention. Codex and Hermes
+# rows are neither read nor purged until their readers land (PR 3, PR 6).
+READ_SOURCES = ("claude-code",)
 _REBUILD = "INSERT INTO conversation_fts(conversation_fts) VALUES('rebuild')"
 _RECOUNT = text(
     "UPDATE conversations SET "
@@ -111,6 +114,7 @@ def _drop_missing(factory, now: datetime, state, stopping, result) -> None:
     with factory() as session:
         gone = [row for row in session.execute(select(
             Conversation.id, Conversation.missing_since).where(
+            Conversation.source.in_(READ_SOURCES),
             Conversation.missing_since.is_not(None))).all() if row[1] <= cutoff]
     for conversation_id, _ in gone:
         _delete_messages(factory, "c.id = :id", {"id": conversation_id}, state, stopping,
@@ -119,6 +123,8 @@ def _drop_missing(factory, now: datetime, state, stopping, result) -> None:
             result.conversations += session.execute(delete(Conversation).where(
                 Conversation.id == conversation_id)).rowcount
     for source, listed in state.listed.items():
+        if source not in READ_SOURCES:
+            continue
         with factory() as session:
             stale = [key for key, updated_at in session.execute(select(
                 ConversationCursor.path_key, ConversationCursor.updated_at).where(
@@ -134,20 +140,25 @@ def _drop_missing(factory, now: datetime, state, stopping, result) -> None:
 def _apply_retention(factory, threshold: datetime, state, stopping, result) -> None:
     # `at` is ISO-8601 UTC from AwareDateTime: as a string it sorts as the instant does.
     bound = AwareDateTime().process_bind_param(threshold, None)
-    _delete_messages(factory, "m.at < :threshold", {"threshold": bound}, state, stopping,
-                     result)
+    # `covered_since` moves first: a stop after a deletion batch must not leave a cursor that
+    # claims messages the purge already removed (a wider retention would never read them back).
     with factory() as session:
         behind = [(source, key) for source, key, covered in session.execute(select(
             ConversationCursor.source, ConversationCursor.path_key,
             ConversationCursor.covered_since).where(
-            ConversationCursor.source != "hermes",
+            ConversationCursor.source.in_(READ_SOURCES),
             ConversationCursor.covered_since.is_not(None))).all() if covered < threshold]
     for start in range(0, len(behind), BATCH):
+        if stopping.is_set():
+            raise _Stopped
         with factory.begin() as session:
             for source, key in behind[start:start + BATCH]:
                 session.execute(update(ConversationCursor).where(
                     ConversationCursor.source == source, ConversationCursor.path_key == key,
                 ).values(covered_since=threshold))
+    for source in READ_SOURCES:
+        _delete_messages(factory, "c.source = :source AND m.at < :threshold",
+                         {"source": source, "threshold": bound}, state, stopping, result)
 
 
 def purge(factory: sessionmaker[Session], *, now: datetime, retention_days: int,

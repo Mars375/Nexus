@@ -66,15 +66,18 @@ def _mask(text: str) -> tuple[str, bool]:
 
 def join_blocks(parts: list[str]) -> str:
     """Text blocks joined by a blank line, unless a secret only shows once they touch: a
-    secret split between two blocks would escape `redact` behind the separator."""
-    spaced = "\n\n".join(parts)
-    for left, right in itertools.pairwise(parts):  # only the text around each join is scanned
-        left, right = _clean(left[-JOIN_WINDOW:]), _clean(right[:JOIN_WINDOW])
+    secret split between blocks would escape `redact` behind the separators."""
+    tight = "".join(parts)
+    # Only the text around each join is scanned, but taken from the tight join, not from the
+    # two blocks: a secret spread over three blocks or more spans every window it crosses.
+    for join in itertools.accumulate(len(part) for part in parts[:-1]):
+        left = _clean(tight[max(0, join - JOIN_WINDOW):join])
+        right = _clean(tight[join:join + JOIN_WINDOW])
         # The masked texts, not the kinds found: a split token next to another one of the
         # same kind, or half a token caught by another rule, would not change the kinds.
         if redact(left + right)[0] != redact(left)[0] + redact(right)[0]:
-            return "".join(parts)
-    return spaced
+            return tight
+    return "\n\n".join(parts)
 
 
 def mask_field(text: object, limit: int) -> str | None:

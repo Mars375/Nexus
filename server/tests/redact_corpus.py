@@ -13,6 +13,7 @@ import hashlib
 import random
 import string
 import uuid
+from typing import NamedTuple
 
 FR = (
     "le la les un une des et ou mais donc car pour avec sans sous sur dans entre vers chez "
@@ -194,9 +195,10 @@ def table(rng: random.Random) -> str:
     return "\n".join(rows)
 
 
-def message(rng: random.Random, kind: str) -> str:
+def message(rng: random.Random, kind: str, hashes: list[str] | None = None) -> str:
     words = FR if rng.random() < 0.55 else EN
     parts: list[str] = []
+    digest = None
     if kind == "prose":
         parts = [paragraph(rng, words) for _ in range(rng.randint(1, 4))]
     elif kind == "paths":
@@ -234,33 +236,41 @@ def message(rng: random.Random, kind: str) -> str:
             paragraph(rng, words),
         ]
     elif kind == "full_sha":
-        parts = [
-            sentence(rng, words),
-            f"`git rev-parse HEAD` donne {full_sha(rng)}.",
-            paragraph(rng, words),
-        ]
+        first, digest = sentence(rng, words), full_sha(rng)  # the order of the draws is kept
+        parts = [first, f"`git rev-parse HEAD` donne {digest}.", paragraph(rng, words)]
     elif kind == "sha256":
-        parts = [
-            sentence(rng, words),
-            f"head_sha256 = {hashlib.sha256(rng.randbytes(8)).hexdigest()}",
-            sentence(rng, words),
-        ]
+        first, digest = sentence(rng, words), hashlib.sha256(rng.randbytes(8)).hexdigest()
+        parts = [first, f"head_sha256 = {digest}", sentence(rng, words)]
+    if digest is not None and hashes is not None:
+        hashes.append(digest)
     return "\n\n".join(parts)
 
 
-def seeded_secret(rng: random.Random) -> str:
+class Seeded(NamedTuple):
+    """A seeded secret, and the confidential value it carries (after its label, if any)."""
+
+    whole: str
+    value: str
+
+
+def seeded_secret(rng: random.Random) -> Seeded:
     alnum = string.ascii_letters + string.digits
-    return rng.choice(
-        [
-            "ghp_" + "".join(rng.choice(alnum) for _ in range(36)),
-            "sk-ant-" + "".join(rng.choice(alnum) for _ in range(40)),
-            "nxt_" + "".join(rng.choice(alnum + "-_") for _ in range(43)),
-            "AKIA" + "".join(rng.choice(string.ascii_uppercase + string.digits) for _ in range(16)),
-            "password=" + "".join(rng.choice(alnum) for _ in range(14)),
-            "postgres://alice:" + "".join(rng.choice(alnum) for _ in range(12)) + "@db.local/app",
-            "Authorization: Bearer " + "".join(rng.choice(alnum) for _ in range(32)),
-        ]
-    )
+
+    def chars(n: int, pool: str = alnum) -> str:
+        return "".join(rng.choice(pool) for _ in range(n))
+
+    # Every option is drawn before the choice, in this order: the corpus stays the same.
+    options = [
+        ("ghp_", chars(36), ""),
+        ("sk-ant-", chars(40), ""),
+        ("nxt_", chars(43, alnum + "-_"), ""),
+        ("AKIA", chars(16, string.ascii_uppercase + string.digits), ""),
+        ("password=", chars(14), ""),
+        ("postgres://alice:", chars(12), "@db.local/app"),
+        ("Authorization: Bearer ", chars(32), ""),
+    ]
+    label, value, rest = rng.choice(options)
+    return Seeded(label + value + rest, value)
 
 
 # Weights of the clean corpus. `full_sha` and `sha256` are the categories known to be masked
@@ -271,8 +281,10 @@ KINDS = {"prose": 30, "paths": 12, "ids": 12, "code": 22, "mixed": 14, "full_sha
 HASH_KINDS = ("full_sha", "sha256")
 
 
-def build(size: int, *, seed: int, hash_weight: float = 5.0) -> list[tuple[str, str]]:
-    """Messages `(kind, text)` until `size` UTF-8 bytes; `hash_weight` weighs each hash kind."""
+def build(size: int, *, seed: int, hash_weight: float = 5.0,
+          hashes: list[str] | None = None) -> list[tuple[str, str]]:
+    """Messages `(kind, text)` until `size` UTF-8 bytes; `hash_weight` weighs each hash kind.
+    `hashes`, when given, receives the digest of each hash message, in order."""
     rng = random.Random(seed)
     weights = dict(KINDS, full_sha=hash_weight, sha256=hash_weight)
     kinds, values = zip(*((k, w) for k, w in weights.items() if w > 0), strict=True)
@@ -280,26 +292,26 @@ def build(size: int, *, seed: int, hash_weight: float = 5.0) -> list[tuple[str, 
     total = 0
     while total < size:
         kind = rng.choices(kinds, values)[0]
-        text = message(rng, kind)
+        text = message(rng, kind, hashes)
         corpus.append((kind, text))
         total += len(text.encode("utf-8"))
     return corpus
 
 
-def seeded(count: int, *, seed: int) -> list[tuple[str, str]]:
+def seeded(count: int, *, seed: int) -> list[tuple[Seeded, str]]:
     """`count` messages `(secret, text)`, each with one secret built at runtime."""
     rng = random.Random(seed)
     out = []
     for _ in range(count):
         secret = seeded_secret(rng)
-        out.append((secret, f"{paragraph(rng, FR)} {secret} {paragraph(rng, EN)}"))
+        out.append((secret, f"{paragraph(rng, FR)} {secret.whole} {paragraph(rng, EN)}"))
     return out
 
 
-def visible(secret: str, masked: str) -> bool:
-    """Whether a seeded secret (or its value after a label) is still readable in `masked`."""
-    value = secret.split("=", 1)[-1].split(":", 1)[-1] if "=" in secret else secret
-    return secret in masked or (len(value) > 8 and value in masked)
+def visible(secret: Seeded, masked: str) -> bool:
+    """Whether a seeded secret, or the confidential value it carries, is readable in `masked`:
+    a password left in its URL or a token left after `Bearer ` is a leak."""
+    return secret.whole in masked or secret.value in masked
 
 
 def provenance_ref(rng: random.Random) -> str:

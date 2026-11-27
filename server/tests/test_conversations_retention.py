@@ -47,6 +47,19 @@ def integrity(db) -> None:
             "INSERT INTO conversation_fts(conversation_fts) VALUES('integrity-check')")
 
 
+def after_a_deletion(db, action):
+    """`action` runs at every commit that leaves fewer messages than at the start: the purge
+    moves `covered_since` first, in a commit that deletes nothing."""
+    start = count(db)
+
+    def after(_session):
+        if count(db) < start:
+            action()
+
+    event.listen(db.factory, "after_commit", after)
+    return after
+
+
 def aged(root, days_old: list[int], *, body="message", session=None):
     """One session whose messages are `days_old` days older than NOW."""
     lines = [user(f"{body} {i}", at=NOW - timedelta(days=d, seconds=i),
@@ -194,7 +207,7 @@ def test_a_retention_widened_after_a_purge_brings_the_purged_messages_back(db, r
 def test_the_purge_goes_by_batches_and_lets_a_writer_in_between(db, root):
     aged(root, [40] * 1300 + [1])
     conversations(db, conv_claude_root=root).tick(EARLY)
-    commits, writer = [], []
+    commits, writer, started = [], [], []
 
     def write_task():
         with db.factory() as session:
@@ -206,7 +219,8 @@ def test_the_purge_goes_by_batches_and_lets_a_writer_in_between(db, root):
     @event.listens_for(db.factory, "after_commit")
     def after(_session):
         commits.append(count(db))
-        if len(commits) == 1:
+        if commits[-1] < 1301 and not started:  # after the first deletion batch
+            started.append(1)
             thread = threading.Thread(target=write_task)
             thread.start()
             thread.join(5)
@@ -226,9 +240,7 @@ def test_an_interrupted_purge_resumes_and_does_not_move_its_clock(db, root):
     conv.tick(EARLY)
     conv.state.last_purge_at = None
 
-    @event.listens_for(db.factory, "after_commit")
-    def after(_session):
-        conv.stopping.set()
+    after = after_a_deletion(db, conv.stopping.set)
 
     result = retention.purge(db.factory, now=NOW, retention_days=31, disabled=frozenset(),
                              state=conv.state, stopping=conv.stopping)
@@ -253,9 +265,7 @@ def test_a_purge_stopped_after_its_last_batch_still_rebuilds_at_the_next_tick(db
     conv.tick(EARLY)
     conv.state.last_purge_at = None
 
-    @event.listens_for(db.factory, "after_commit")
-    def after(_session):
-        conv.stopping.set()
+    after = after_a_deletion(db, conv.stopping.set)
 
     conv.tick(NOW)
     event.remove(db.factory, "after_commit", after)
@@ -302,9 +312,7 @@ def test_a_purge_that_emptied_the_index_and_stopped_rebuilds_after_a_restart(db,
     first.tick(EARLY)
     first.state.last_purge_at = None
 
-    @event.listens_for(db.factory, "after_commit")
-    def after(_session):
-        first.stopping.set()
+    after = after_a_deletion(db, first.stopping.set)
 
     first.tick(NOW)
     event.remove(db.factory, "after_commit", after)
@@ -328,3 +336,45 @@ def test_the_24_hours_between_two_purges_are_real_hours_across_a_dst_change():
     later = datetime(2026, 10, 25, 23, 45, tzinfo=paris)  # 22:45Z: 24 h 15 min have passed
 
     assert retention.purge_due(state, later)
+
+
+def test_a_purge_stopped_after_its_first_deletion_has_moved_covered_since(db, root):
+    aged(root, [40] * 600 + [1])
+    conv = conversations(db, conv_claude_root=root)
+    conv.tick(EARLY)
+    conv.state.last_purge_at = None
+    after = after_a_deletion(db, conv.stopping.set)
+    result = retention.purge(db.factory, now=NOW, retention_days=31, disabled=frozenset(),
+                             state=conv.state, stopping=conv.stopping)
+    event.remove(db.factory, "after_commit", after)
+    assert not result.complete and count(db) == 101
+
+    # 45 days: past the 40-day messages, short of the 51 days the first pass covered.
+    conversations(db, conv_claude_root=root, conv_retention_days=45).tick(NOW)
+
+    assert count(db) == 601
+
+
+def test_a_purge_leaves_codex_rows_alone_until_their_reader_lands(db):
+    old = (NOW - timedelta(days=40)).isoformat()
+    with db.engine.begin() as conn:
+        conn.exec_driver_sql(
+            "INSERT INTO conversations (source, external_id, message_count, missing_since, "
+            "measured_at) VALUES ('codex', 's', 1, ?, ?)", (old, old))
+        conn.exec_driver_sql(
+            "INSERT INTO conversation_messages (conversation_id, external_id, role, author, at, "
+            "body, truncated, redacted) VALUES (1, 'm', 'user', 'loic', ?, 'ancien', 0, 0)",
+            (old,))
+        conn.exec_driver_sql(
+            "INSERT INTO conversation_cursors (source, path_key, byte_offset, covered_since, "
+            "state, updated_at) VALUES ('codex', 'k', 0, ?, 'ok', ?)", (old, old))
+    tables = ("conversations", "conversation_messages", "conversation_cursors")
+    before = [db.rows(f"SELECT * FROM {table}") for table in tables]
+    state = conversations(db).state
+    state.listed["codex"] = frozenset()  # a listing that would name no Codex file
+
+    result = retention.purge(db.factory, now=NOW, retention_days=31, disabled=frozenset(),
+                             state=state, stopping=threading.Event())
+
+    assert result.complete
+    assert [db.rows(f"SELECT * FROM {table}") for table in tables] == before

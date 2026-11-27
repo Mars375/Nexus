@@ -84,15 +84,19 @@ def read_tail(fd: int, *, start: int, end: int, budget: int, skipping: bool) -> 
     return Tail(lines, offset, skipping, oversized, read, at_end, peak)
 
 
-def head_digest(fd: int, length: int) -> str:
-    """SHA-256 of the first `length` bytes (`os.pread` does not exist on Windows)."""
+def head_bytes(fd: int, length: int) -> bytes:
+    """The first `length` bytes, fewer if the file is shorter (`os.pread` does not exist on
+    Windows); `length` is at most `HEAD_BYTES` for the callers."""
     os.lseek(fd, 0, os.SEEK_SET)
-    digest = hashlib.sha256()
-    left = length
-    while left > 0:
-        data = os.read(fd, min(CHUNK, left))
-        if not data:
+    data = bytearray()
+    while len(data) < length:
+        chunk = os.read(fd, min(CHUNK, length - len(data)))
+        if not chunk:
             break
-        digest.update(data)
-        left -= len(data)
-    return digest.hexdigest()
+        data += chunk
+    return bytes(data)
+
+
+def head_digest(fd: int, length: int) -> str:
+    """SHA-256 of the first `length` bytes."""
+    return hashlib.sha256(head_bytes(fd, length)).hexdigest()

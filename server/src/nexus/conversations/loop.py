@@ -71,10 +71,11 @@ class Conversations:
                                    or not result.complete):
             retention.log_purge(result, rebuilt=rebuilt, checkpointed=checkpointed)
 
-    def stop(self, timeout: float) -> bool:
-        """Raise the flag and wait for the pass in progress; False if it outlived `timeout`."""
+    def stop(self, timeout: float | None) -> bool:
+        """Raise the flag and wait for the pass in progress; False if it outlived `timeout`
+        (None waits for as long as the pass lasts)."""
         self.stopping.set()
-        if not self._lock.acquire(timeout=timeout):
+        if not self._lock.acquire(timeout=-1 if timeout is None else timeout):
             return False
         self._lock.release()
         return True

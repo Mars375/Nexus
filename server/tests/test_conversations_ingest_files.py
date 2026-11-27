@@ -231,3 +231,31 @@ def test_a_root_swapped_for_a_junction_after_a_pass_is_refused(db, root, tmp_pat
     assert status.state == "unavailable" and status.code in ("root_is_link", "root_substituted")
     assert not under(events, elsewhere)
     assert count(db) == 2
+
+
+def test_a_same_size_rewrite_during_a_resumed_read_is_read_again_from_zero(db, root,
+                                                                           monkeypatch):
+    session = "11111111-2222-4333-a444-555555555555"
+    lines = conversation(4, body="avant")
+    path = write_session(root, lines[:2], session=session)
+    run(db, root)
+    write_session(root, lines[2:], session=session, append=True, mtime=NOW + timedelta(seconds=1))
+    data = path.read_bytes().replace(b"avant", b"apres").replace(b"-8000-0000", b"-9000-0000")
+    real = ingest.read_tail
+
+    def rewritten_first(fd, **kwargs):  # in place, between the digest and the read
+        with open(path, "r+b") as handle:
+            handle.write(data)
+        return real(fd, **kwargs)
+
+    monkeypatch.setattr(ingest, "read_tail", rewritten_first)
+    run(db, root)
+    monkeypatch.undo()
+    assert len(data) == path.stat().st_size
+    touch(path, NOW + timedelta(seconds=5))
+
+    status = run(db, root)
+
+    assert status.reads_from_zero == 1
+    bodies = [r[0] for r in db.rows("SELECT body FROM conversation_messages")]
+    assert sorted(b for b in bodies if b.startswith("apres")) == [f"apres {i}" for i in range(4)]

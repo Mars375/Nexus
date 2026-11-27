@@ -3,6 +3,8 @@
 A marker put in a forbidden field never leaves `parse_line`, by any of its outputs.
 """
 
+import random
+import string
 from datetime import timedelta
 
 import pytest
@@ -243,3 +245,28 @@ def test_a_split_secret_is_masked_whatever_else_the_blocks_hold(halves):
 
     flat = got.message.body.replace("\n", "")
     assert whole not in flat and halves[0].split()[-1] not in flat
+
+
+def _random_token(seed: int) -> str:
+    rng = random.Random(seed)
+    return "ghp_" + "".join(rng.choice(string.ascii_letters + string.digits) for _ in range(36))
+
+
+@pytest.mark.parametrize("pieces", [
+    lambda token: ["ghp_", "A" * 18, "A" * 18],
+    lambda token: [token[:4], token[4:22], token[22:]],
+    lambda token: [f"voici {token[:4]}", token[4:22], "", f"{token[22:]} fin"],
+    lambda token: [f"voici {token[:10]}", token[10:20], token[20:30], f"{token[30:]} fin"],
+], ids=["three_blocks", "random_18", "empty_block", "four_blocks"])
+def test_a_secret_spread_over_three_or_more_blocks_is_masked(pieces):
+    for seed in range(20):
+        token = _random_token(seed)
+        parts = pieces(token)
+        whole = "".join(parts).replace("voici ", "").replace(" fin", "")
+        blocks = [{"type": "text", "text": part} for part in parts]
+
+        got = parse(user(blocks))
+
+        assert got.kind == "message" and got.message.redacted
+        flat = got.message.body.replace("\n", "")
+        assert whole not in flat and whole[4:] not in flat and whole[4:22] not in flat
