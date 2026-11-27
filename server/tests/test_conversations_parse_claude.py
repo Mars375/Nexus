@@ -229,3 +229,17 @@ def test_an_instant_at_the_edge_of_the_calendar_is_a_bad_field(instant):
     got = parse(user("bonjour", timestamp=instant))
 
     assert (got.kind, got.reason) == ("bad", "field")
+
+
+@pytest.mark.parametrize("halves", [
+    ("voici ghp_aB3dE5fG7hI9jK", "1lM3nO5pQ7rS9tU1vW3xY5 et " + "ghp_" + "Z" * 36),
+    ("voici ghp_aB3dE5", "fG7hI9jK1lM3nO5pQ7rS9tU1vW3xY5 fin"),
+])
+def test_a_split_secret_is_masked_whatever_else_the_blocks_hold(halves):
+    whole = halves[0].split()[-1] + halves[1].split()[0]
+    blocks = [{"type": "text", "text": half} for half in halves]
+
+    got = parse(user(blocks))
+
+    flat = got.message.body.replace("\n", "")
+    assert whole not in flat and halves[0].split()[-1] not in flat

@@ -69,8 +69,10 @@ def join_blocks(parts: list[str]) -> str:
     secret split between two blocks would escape `redact` behind the separator."""
     spaced = "\n\n".join(parts)
     for left, right in itertools.pairwise(parts):  # only the text around each join is scanned
-        left, right = left[-JOIN_WINDOW:], right[:JOIN_WINDOW]
-        if len(redact(_clean(left + right))[1]) > len(redact(_clean(f"{left}\n\n{right}"))[1]):
+        left, right = _clean(left[-JOIN_WINDOW:]), _clean(right[:JOIN_WINDOW])
+        # The masked texts, not the kinds found: a split token next to another one of the
+        # same kind, or half a token caught by another rule, would not change the kinds.
+        if redact(left + right)[0] != redact(left)[0] + redact(right)[0]:
             return "".join(parts)
     return spaced
 
