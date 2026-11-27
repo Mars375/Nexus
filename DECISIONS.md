@@ -468,7 +468,10 @@ Loïc qui a choisi ; il peut l'infirmer. Ce choix amende celui de Loïc du 2026-
   « aucun run Codex sur un vrai dépôt ni sur un contenu que Loïc ne maîtrise pas » tient ; sa
   levée revient à Loïc. Une tâche qui a besoin de `localhost` (serveur local,
   Playwright) échouera sous MXC. Une mise à jour de Windows peut retirer MXC : la sonde refuse alors
-  tous les runs Codex. Revenir en arrière tient en une valeur de `WINDOWS_SANDBOX`.
+  tous les runs Codex. Revenir à `unelevated` ne tient pas en une valeur de `WINDOWS_SANDBOX` :
+  la sonde, qui exige `ERR 10013`, refuserait alors tous les runs (elle n'obtient qu'un délai
+  dépassé sous `unelevated`) ; il faudrait aussi la retirer ou l'adapter, et ce retour rouvre le
+  réseau des commandes de l'agent.
 
 ---
 

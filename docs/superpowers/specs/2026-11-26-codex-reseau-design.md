@@ -103,7 +103,7 @@ Quatre changements, dans une seule PR :
    - les contrôles ne voient pas aujourd'hui la politique d'`exec`. Sans la clé, `prompt-input` décrit les demandes d'escalade sans politique ; avec elle, il dit « Approval policy is currently never » [mesuré]. Les contrôles jugent alors le texte que le modèle reçoit sous `exec`.
 4. **Confirmation sous `exec`**, après la fusion et sur le banc jetable : un run réel avec l'argv de Nexus et le brief de #207 (connexion `TcpClient` vers `151.101.0.223:443`, puis Python OpenSSL vers PyPI). Il doit afficher un refus (`10013`) et finir sans erreur de Nexus. Le relevé 0b (les quatre git de `codex.exe`, hors bac à sable) est refait dans le même run (spec 2026-11-25, §6). `MEASURED_VERSIONS` ne change pas : la version est la même, seul le moteur du bac à sable change.
 
-Pourquoi : c'est l'option la plus restrictive qui tienne sur Windows 11 Famille sans droits d'administrateur au moment du run. Elle coupe aussi le DNS et la boucle locale, ce que ne fait aucune règle de pare-feu par programme. Elle garde le job. Elle se défait en remettant une valeur dans `WINDOWS_SANDBOX`. Elle échoue fermée deux fois : MXC strict n'a pas de repli, et la sonde refuse tout ce qui n'est pas `10013`.
+Pourquoi : c'est l'option la plus restrictive qui tienne sur Windows 11 Famille sans droits d'administrateur au moment du run. Elle coupe aussi le DNS et la boucle locale, ce que ne fait aucune règle de pare-feu par programme. Elle garde le job. Elle se défait en remettant une valeur dans `WINDOWS_SANDBOX` et en retirant la sonde (qui refuserait sinon tous les runs sous `unelevated`), ce qui rouvre le réseau. Elle échoue fermée deux fois : MXC strict n'a pas de repli, et la sonde refuse tout ce qui n'est pas `10013`.
 
 ### Écartées
 
