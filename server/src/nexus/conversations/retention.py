@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import delete, select, text, update
@@ -48,7 +48,8 @@ class _Stopped(Exception):
 
 
 def purge_due(state: ProcessState, now: datetime) -> bool:
-    return state.last_purge_at is None or now - state.last_purge_at >= PURGE_EVERY
+    return (state.last_purge_at is None
+            or now.astimezone(UTC) - state.last_purge_at.astimezone(UTC) >= PURGE_EVERY)
 
 
 def index_not_empty(factory: sessionmaker[Session]) -> bool:
@@ -106,7 +107,7 @@ def _drop_source(factory, source: str, state, stopping, result) -> None:
 
 
 def _drop_missing(factory, now: datetime, state, stopping, result) -> None:
-    cutoff = now - MISSING_GRACE
+    cutoff = now.astimezone(UTC) - MISSING_GRACE
     with factory() as session:
         gone = [row for row in session.execute(select(
             Conversation.id, Conversation.missing_since).where(
@@ -154,6 +155,7 @@ def purge(factory: sessionmaker[Session], *, now: datetime, retention_days: int,
           stopping: threading.Event) -> PurgeResult:
     """One purge; `last_purge_at` only moves on a complete one. Never raises a DB error."""
     result = PurgeResult()
+    now = now.astimezone(UTC)  # elapsed time, never wall-clock time across a DST change
     try:
         for source in sorted(disabled):
             _drop_source(factory, source, state, stopping, result)

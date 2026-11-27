@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
 from nexus.conversations import masking
@@ -115,6 +115,8 @@ def parse_line(data: bytes, *, at_file_start: bool, stem: str,
     if isinstance(line, ClaudeLine):
         return line
     kind = line.get("type")
+    if not isinstance(kind, str):  # a list or an object is not hashable
+        return IGNORED
     if kind in _TITLES:
         key, title_kind = _TITLES[kind]
         title = masking.mask_field(line.get(key), masking.TITLE_MAX)
@@ -144,7 +146,7 @@ def parse_line(data: bytes, *, at_file_start: bool, stem: str,
         if isinstance(text, ClaudeLine):
             return text
         author = AUTHORS["assistant"]
-    if at < not_before:
+    if at.astimezone(UTC) < not_before.astimezone(UTC):
         return _skipped("old")
     try:
         parsed = masking.make_message(external_id=line_id, role=kind, author=author, at=at,

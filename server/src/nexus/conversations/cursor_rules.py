@@ -22,6 +22,7 @@ class Policy:
 
     @classmethod
     def at(cls, now: datetime, *, since_days: int, retention_days: int) -> Policy:
+        now = now.astimezone(UTC)  # elapsed time, never wall-clock time across a DST change
         return cls(now - timedelta(days=since_days), now - timedelta(days=retention_days))
 
 
@@ -53,7 +54,8 @@ def plan(cursor: ConversationCursor | None, candidate: Candidate, policy: Policy
         # A future mtime (a clock ahead) is inside the window.
         return MARK_OLD if mtime_of(candidate) < policy.window_start else from_zero
     covered = cursor.covered_since
-    if covered is None or covered > policy.retention_start:  # in every state
+    # In every state; compared as instants (Paris times compare by wall clock across a DST change).
+    if covered is None or covered.astimezone(UTC) > policy.retention_start.astimezone(UTC):
         return from_zero
     if cursor.file_id != candidate.file_id or candidate.size < cursor.byte_offset:
         return from_zero

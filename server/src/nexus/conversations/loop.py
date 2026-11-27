@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -45,6 +45,7 @@ class Conversations:
             self._tick(now or clock_now())
 
     def _tick(self, now: datetime) -> None:
+        now = now.astimezone(UTC)  # Paris time compares by wall clock across a DST change
         settings, state = self.settings, self.state
         if state.rebuild_pending is None:  # a crash may have cut a purge short
             state.rebuild_pending = retention.index_not_empty(self.factory)

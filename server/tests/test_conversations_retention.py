@@ -3,7 +3,7 @@ sources, retention and `covered_since`, in batches. The clock is injected throug
 purge are ingested under an earlier `now`, then purged under a later one."""
 
 import threading
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 from claude_sessions_support import NOW, conversation, migrated, raw_bytes, user, write_session
@@ -316,3 +316,15 @@ def test_a_purge_that_emptied_the_index_and_stopped_rebuilds_after_a_restart(db,
     data = raw_bytes(db.path)
     assert not [m for m in markers if m[-9:].encode() in data]
     assert not restarted.state.rebuild_pending
+
+
+def test_the_24_hours_between_two_purges_are_real_hours_across_a_dst_change():
+    from zoneinfo import ZoneInfo
+
+    from nexus.conversations.state import ProcessState
+    paris = ZoneInfo("Europe/Paris")
+    state = ProcessState()
+    state.last_purge_at = datetime(2026, 10, 25, 0, 30, tzinfo=paris)  # 22:30Z the day before
+    later = datetime(2026, 10, 25, 23, 45, tzinfo=paris)  # 22:45Z: 24 h 15 min have passed
+
+    assert retention.purge_due(state, later)

@@ -195,3 +195,8 @@ def test_microseconds_and_offsets_are_parsed_as_aware():
     line["timestamp"] = "2026-11-27T13:00:00.123456+01:00"
     got = parse(line)
     assert got.message.at == NOW.replace(microsecond=123456)
+
+
+@pytest.mark.parametrize("kind", [[], {}, ["user"], {"user": 1}, 7, None])
+def test_a_type_that_is_not_a_string_is_ignored_without_raising(kind):
+    assert parse({"type": kind, "message": {"role": "user", "content": "x"}}).kind == "ignored"

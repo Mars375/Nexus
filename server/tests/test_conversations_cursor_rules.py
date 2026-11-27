@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -104,3 +105,26 @@ def test_an_ok_or_partial_file_leaving_the_window_is_not_marked_old():
 def test_every_state_of_the_model_is_handled():
     for state in CURSOR_STATES:
         assert plan(cursor(state), candidate(), POLICY).action in ("skip", "read")
+
+
+PARIS = ZoneInfo("Europe/Paris")
+# The autumn fall-back hour: 02:15 the second time (01:15Z) comes after 02:30 the first (00:30Z).
+FIRST_0230 = datetime(2026, 10, 25, 2, 30, tzinfo=PARIS, fold=0)
+SECOND_0215 = datetime(2026, 10, 25, 2, 15, tzinfo=PARIS, fold=1)
+
+
+def test_a_covered_since_later_in_the_fall_back_hour_is_read_again_from_zero():
+    policy = Policy(window_start=FIRST_0230 - timedelta(days=1), retention_start=FIRST_0230)
+
+    decided = plan(cursor(covered=SECOND_0215), candidate(), policy)
+
+    assert (decided.action, decided.start) == ("read", 0)
+
+
+def test_the_policy_counts_real_days_across_a_dst_change():
+    now = datetime(2026, 11, 1, 12, 0, tzinfo=PARIS)  # 31 days back is summer time
+
+    policy = Policy.at(now, since_days=31, retention_days=31)
+
+    assert policy.retention_start == now.astimezone(UTC) - timedelta(days=31)
+    assert policy.retention_start.utcoffset() == timedelta(0)
