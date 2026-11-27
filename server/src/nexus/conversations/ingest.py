@@ -157,6 +157,8 @@ def claude_pass(factory: sessionmaker[Session], configured_root: Path, policy: P
                 message_budget: int = MESSAGE_BUDGET) -> SourceStatus:
     run = _Pass(factory, policy, stopping, now, read_budget, message_budget)
     run.status.last_pass_at = now
+    # Only a listing judged complete by this very pass may name the files present (spec §6.6).
+    state.listed.pop(SOURCE, None)
     try:
         listing = paths.iter_claude(paths.check_root(configured_root, SOURCE))
     except paths.SourceRefused as exc:
@@ -191,7 +193,8 @@ def claude_pass(factory: sessionmaker[Session], configured_root: Path, policy: P
         run.status.code = "db_busy" if _transient(exc) else "db_error"
         run.status.codes[run.status.code] += 1
     judged = run.status.lines_judged
-    if judged >= DEGRADED_MIN_LINES and 2 * run.bad >= judged:
+    if run.status.state in ("ok", "partial") and judged >= DEGRADED_MIN_LINES \
+            and 2 * run.bad >= judged:  # an interruption keeps its state and its code
         run.status.state = "degraded"
     if complete and run.status.state in ("ok", "partial"):
         _presence(run, listing, state)

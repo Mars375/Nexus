@@ -124,11 +124,11 @@ def _drop_missing(factory, now: datetime, state, stopping, result) -> None:
                 ConversationCursor.path_key, ConversationCursor.updated_at).where(
                 ConversationCursor.source == source)).all()
                 if key not in listed and updated_at <= cutoff]
-        if stale:
+        for start in range(0, len(stale), BATCH):  # one short transaction per batch
             with factory.begin() as session:
                 result.cursors += session.execute(delete(ConversationCursor).where(
                     ConversationCursor.source == source,
-                    ConversationCursor.path_key.in_(stale))).rowcount
+                    ConversationCursor.path_key.in_(stale[start:start + BATCH]))).rowcount
 
 
 def _apply_retention(factory, threshold: datetime, state, stopping, result) -> None:

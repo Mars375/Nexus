@@ -358,3 +358,30 @@ def test_a_title_seen_before_any_message_reaches_the_conversation(db, root):
 
     assert db.scalar("SELECT title FROM conversations") == "Réunion budget"
     assert db.scalar("SELECT message_count FROM conversations") == 1
+
+
+def _busy_mark_old(*_args, **_kwargs):
+    from sqlalchemy.exc import OperationalError
+    raise OperationalError("UPDATE", {}, sqlite3.OperationalError("database is locked"))
+
+
+def test_an_interrupted_pass_with_many_bad_lines_stays_interrupted(db, root, monkeypatch):
+    write_session(root, [user(f"ok {i}") for i in range(14)] + [b"{pas du json"] * 16)
+    monkeypatch.setattr(store, "mark_old", _busy_mark_old)
+
+    status = run(db, root)
+
+    assert (status.state, status.code) == ("interrupted", "db_busy")
+
+
+def test_a_pass_that_does_not_finish_forgets_the_files_listed_before(db, root, monkeypatch):
+    write_session(root, [user("premier")])
+    state = ProcessState()
+    run(db, root, state=state)
+    assert ingest.SOURCE in state.listed
+    write_session(root, [user("second")])
+    monkeypatch.setattr(store, "mark_old", _busy_mark_old)
+
+    assert run(db, root, state=state, now=NOW + timedelta(minutes=1)).state == "interrupted"
+
+    assert ingest.SOURCE not in state.listed  # no purge may judge presence on the old listing

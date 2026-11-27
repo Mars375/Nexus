@@ -116,6 +116,7 @@ def test_invalid_fields_raise(overrides):
 @pytest.mark.parametrize(("model", "kept"), [
     ("claude-opus-5-5", "claude-opus-5-5"), ("x y", None), ("a" * 65, None),
     ("<synthetic>", None), (None, None), (7, None),
+    ("ghp_" + "A" * 36, None), ("sk-ant-" + "C" * 40, None), ("nxt_" + "B" * 43, None),
 ])
 def test_model_is_kept_only_when_it_matches_the_whitelist(model, kept):
     assert message("bonjour", model=model).model == kept

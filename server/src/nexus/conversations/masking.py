@@ -98,6 +98,8 @@ def make_message(*, external_id: str, role: str, author: str, at: datetime, text
     if not masked:
         return None
     body, truncated = cut(masked, BODY_MAX)
-    kept = model if isinstance(model, str) and _MODEL.fullmatch(model) else None
+    # A token fits the model pattern too: a model the scanner flags is dropped, never stored.
+    kept = model if (isinstance(model, str) and _MODEL.fullmatch(model)
+                     and not redact(model)[1]) else None
     return ParsedMessage(external_id, role, author, at, body, truncated, redacted, kept,
                          _FACTORY)
