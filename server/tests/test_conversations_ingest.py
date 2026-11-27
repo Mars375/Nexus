@@ -13,6 +13,7 @@ from claude_sessions_support import (
     migrated,
     new_id,
     text,
+    title,
     user,
     write_session,
 )
@@ -343,3 +344,17 @@ def test_a_stop_seen_at_the_line_check_of_the_last_file_interrupts_the_pass(db, 
     assert (status.state, status.code) == ("interrupted", "stopping")
     assert marked == []
     assert db.scalar("SELECT state FROM conversation_cursors") == "partial"
+
+
+def test_a_title_seen_before_any_message_reaches_the_conversation(db, root):
+    session = new_id()
+    write_session(root, [title("Réunion budget")], session=session, mtime=NOW)
+    assert run(db, root).state == "ok"
+    assert db.scalar("SELECT count(*) FROM conversations") == 0
+
+    write_session(root, [title("Réunion budget"), user("premier message")], session=session,
+                  mtime=NOW + timedelta(seconds=5))
+    run(db, root, now=NOW + timedelta(seconds=10))
+
+    assert db.scalar("SELECT title FROM conversations") == "Réunion budget"
+    assert db.scalar("SELECT message_count FROM conversations") == 1

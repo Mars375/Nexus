@@ -60,11 +60,11 @@ def _instant(value: object) -> datetime | None:
 
 
 def _texts(blocks: list) -> str:
-    return "\n\n".join(
+    return masking.join_blocks([
         block["text"] for block in blocks
         if isinstance(block, dict) and block.get("type") == "text"
         and isinstance(block.get("text"), str)
-    )
+    ])
 
 
 def _user_text(line: dict, content: object) -> tuple[str, str] | ClaudeLine:
@@ -103,7 +103,7 @@ def _decode(data: bytes, at_file_start: bool) -> dict | ClaudeLine:
         return IGNORED
     try:
         line = json.loads(raw)
-    except ValueError:
+    except (ValueError, RecursionError):  # a deep nesting fits in 1 MiB
         return _bad("json")
     return line if isinstance(line, dict) else _bad("not_object")
 

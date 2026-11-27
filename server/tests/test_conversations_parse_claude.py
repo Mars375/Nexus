@@ -200,3 +200,23 @@ def test_microseconds_and_offsets_are_parsed_as_aware():
 @pytest.mark.parametrize("kind", [[], {}, ["user"], {"user": 1}, 7, None])
 def test_a_type_that_is_not_a_string_is_ignored_without_raising(kind):
     assert parse({"type": kind, "message": {"role": "user", "content": "x"}}).kind == "ignored"
+
+
+def test_a_deeply_nested_line_is_a_bad_line_without_raising():
+    deep = b'{"type": "user", "x": ' + b"[" * 100_000 + b"]" * 100_000 + b"}"
+
+    got = parse(deep)
+
+    assert (got.kind, got.reason) == ("bad", "json")
+
+
+def test_a_secret_split_between_two_text_blocks_is_masked():
+    secret = ghp()
+    blocks = [{"type": "text", "text": f"voici {secret[:8]}"},
+              {"type": "text", "text": f"{secret[8:]} fin"}]
+
+    got = parse(user(blocks))
+
+    assert got.kind == "message" and got.message.redacted
+    flat = got.message.body.replace("\n", "")
+    assert secret not in flat and secret[8:] not in flat

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable
+from dataclasses import replace
 from datetime import datetime
 
 from sqlalchemy import func, select, update
@@ -82,6 +83,11 @@ def write_batch(factory: sessionmaker[Session], *, source: str, external_id: str
             session.execute(update(Conversation).where(Conversation.id == conversation_id).values(
                 message_count=count, started_at=first, last_message_at=last, measured_at=now,
                 missing_since=None, **_session_fields(title, session_meta)))
+        elif session_meta is not None and session_meta.title is not None \
+                and cursor.state == "ok":
+            # No conversation can hold this title yet: read the file again from 0 once it
+            # changes, so the title is not lost when the first message arrives.
+            cursor = replace(cursor, byte_offset=0)
         _upsert_cursor(session, source, cursor, now)
 
 

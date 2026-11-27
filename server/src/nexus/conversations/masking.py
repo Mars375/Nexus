@@ -8,6 +8,7 @@ path can hand a raw text to the index.
 
 from __future__ import annotations
 
+import itertools
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -18,6 +19,7 @@ from nexus.secrets import REDACTED, redact
 BODY_MAX = models.BODY_MAX
 TITLE_MAX, WORKSPACE_MAX, BRANCH_MAX, MODEL_MAX = 200, 500, 200, 64
 AUTHOR_MAX = 32
+JOIN_WINDOW = 512  # characters kept on each side of a join between two text blocks
 
 # NUL breaks the body CHECK of 0010; \x02 and \x03 are the marks of `snippet()`.
 _DROP = str.maketrans("", "", "\x00\x02\x03")
@@ -60,6 +62,17 @@ def cut(masked: str, limit: int) -> tuple[str, bool]:
 def _mask(text: str) -> tuple[str, bool]:
     masked, found = redact(_clean(text))
     return masked.strip(), bool(found)
+
+
+def join_blocks(parts: list[str]) -> str:
+    """Text blocks joined by a blank line, unless a secret only shows once they touch: a
+    secret split between two blocks would escape `redact` behind the separator."""
+    spaced = "\n\n".join(parts)
+    for left, right in itertools.pairwise(parts):  # only the text around each join is scanned
+        left, right = left[-JOIN_WINDOW:], right[:JOIN_WINDOW]
+        if len(redact(_clean(left + right))[1]) > len(redact(_clean(f"{left}\n\n{right}"))[1]):
+            return "".join(parts)
+    return spaced
 
 
 def mask_field(text: object, limit: int) -> str | None:
