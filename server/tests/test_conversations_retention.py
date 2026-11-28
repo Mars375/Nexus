@@ -378,3 +378,27 @@ def test_a_purge_leaves_codex_rows_alone_until_their_reader_lands(db):
 
     assert result.complete
     assert [db.rows(f"SELECT * FROM {table}") for table in tables] == before
+
+
+def test_a_stop_between_two_batches_of_stale_cursors_ends_the_purge(db):
+    from nexus.conversations.models import ConversationCursor
+    from nexus.conversations.state import ProcessState
+    old = NOW - timedelta(days=3)
+    with db.factory.begin() as session:
+        session.add_all(ConversationCursor(
+            source="claude-code", path_key=f"slug/{i:05d}.jsonl", file_id="1:2", size=1,
+            mtime_ns=1, byte_offset=1, head_sha256="0" * 64, covered_since=old, state="ok",
+            updated_at=old) for i in range(2 * retention.BATCH + 1))
+    state, stopping = ProcessState(), threading.Event()
+    state.listed["claude-code"] = frozenset()
+
+    @event.listens_for(db.factory, "after_commit")
+    def after(_session):
+        stopping.set()
+
+    result = retention.purge(db.factory, now=NOW, retention_days=31, disabled=frozenset(),
+                             state=state, stopping=stopping)
+    event.remove(db.factory, "after_commit", after)
+
+    assert (result.complete, result.code) == (False, "stopping")
+    assert count(db, "conversation_cursors") == retention.BATCH + 1

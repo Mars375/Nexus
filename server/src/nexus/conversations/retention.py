@@ -131,6 +131,8 @@ def _drop_missing(factory, now: datetime, state, stopping, result) -> None:
                 ConversationCursor.source == source)).all()
                 if key not in listed and updated_at <= cutoff]
         for start in range(0, len(stale), BATCH):  # one short transaction per batch
+            if stopping.is_set():  # committed batches stay; the rest waits for the next purge
+                raise _Stopped
             with factory.begin() as session:
                 result.cursors += session.execute(delete(ConversationCursor).where(
                     ConversationCursor.source == source,

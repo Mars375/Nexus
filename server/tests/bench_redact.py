@@ -88,13 +88,15 @@ def worst_cases() -> None:
         stop, worst = threading.Event(), [0.0]
         thread = threading.Thread(target=_ticker, args=(stop, worst))
         thread.start()
-        time.sleep(0.05)
-        worst[0] = 0.0
-        start = time.perf_counter()
-        redact(text)
-        took = time.perf_counter() - start
-        stop.set()
-        thread.join()
+        try:
+            time.sleep(0.05)
+            worst[0] = 0.0
+            start = time.perf_counter()
+            redact(text)
+            took = time.perf_counter() - start
+        finally:  # an interrupt must not leave the ticker thread running
+            stop.set()
+            thread.join()
         size = len(text.encode("utf-8"))
         print(f"{name:16s} {took:5.2f} s  {size / 1e6 / took:5.2f} Mo/s  "
               f"écart max du fil témoin {worst[0] * 1e3:5.1f} ms")
