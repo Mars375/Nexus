@@ -27,11 +27,9 @@ _SURROGATE = re.compile("[\ud800-\udfff]")
 _MODEL = re.compile(rf"[A-Za-z0-9._:-]{{1,{MODEL_MAX}}}")
 _FACTORY = object()
 # Joins of text blocks (`join_blocks`): the separator that stands for a join while it is
-# judged, the context kept on each side, the joins judged one by one, and the edge tokens.
+# judged, the context kept on each side, and the joins judged one by one.
 _JOIN_MARK = "\n\x1f\n"
 _LEFT_MAX, _RIGHT_MAX, _JOINS_MAX = 4096, 256, 256
-_LAST_TOKEN = re.compile(r"\S+(?=\s*\Z)")
-_FIRST_TOKEN = re.compile(r"\A(\s*)\S+")
 
 
 @dataclass(frozen=True)
@@ -97,13 +95,18 @@ def _edge(blocks: list[str], start: int, step: int) -> int | None:
 
 def join_blocks(parts: list[str]) -> Joined:
     """Text blocks joined by a blank line, which keeps each block's word boundaries for
-    `redact`. A join that a secret may span (see `_crosses`) gets the token on each side of
-    it masked: a split secret never reaches the index in pieces. Each join is judged on the
-    whole block before it (up to `_LEFT_MAX`) and what follows it glued (`_RIGHT_MAX`), so a
-    label far from the join and a secret over three blocks or more are both seen. Past
-    `_JOINS_MAX` joins, every join is treated as spanned (a bounded cost, over-masking)."""
+    `redact`. A join that a secret may span (see `_crosses`) gets the whole block on each side
+    of it masked (blocks without a token skipped): a secret of several words (a header, a
+    passphrase) would otherwise leave words behind. Each join is judged on the whole block
+    before it (up to `_LEFT_MAX`) and what follows it glued (`_RIGHT_MAX`), so a label far
+    from the join and a secret over three blocks or more are both seen. Past `_JOINS_MAX`
+    joins, the whole message is masked (a bounded cost, over-masking)."""
     if len(parts) < 2:
         return Joined("".join(parts))
+    if len(parts) - 1 > _JOINS_MAX:
+        joined = Joined(REDACTED)
+        joined.masked = True
+        return joined
     tight = "".join(parts)
     starts = list(itertools.accumulate((len(p) for p in parts), initial=0))
     blocks, masked = list(parts), False
@@ -112,14 +115,11 @@ def join_blocks(parts: list[str]) -> Joined:
         # The block alone keeps its word boundary; the glued tail before it holds a prefix
         # left in an earlier block (`ghp_` | 18 | 18).
         glued = tight[max(0, starts[k + 1] - _LEFT_MAX):starts[k + 1]]
-        if len(parts) - 1 <= _JOINS_MAX and not (
-                _crosses(parts[k][-_LEFT_MAX:], right) or _crosses(glued, right)):
+        if not (_crosses(parts[k][-_LEFT_MAX:], right) or _crosses(glued, right)):
             continue
-        left_at, right_at = _edge(blocks, k, -1), _edge(blocks, k + 1, 1)
-        if left_at is not None:
-            blocks[left_at] = _LAST_TOKEN.sub(REDACTED, blocks[left_at], count=1)
-        if right_at is not None:
-            blocks[right_at] = _FIRST_TOKEN.sub(rf"\g<1>{REDACTED}", blocks[right_at], count=1)
+        for at in (_edge(blocks, k, -1), _edge(blocks, k + 1, 1)):
+            if at is not None:
+                blocks[at] = REDACTED
         masked = True
     joined = Joined("\n\n".join(blocks))
     joined.masked = masked

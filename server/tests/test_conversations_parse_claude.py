@@ -301,3 +301,24 @@ def test_a_secret_glued_to_the_block_before_it_is_masked(parts):
 
     flat = got.message.body.replace("\n", "")
     assert "".join(parts[1:]) not in flat and parts[1] not in flat and "zqhunter2" not in flat
+
+
+@pytest.mark.parametrize(("parts", "secret"), [
+    (["Authorization: ", "Bearer zqjetonclair"], "zqjetonclair"),
+    (["Cookie: ", "session=zqabc123; csrf=zqxyz789"], "zqxyz789"),
+    (["password=", '"zqmon secret zqphrase"'], "zqphrase"),
+    (["password: ", "zqcorrect horse battery zqstaple"], "zqstaple"),
+], ids=["bearer", "cookie", "quoted", "words"])
+def test_no_word_of_a_secret_of_several_words_split_between_blocks_is_left(parts, secret):
+    got = parse(user([{"type": "text", "text": p} for p in parts]))
+
+    assert secret not in got.message.body and got.message.redacted
+
+
+def test_a_message_past_the_join_limit_is_masked_whole():
+    blocks = [{"type": "text", "text": f"mot{i} suite"} for i in range(300)]
+    blocks[150] = {"type": "text", "text": "Authorization: Bearer zqjetonperdu fin"}
+
+    got = parse(user(blocks))
+
+    assert "zqjetonperdu" not in got.message.body and got.message.redacted
