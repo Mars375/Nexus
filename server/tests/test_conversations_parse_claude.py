@@ -289,3 +289,15 @@ def test_thousands_of_tiny_blocks_cost_one_scan():
     parse(user(blocks))
 
     assert time.perf_counter() - started < 1.0
+
+
+@pytest.mark.parametrize("parts", [
+    ["clé", "AKIA" + "IOSFOD", "NN7" + "EXAMPLE"],
+    ["voici", "ghp_" + "A" * 18, "A" * 18],
+    ["voir", "pass", "word=zqhunter2"],
+], ids=["aws", "github", "label"])
+def test_a_secret_glued_to_the_block_before_it_is_masked(parts):
+    got = parse(user([{"type": "text", "text": p} for p in parts]))
+
+    flat = got.message.body.replace("\n", "")
+    assert "".join(parts[1:]) not in flat and parts[1] not in flat and "zqhunter2" not in flat
