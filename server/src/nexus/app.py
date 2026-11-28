@@ -28,6 +28,7 @@ from nexus.auth.deps import Authenticated
 from nexus.auth.tickets import TicketStore
 from nexus.clock import now
 from nexus.config import Settings
+from nexus.conversations import loop as conv_loop
 from nexus.conversations import models as conv_models
 from nexus.db import make_engine
 from nexus.events import api as events_api
@@ -47,6 +48,7 @@ from nexus.validation import french_errors
 log = logging.getLogger("nexus")
 
 FIRST_NODES_READ_SECONDS = 1.0
+CONVERSATIONS_STOP_SECONDS = 30.0
 
 
 def create_app(
@@ -122,6 +124,8 @@ def create_app(
         # a locked database delays an authenticated request by a fraction of a second (#58).
         app.state.touch_engine = make_engine(settings.db_url, timeout=tokens.TOUCH_BUSY_TIMEOUT)
         app.state.touch_sessionmaker = sessionmaker(app.state.touch_engine, expire_on_commit=False)
+        # Reads nothing until a source root is set; its loop still purges (ADR-025, PR 2).
+        app.state.conversations = conv_loop.Conversations(app.state.sessionmaker, settings)
         if not before_migration:
             backup.backup(settings.db_path, settings.backup_dir, settings.backup_keep)
         # Réponse immédiate (unknown) tant que la première lecture n'a pas abouti ; on lui
@@ -138,6 +142,8 @@ def create_app(
                 asyncio.create_task(backup_loop()),
                 asyncio.create_task(nodes_loop(app, first_read)),
                 asyncio.create_task(supervisor.loop(app.state.sessionmaker, app.state.adapters)),
+                asyncio.create_task(conv_loop.loop(app.state.conversations,
+                                                   settings.conv_poll_seconds)),
             ]
             yield
         finally:
@@ -152,6 +158,14 @@ def create_app(
             # Its own failure was already logged by nodes_loop: it must not mask the shutdown.
             with suppress(asyncio.CancelledError, Exception):
                 await first_read
+            # Cancelling the task does not stop a pass running in its thread: it is asked to stop
+            # and awaited, so the engines are never disposed under a write (plan PR 2, A14).
+            conversations = getattr(app.state, "conversations", None)
+            if conversations is not None and not await asyncio.to_thread(
+                    conversations.stop, CONVERSATIONS_STOP_SECONDS):
+                log.warning("passe des conversations encore en cours à l'arrêt")
+                # The pass checks the flag at every batch: wait for its end, without a timeout.
+                await asyncio.to_thread(conversations.stop, None)
             app.state.engine.dispose()
             app.state.touch_engine.dispose()
 

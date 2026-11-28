@@ -134,6 +134,13 @@ Deux familles :
 | Sessions Hermes (`state.db`), Claude Code (`~/.claude`), Codex (`~/.codex`) | ✓ | — | historique des sessions d'agents |
 
 - Les chats restent dans leur système ; Nexus en garde un index daté pour l'affichage et la recherche.
+
+**Sessions locales des agents (lot 1, ADR-025)** — Claude Code lu depuis la PR 2 ; Codex (PR 3) et Hermes (PR 6) à venir, leurs réglages (`NEXUS_CONV_CODEX_ROOT`, `NEXUS_CONV_HERMES_DB`) étant ignorés d'ici là, ni lus ni purgés :
+
+- **Claude Code** : lecture seule de `NEXUS_CONV_CLAUDE_ROOT` (le dossier `projects`), sans repli sur `~` ; rien n'est lu sans ce réglage. Sont gardés le texte humain prouvé (`origin.kind = human` → `loic`, sinon `auteur non vérifié`), les réponses du modèle (blocs `text`), le titre (`custom-title`, à défaut `ai-title`), le dossier de travail et la branche. Sont sautés : sorties et appels d'outils, raisonnement, invites et requêtes complètes, subagents (`isSidechain`), lignes `isMeta`, notifications de tâches, lignes `<synthetic>` écrites par Claude Code lui-même, et tout autre type de ligne, dont aucun champ n'est lu. La conversation a pour clé le nom du fichier de session ; une ligne d'un autre `sessionId` y est rattachée et comptée. Si `--resume` écrit une session reprise dans un nouveau fichier, elle apparaît comme une autre conversation (non vérifié, aucun relevé n'a été fait).
+- **Rythme et bornes** : un sondage toutes les 60 s (`NEXUS_CONV_POLL_SECONDS`) ; par source et par passe, 8 Mio lus et 2 000 messages écrits, par lots de 500, les sessions récentes d'abord : un premier remplissage s'étale sur plusieurs passes. Une ligne de plus de 1 Mio est sautée sans être chargée. Fenêtre et rétention de 31 jours ; purge au premier tour puis toutes les 24 h ; une session disparue de la source quitte l'index 24 h après le deuxième constat de son absence.
+- **Masquage** : avant le stockage, sur le texte entier, puis coupe à 16 000 caractères. Contrepartie (décision D0, note du 2026-11-27 sous ADR-025) : un SHA complet (40 ou 64 hex) est masqué, donc introuvable ; un SHA court reste cherchable. Mesure : 2,06 à 2,43 Mo/s, et moins de 1 % de messages masqués à tort hors condensats.
+- **Effacement** : `secure_delete` sur toutes les connexions de `nexus.db`, `rebuild` de la FTS après une purge, et point de contrôle du WAL à délai court, retenté à chaque passe. L'index est retiré de chaque sauvegarde.
 - Tout message vers un **tiers humain** est préparé puis envoyé sur go de Loïc (SECURITY §4).
 
 **WhatsApp — contraintes à trancher avant d'implémenter :**
@@ -197,7 +204,7 @@ Deux familles :
 | Claude Code | exécutant | dispatch + R | 2 | livré (lot H), douze runs réels (#190) |
 | Codex | exécutant | dispatch + R | 2 | livré (#186), runs réels du 2026-11-26 ; réserves #200, #201, #207 (MXC strict et sonde avant chaque run ; coupure mesurée sous `codex sandbox` et constatée sous `exec`, run réel nx-run-19 ; aucun vrai dépôt tant que Loïc ne le lève pas) |
 | Orca | exécutant | dispatch + R | 2 | reporté, à cadrer (ADR-026) |
-| Chats et messagerie | source | R + envoi (gated vers un tiers) | 3 | tous les canaux (ADR-018) ; accès WhatsApp à trancher |
+| Chats et messagerie | source | R + envoi (gated vers un tiers) | 3 | sessions Claude Code lues (lot 1, PR 2) ; Codex et Hermes à venir ; autres canaux (ADR-018) ; accès WhatsApp à trancher |
 | Cron | source | R | 4 | sources connues |
 | Mail | source | R (+ envoi gated) | 4 | scope Gmail à cadrer |
 | Calendrier | source | R (+ écriture gated) | 4 | scope lecture OK |

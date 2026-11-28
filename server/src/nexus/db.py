@@ -35,7 +35,12 @@ class AwareDateTime(TypeDecorator):
 
 
 def make_engine(url: str, *, timeout: float | None = None) -> Engine:
-    """`timeout`: seconds sqlite waits on a locked database (the driver default when None)."""
+    """`timeout`: seconds sqlite waits on a locked database (the driver default when None).
+
+    Every connection runs with `secure_delete=ON`: deleted conversation text must not survive in
+    free pages, and the FTS merges and `UPDATE`s of the ingestion free pages too, so the purge's
+    own connection is not enough (ADR-025 D9, note of 2026-11-27).
+    """
     connect_args = {} if timeout is None else {"timeout": timeout}
     engine = create_engine(url, connect_args=connect_args)
 
@@ -44,6 +49,7 @@ def make_engine(url: str, *, timeout: float | None = None) -> Engine:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA secure_delete=ON")
         cursor.close()
 
     return engine
