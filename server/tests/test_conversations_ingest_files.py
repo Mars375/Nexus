@@ -7,7 +7,15 @@ import threading
 from datetime import timedelta
 
 import pytest
-from claude_sessions_support import NOW, conversation, migrated, touch, user, write_session
+from claude_sessions_support import (
+    NOW,
+    conversation,
+    migrated,
+    new_id,
+    touch,
+    user,
+    write_session,
+)
 from conversations_support import junction, needs_windows, recording, under
 
 from nexus.conversations import ingest, masking, paths
@@ -259,3 +267,16 @@ def test_a_same_size_rewrite_during_a_resumed_read_is_read_again_from_zero(db, r
     assert status.reads_from_zero == 1
     bodies = [r[0] for r in db.rows("SELECT body FROM conversation_messages")]
     assert sorted(b for b in bodies if b.startswith("apres")) == [f"apres {i}" for i in range(4)]
+
+
+def test_the_head_read_to_resume_a_file_counts_in_the_read_budget(db, root):
+    session = new_id()
+    path = write_session(root, [user(f"message {i}") for i in range(3)], session=session)
+    run(db, root)
+    before = path.stat().st_size
+    write_session(root, [user("ajouté")], session=session, append=True,
+                  mtime=NOW + timedelta(seconds=1))
+
+    status = run(db, root, now=NOW + timedelta(seconds=2))
+
+    assert status.bytes_read == (path.stat().st_size - before) + min(4096, before)

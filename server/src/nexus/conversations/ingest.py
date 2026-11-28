@@ -81,8 +81,9 @@ class _Pass:
 
 
 def _read(candidate: paths.Candidate, cursor: ConversationCursor | None, decided: Plan,
-          policy: Policy, budget: int) -> tuple[Tail, str, datetime, bool]:
-    """Open, read and close; parsing and masking happen after the descriptor is closed."""
+          policy: Policy, budget: int) -> tuple[Tail, str, datetime, bool, int]:
+    """Open, read and close; parsing and masking happen after the descriptor is closed.
+    The last value counts the head bytes the tail does not cover: they are in the budget."""
     start, skipping, covered = decided.start, decided.skipping, decided.covered_since
     kept_size = min(HEAD_BYTES, (cursor.size or 0) if cursor is not None else 0)
     head_size = min(HEAD_BYTES, candidate.size)
@@ -95,15 +96,17 @@ def _read(candidate: paths.Candidate, cursor: ConversationCursor | None, decided
             kept = hashlib.sha256(data[:kept_size]).hexdigest()
             if kept != cursor.head_sha256:  # replaced in place: read again from 0
                 start, skipping, covered = 0, False, policy.retention_start
-        tail = read_tail(fd, start=start, end=candidate.size, budget=budget, skipping=skipping)
-    return tail, hashlib.sha256(data[:head_size]).hexdigest(), covered, start == 0
+        extra = min(len(data), start)  # head bytes before `start`, which the tail skips
+        tail = read_tail(fd, start=start, end=candidate.size, budget=max(0, budget - extra),
+                         skipping=skipping)
+    return tail, hashlib.sha256(data[:head_size]).hexdigest(), covered, start == 0, extra
 
 
 def _file(run: _Pass, candidate: paths.Candidate, cursor: ConversationCursor | None,
           decided: Plan) -> None:
     try:
-        tail, head, covered, from_zero = _read(candidate, cursor, decided, run.policy,
-                                               run.read_left)
+        tail, head, covered, from_zero, extra = _read(candidate, cursor, decided, run.policy,
+                                                      run.read_left)
     except paths.SourceRefused:
         run.status.codes["substituted"] += 1
         return
@@ -112,9 +115,9 @@ def _file(run: _Pass, candidate: paths.Candidate, cursor: ConversationCursor | N
         return
     status = run.status
     status.files_read += 1
-    status.bytes_read += tail.read
+    status.bytes_read += tail.read + extra
     status.reads_from_zero += from_zero
-    run.read_left -= tail.read
+    run.read_left -= tail.read + extra
     if tail.oversized:
         status.codes["oversized"] += tail.oversized
 
