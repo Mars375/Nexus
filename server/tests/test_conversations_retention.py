@@ -402,3 +402,18 @@ def test_a_stop_between_two_batches_of_stale_cursors_ends_the_purge(db):
 
     assert (result.complete, result.code) == (False, "stopping")
     assert count(db, "conversation_cursors") == retention.BATCH + 1
+
+
+def test_a_missing_session_is_kept_when_this_pass_did_not_list_its_source(db, root):
+    write_session(root, [user("zqrevenu")])
+    conv = conversations(db, conv_claude_root=root)
+    conv.tick(NOW)
+    with db.engine.begin() as conn:
+        conn.exec_driver_sql("UPDATE conversations SET missing_since = ?",
+                             ((NOW - timedelta(hours=30)).isoformat(),))
+    conv.state.listed.pop("claude-code", None)  # the pass of this tick failed
+
+    retention.purge(db.factory, now=NOW, retention_days=31, disabled=frozenset(),
+                    state=conv.state, stopping=threading.Event())
+
+    assert count(db) == 1 and count(db, "conversations") == 1

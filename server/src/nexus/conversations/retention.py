@@ -111,10 +111,13 @@ def _drop_source(factory, source: str, state, stopping, result) -> None:
 
 def _drop_missing(factory, now: datetime, state, stopping, result) -> None:
     cutoff = now.astimezone(UTC) - MISSING_GRACE
+    # Only a source whose listing this very pass judged complete may lose a conversation: a
+    # failed pass may have missed a session that came back on disk.
+    listed = [source for source in READ_SOURCES if source in state.listed]
     with factory() as session:
         gone = [row for row in session.execute(select(
             Conversation.id, Conversation.missing_since).where(
-            Conversation.source.in_(READ_SOURCES),
+            Conversation.source.in_(listed),
             Conversation.missing_since.is_not(None))).all() if row[1] <= cutoff]
     for conversation_id, _ in gone:
         _delete_messages(factory, "c.id = :id", {"id": conversation_id}, state, stopping,
