@@ -187,7 +187,7 @@ def test_a_2_mib_line_across_the_budget_never_blocks_the_session(db, root):
     first = run(db, root, read_budget=(3 << 20) // 2)
     run(db, root, read_budget=(3 << 20) // 2)
 
-    assert first.codes["oversized"] == 1
+    assert first.codes["oversized"] == 1 and first.state == "partial"
     assert db.scalar("SELECT count(*) FROM conversation_messages") == 4
     assert db.scalar("SELECT state FROM conversation_cursors") == "ok"
 

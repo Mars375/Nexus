@@ -156,7 +156,7 @@ def _file(run: _Pass, candidate: paths.Candidate, cursor: ConversationCursor | N
     run.write(stem, meta, pending, cursor_at(final[1], final[0]))
     if run.stopping.is_set():
         raise _Stop("stopping")
-    if final[0] == "partial":
+    if final[0] == "partial" or not tail.at_end:  # work left for the next pass
         status.state = "partial"
 
 
