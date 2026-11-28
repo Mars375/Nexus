@@ -83,47 +83,33 @@ class Joined(str):
     masked: bool = False
 
 
-def _edge(blocks: list[str], start: int, step: int) -> int | None:
-    """The first block from `start`, going by `step`, that holds a token: an empty block
-    between two pieces of a secret must not stop the masking."""
-    while 0 <= start < len(blocks):
-        if blocks[start].strip():
-            return start
-        start += step
-    return None
+def _masked_whole() -> Joined:
+    joined = Joined(REDACTED)
+    joined.masked = True
+    return joined
 
 
 def join_blocks(parts: list[str]) -> Joined:
     """Text blocks joined by a blank line, which keeps each block's word boundaries for
-    `redact`. A join that a secret may span (see `_crosses`) gets the whole block on each side
-    of it masked (blocks without a token skipped): a secret of several words (a header, a
-    passphrase) would otherwise leave words behind. Each join is judged on the whole block
-    before it (up to `_LEFT_MAX`) and what follows it glued (`_RIGHT_MAX`), so a label far
-    from the join and a secret over three blocks or more are both seen. Past `_JOINS_MAX`
-    joins, the whole message is masked (a bounded cost, over-masking)."""
+    `redact`. When a secret (or its label) may span a join (see `_crosses`), the whole message
+    is masked: masking only the blocks around the join loses the context a neighbour needs
+    (`password` | `=value`), and a secret of several words would leave words behind. Each
+    join is judged on the whole block before it (up to `_LEFT_MAX`) and on the glued tail
+    before it, against what follows it glued (`_RIGHT_MAX`), so a label far from the join, a
+    prefix left in an earlier block and a secret over three blocks or more are all seen. Past
+    `_JOINS_MAX` joins, the whole message is masked too (a bounded cost, over-masking)."""
     if len(parts) < 2:
         return Joined("".join(parts))
     if len(parts) - 1 > _JOINS_MAX:
-        joined = Joined(REDACTED)
-        joined.masked = True
-        return joined
+        return _masked_whole()
     tight = "".join(parts)
     starts = list(itertools.accumulate((len(p) for p in parts), initial=0))
-    blocks, masked = list(parts), False
     for k in range(len(parts) - 1):
         right = tight[starts[k + 1]:starts[k + 1] + _RIGHT_MAX]
-        # The block alone keeps its word boundary; the glued tail before it holds a prefix
-        # left in an earlier block (`ghp_` | 18 | 18).
         glued = tight[max(0, starts[k + 1] - _LEFT_MAX):starts[k + 1]]
-        if not (_crosses(parts[k][-_LEFT_MAX:], right) or _crosses(glued, right)):
-            continue
-        for at in (_edge(blocks, k, -1), _edge(blocks, k + 1, 1)):
-            if at is not None:
-                blocks[at] = REDACTED
-        masked = True
-    joined = Joined("\n\n".join(blocks))
-    joined.masked = masked
-    return joined
+        if _crosses(parts[k][-_LEFT_MAX:], right) or _crosses(glued, right):
+            return _masked_whole()
+    return Joined("\n\n".join(parts))
 
 
 def mask_field(text: object, limit: int) -> str | None:
